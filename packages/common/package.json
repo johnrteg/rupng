@@ -1,0 +1,11 @@
+{
+  "name": "@repo/common",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./bin/index.js",
+  "types": "./bin/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  }
+}

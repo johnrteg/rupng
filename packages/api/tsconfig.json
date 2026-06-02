@@ -1,0 +1,9 @@
+{
+  "extends": "@repo/tsconfig/base.json",
+  "compilerOptions": {
+    "outDir": "./bin",
+    "declaration": true,
+    "declarationMap": true
+  },
+  "include": ["src/**/*"]
+}

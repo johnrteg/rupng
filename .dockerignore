@@ -1,0 +1,42 @@
+# dependencies
+node_modules
+**/node_modules
+
+# build output
+**/bin
+**/dist
+
+# turbo cache
+.turbo
+**/.turbo
+
+# environment files
+.env
+.env.*
+**/.env
+**/.env.*
+
+# git
+.git
+.gitignore
+
+# docker
+docker-compose.yml
+**/Dockerfile
+
+# IDE
+.vscode
+.idea
+
+# logs
+*.log
+**/logs
+
+# OS
+.DS_Store
+Thumbs.db
+
+# test
+**/__tests__
+**/*.test.ts
+**/*.spec.ts

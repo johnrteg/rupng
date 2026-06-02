@@ -1,0 +1,14 @@
+{
+  "extends": "@repo/tsconfig/base.json",
+  "compilerOptions": {
+    "outDir": "./bin",
+    "baseUrl": ".",
+    "paths": {
+      "@repo/common": ["../../packages/common/src/index.ts"],
+      "@repo/services": ["../../packages/services/src/index.ts"],
+      "@repo/endpoint": ["../../packages/endpoint/src/index.ts"],
+      "@repo/api": ["../../packages/api/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*"]
+}

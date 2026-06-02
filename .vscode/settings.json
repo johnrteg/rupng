@@ -1,0 +1,9 @@
+{
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.preferences.importModuleSpecifier": "project-relative",
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/bin": true,
+    "**/.turbo": true
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "@repo/api",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./bin/index.js",
+  "types": "./bin/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@repo/common": "*",
+    "@repo/endpoint": "*"
+  }
+}
