@@ -1,6 +1,6 @@
 //
 import { Network } from "@repo/common";
-import { Endpoint } from "@repo/endpoint";
+import { RestfulEndpoint, Access } from "@repo/endpoint";
 
 /*
     client:
@@ -16,34 +16,53 @@ import { Endpoint } from "@repo/endpoint";
     server.register( new GetHealth(), callback );
 
     // respond
-    const Endpoint.Response : resp = await GetHeath.execute( auth );
+    const RestfulEndpoint.Response : resp = await GetHeath.execute( auth );
 */
-export class GetHealth extends Endpoint
+export class GetHealth extends RestfulEndpoint<GetHealth.Query, undefined>
 {
-    constructor( request? : GetHealth.Request )
+    public readonly uri      : string = "/health";
+    public readonly method   : Network.Method = Network.Method.GET;
+    public readonly access   : Access.Role | undefined = undefined;   // non-authenticated
+    public readonly timeout  : number | undefined = undefined;        // default
+    public readonly exposure : RestfulEndpoint.Exposure = RestfulEndpoint.Exposure.PUBLIC;
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    constructor( query? : GetHealth.Query )
     {
-        super( Network.Method.GET, GetHealth.URI );
-        this.request = request;
+        super( query ?? {}, undefined );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    protected getMappings(): Array<Endpoint.FieldMapping>
+    public getMappings(): Array<RestfulEndpoint.FieldMap>
     {
-        return [ { field : "foo", location: Endpoint.AttrLocation.QUERY_PARAM, required: true, type : "string" } ];
+        return [ { field : "foo", location: RestfulEndpoint.AttrLocation.QUERY_PARAM } ];
     }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    public getQuerySchema(): RestfulEndpoint.SchemaFor<GetHealth.Query> | null
+    {
+        // foo is optional - a health check must succeed without any input
+        return {
+            type: 'object',
+            properties: { foo: { type: 'string', nullable: true } },
+            required: [],
+            additionalProperties: false
+        };
+    }
 
-
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    public getBodySchema(): RestfulEndpoint.Schema | null
+    {
+        return null;
+    }
 }
 
 
 export namespace GetHealth
 {
-    export const URI : string = "/health";
-
-    export interface Request extends Endpoint.NonAuthRequest
+    export interface Query extends RestfulEndpoint.NonAuthRequest
     {
-        foo : string;
+        foo? : string;
     }
 
     export interface Response

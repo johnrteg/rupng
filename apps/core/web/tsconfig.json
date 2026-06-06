@@ -1,0 +1,10 @@
+{
+  "extends": "@repo/tsconfig/base.json",
+  "compilerOptions": {
+    "outDir": "./bin",
+    // react/web app - NOT node. Empty types excludes ambient @types/node (hoisted from sibling
+    // packages). Add react/jsx + dom lib + @types/react here when building out the UI.
+    "types": []
+  },
+  "include": ["src/**/*"]
+}

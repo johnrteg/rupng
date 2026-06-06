@@ -3,18 +3,34 @@ import { Network } from "@repo/common";
 import Access from "./Access";
 import UserAgent from "./UserAgent";
 
-import Ajv, { Schema } from "ajv";
+import Ajv, { Schema, ValidateFunction } from "ajv";
 
 
-const ajv : Ajv = new Ajv({ allErrors: true, coerceTypes: true });
+// Query params always arrive as strings, so we coerce them to the schema's declared types.
+const ajvQuery : Ajv = new Ajv({ allErrors: true, coerceTypes: true });
 
-export abstract class RestfulEndpoint<Q extends object = any, B extends object = any>
+// JSON bodies already carry real types; coercion here would silently mutate values and mask
+// genuine type errors, so body validation is a pure check.
+const ajvBody : Ajv = new Ajv({ allErrors: true, coerceTypes: false });
+
+export abstract class RestfulEndpoint<Q extends object = any, B extends object | undefined = any>
 {
     // 1. Core Infrastructure Properties
-    public abstract readonly pathPattern: string;
+    public abstract readonly uri: string;
     public abstract readonly method: Network.Method;
     public abstract readonly access: Access.Role | undefined;
     public abstract readonly timeout: number | undefined; // in milliseconds
+
+    // Optional explicit role-set override for the rare endpoint that the linear `access`
+    // ladder can't express (e.g. "billing but not account"). Defaults to none; only the
+    // exceptions declare it, so concrete endpoints aren't forced to implement it.
+    public readonly accessOverride: Array<Access.Role> | undefined = undefined;
+
+    // Whether this endpoint is exposed at the public API Gateway or reachable only inside
+    // the VPC. Defaults to INTERNAL (deny-by-default); public endpoints opt in explicitly.
+    // The /cloud build reads this to generate API Gateway routes from the SAME definition
+    // the web client (marshalClient) and the server (unmarshalServer/execute) use.
+    public readonly exposure: RestfulEndpoint.Exposure = RestfulEndpoint.Exposure.INTERNAL;
 
     // 2. Declarative Schema Configurations
     protected abstract getMappings(): Array<RestfulEndpoint.FieldMap>;
@@ -24,6 +40,10 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object =
     // 3. Runtime State Containers
     public query!: Q;
     public body!: B | null;
+
+    // Compiled AJV validators are cached per endpoint class (schemas are constant per
+    // subclass), so we compile once instead of on every validate() call.
+    private static validatorCache: WeakMap<Function, RestfulEndpoint.CompiledValidators> = new WeakMap();
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
     /**
@@ -41,27 +61,47 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object =
     */
     public validate(): RestfulEndpoint.Validate
     {
-        const querySchema = this.getQuerySchema();
-        if (querySchema)
+        const { query: validateQuery, body: validateBody } = this.getValidators();
+
+        if (validateQuery && !validateQuery(this.query))
         {
-            const validateQuery = ajv.compile(querySchema);
-            if (!validateQuery(this.query))
-            {
-                return { valid: false, errors: validateQuery.errors?.map(e => `Query: ${e.instancePath} ${e.message}`) };
-            }
+            return { valid: false, errors: validateQuery.errors?.map(e => `Query: ${e.instancePath} ${e.message}`) };
         }
 
-        const bodySchema : Schema | null = this.getBodySchema();
-        if( bodySchema && this.body )
+        // A non-null body schema means a body is expected: validate even when this.body is
+        // null/missing so a required-but-absent body fails instead of passing silently.
+        if (validateBody && !validateBody(this.body))
         {
-            const validateBody = ajv.compile(bodySchema);
-            if (!validateBody(this.body))
-            {
-                return { valid: false, errors: validateBody.errors?.map(e => `Body: ${e.instancePath} ${e.message}`) };
-            }
+            return { valid: false, errors: validateBody.errors?.map(e => `Body: ${e.instancePath} ${e.message}`) };
         }
 
         return { valid: true };
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+    * Returns the compiled AJV validators for this endpoint, compiling and caching them on
+    * first use. The cache is keyed by the concrete subclass since its schemas are constant.
+    */
+    private getValidators(): RestfulEndpoint.CompiledValidators
+    {
+        const ctor : Function = this.constructor;
+
+        let cached : RestfulEndpoint.CompiledValidators | undefined = RestfulEndpoint.validatorCache.get(ctor);
+        if (!cached)
+        {
+            const querySchema : Schema | null = this.getQuerySchema();
+            const bodySchema  : Schema | null = this.getBodySchema();
+
+            cached = {
+                query: querySchema ? ajvQuery.compile(querySchema) : null,
+                body : bodySchema  ? ajvBody.compile(bodySchema)   : null
+            };
+
+            RestfulEndpoint.validatorCache.set(ctor, cached);
+        }
+
+        return cached;
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -80,7 +120,7 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object =
         const mappings    : Array<RestfulEndpoint.FieldMap> = this.getMappings();
         const headers     : Record<string, string> = {};
         const queryParams : URLSearchParams = new URLSearchParams();
-        let resolvedUri   : string = this.pathPattern;
+        let resolvedUri   : string = this.uri;
         //const finalBody   : Record<string, any> = {};
 
         for (const map of mappings)
@@ -93,26 +133,37 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object =
             {
                 case RestfulEndpoint.AttrLocation.HEADER: headers[map.field.toLowerCase()] = String(value); break;
                 case RestfulEndpoint.AttrLocation.QUERY_PARAM: queryParams.append(map.field, String(value)); break;
-                //case RestfulEndpoint.AttrLocation.BODY: finalBody[map.field] = value; break;
-                case RestfulEndpoint.AttrLocation.URI: resolvedUri = resolvedUri.replace(`:${map.field}`, String(value)).replace("?", ""); break;
+
+                // Handle both optional (:field?) and required (:field) placeholders; only the
+                // matched placeholder's trailing "?" is consumed, not any other "?" in the URI.
+                case RestfulEndpoint.AttrLocation.URI: resolvedUri = resolvedUri.replace(`:${map.field}?`, String(value)).replace(`:${map.field}`, String(value)); break;
             }
         }
+
+        // Drop any optional segments (/:field?) that were never supplied a value.
+        resolvedUri = resolvedUri.replace(/\/:[^/]+\?/g, "");
 
         resolvedUri = resolvedUri.replace(/\/+$/, "");
         const queryString : string = queryParams.toString();
         const url : string = queryString ? `${resolvedUri}?${queryString}` : resolvedUri;
 
         return { url : url, headers: headers, body : this.body };
+    }
 
-        /*
-        return {
-        url,
-        method: this.method,
-        timeout: this.timeout,
-        headers,
-        body: Object.keys(finalBody).length > 0 ? finalBody : null
-        };
-        */
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+    * Extracts route metadata (method/uri/exposure/access) from endpoint definitions.
+    * This is the single source the /cloud build maps into API Gateway routes — the same
+    * definitions the web client and server already share.
+    */
+    public static toRoutes( endpoints : Array<RestfulEndpoint> ) : Array<RestfulEndpoint.RouteInfo>
+    {
+        return endpoints.map( e => ( {
+            method   : e.method,
+            uri      : e.uri,
+            exposure : e.exposure,
+            access   : e.access,
+        } ) );
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -192,7 +243,7 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object =
     public unmarshalServer( incoming: { headers: any; query: any; fullPath: string; body: any }): void
     {
         const mappings : Array<RestfulEndpoint.FieldMap> = this.getMappings();
-        const parsedUriParams = RestfulEndpoint.parseUriParams( this.pathPattern, incoming.fullPath );
+        const parsedUriParams = RestfulEndpoint.parseUriParams( this.uri, incoming.fullPath );
 
         const extractedQuery: any = {};
         //const extractedBody: any = {};
@@ -222,7 +273,7 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object =
         }
 
         this.query = extractedQuery;
-        //this.body = Object.keys(extractedBody).length > 0 ? extractedBody : null;
+        this.body = (incoming.body ?? null) as B | null;
 
         // Run an immediate AJV validation pass after server hydration
         const validation = this.validate();
@@ -230,6 +281,37 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object =
         {
             throw new Error(`Server Validation Error:\n${validation.errors?.join("\n")}`);
         }
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+    * SERVER SIDE: Clears per-request runtime state. Endpoint instances are registered once and
+    * reused across requests, so this is called before each request is unmarshalled.
+    */
+    public reset() : void
+    {
+        this.query = undefined as any;
+        this.body  = null;
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+    * Builds a standard error response payload.
+    */
+    public failure( status : Network.Status, message? : string ) : RestfulEndpoint.Response
+    {
+        const err : RestfulEndpoint.ErrorResponse = { message : message };
+        return { status : status, data : err };
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+    * SERVER SIDE: Fulfills the request. Overridden by the concrete server-side implementation;
+    * the default reports the endpoint as not implemented.
+    */
+    public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
+    {
+        return this.failure( Network.Status.NOT_IMPLEMENTED, `Request not implemented yet ${this.method} @ ${this.uri}` );
     }
 }
 
@@ -263,16 +345,48 @@ export namespace RestfulEndpoint
         errors? : Array<string>;
     }
 
+    // Re-exported AJV schema type so endpoints can type getQuerySchema()/getBodySchema() as
+    // RestfulEndpoint.Schema without importing 'ajv' directly - the validator stays an
+    // implementation detail of this package.
+    export type Schema = import("ajv").Schema;
+
+    // Strongly-typed schema bound to a payload interface T: AJV's JSONSchemaType forces every
+    // property of T to be described and cross-checks the schema's shape against T at compile
+    // time (optional props must be marked `nullable: true` and omitted from `required`).
+    export type SchemaFor<T> = import("ajv").JSONSchemaType<T>;
+
+    export interface CompiledValidators
+    {
+        query : ValidateFunction | null;
+        body  : ValidateFunction | null;
+    }
+
     export interface ClientTransport
     {
         url: string;
         //method: Network.Method;
         //timeout: number;
         headers: Record<string, string>;
-        body: Record<string, any> | null;
+        body?  : Record<string, any> | null;
     }
 
-/*
+    // Whether an endpoint is reachable from the public API Gateway or only inside the VPC.
+    export enum Exposure
+    {
+        PUBLIC   = "public",
+        INTERNAL = "internal",
+    }
+
+    // Route metadata extracted from an endpoint definition (see RestfulEndpoint.toRoutes).
+    // The /cloud build maps these into API Gateway routes.
+    export interface RouteInfo
+    {
+        method   : Network.Method;
+        uri      : string;
+        exposure : Exposure;
+        access   : Access.Role | undefined;
+    }
+
     //
     // request interfaces
     //
@@ -292,7 +406,6 @@ export namespace RestfulEndpoint
     export interface NonAuthRequest extends Request
     {
     }
-*/
 
     export enum AttrLocation
     {

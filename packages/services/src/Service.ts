@@ -9,7 +9,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest, FastifyError, FastifyLis
 
 import { randomUUID } from 'crypto';
 
-import { Endpoint, UserAgent } from '@repo/endpoint';
+import { RestfulEndpoint } from '@repo/endpoint';
 import { Network } from '@repo/common';
 
 import { Application } from './Application';
@@ -23,6 +23,10 @@ export class Service extends Application
     private log_server  : boolean;
     private port        : number = 8000;
     private host        : string = 'localhost';
+    private shuttingDown : boolean = false;
+
+    // max time to wait for aboutToQuit() before forcing the process to exit
+    private static readonly SHUTDOWN_TIMEOUT_MS : number = 10_000;
 
     ////////////////////////////////////////////////////////////////////////
     constructor( name : string, port ? : number )
@@ -39,21 +43,77 @@ export class Service extends Application
     {
         super.bindCallbacks();
 
+        this.onSignalShutdown   = this.onSignalShutdown.bind( this );
         this.processError       = this.processError.bind( this );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     protected async init() : Promise<void>
     {
-        super.init();
+        await super.init();
+
+        // a long-running service owns its process lifecycle, so it listens for OS shutdown signals
+        this.registerSignals();
 
         //this.get( "/health", this.getHealth );
 
-        
+
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    private registerSignals() : void
+    {
+        process.on( 'SIGINT', this.onSignalShutdown );
+        process.on( 'SIGTERM', this.onSignalShutdown );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    private onSignalShutdown() : void
+    {
+        // ignore repeated signals (e.g. double Ctrl-C) so shutdown only runs once
+        if( this.shuttingDown )
+        {
+            this.log.warn('Service::onSignalShutdown ignored - shutdown already in progress');
+            return;
+        }
+        this.shuttingDown = true;
+
+        this.log.info('Service::onSignalShutdown (SIGINT or SIGTERM)');
+
+        // safety net: if aboutToQuit() hangs, force the process to exit
+        const force = setTimeout( () => {
+            this.log.error('Service::onSignalShutdown timed out - forcing exit');
+            process.exit( 1 );
+        }, Service.SHUTDOWN_TIMEOUT_MS );
+        force.unref();
+
+        this.doShutdown();
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    private async doShutdown() : Promise<void>
+    {
+        try
+        {
+            await this.aboutToQuit();
+            this.stop( 0 );
+        }
+        catch( err : any )
+        {
+            this.log.error("Error during shutdown", err );
+            this.stop( 1 );
+        }
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    private stop( code : number ) : void
+    {
+        this.log.info( "Service shutting down", { code: code } );
+        process.exit( code );
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    protected register( endpt : Endpoint ) : void
+    protected register( endpt : RestfulEndpoint ) : void
     {
         if( this.server )
         {
@@ -65,72 +125,56 @@ export class Service extends Application
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    private async processEndpoint( request: FastifyRequest, reply: FastifyReply, endpt : Endpoint ) : Promise<void>
+    private async processEndpoint( request: FastifyRequest, reply: FastifyReply, endpt : RestfulEndpoint ) : Promise<void>
     {
         try
         {
+            // endpoint instances are registered once and reused, so clear per-request state first
             endpt.reset();
 
-            // determine identify of the request, if any
             //
-            // allow the endpoint to parse the request to attributes unique to the endpoint
+            // Hydrate the endpoint from the incoming request and validate it against its schemas.
+            // unmarshalServer throws on a validation failure, which we map to BAD_REQUEST below.
             //
-
-            // parse off needed information
-            // endpoint does not need all of FastifyRequest (maybe file blob?)
-
-            // strip any parameters from url
-            let url : string = request.url;
-            let query : any = {};
-            if( url.indexOf('?') > 0 )url = url.substring( 0, url.indexOf('?') );
-            if( request.query )query = JSON.parse( JSON.stringify( request.query ) );   // copy object
-
-            // parse off architecture specific headers
-            // todo
-
-            // set the request
-            let client_request : Endpoint.ClientRequest = { host : request.host,
-                                                            uri : url,
-                                                            body : request.body,
-                                                            query : query,
-                                                            userAgent : UserAgent.parse(request.headers['user-agent'] ) };
-
-            const check : Endpoint.Response = endpt.validate( client_request );
-            if( check.status !== Network.Status.OK )
+            try
             {
-                reply.code( check.status ).send( check.data );
+                endpt.unmarshalServer( { headers  : request.headers,
+                                         query    : request.query,
+                                         fullPath : request.url,
+                                         body     : request.body } );
             }
-            else
+            catch( err : any )
             {
-                let authenticate : Endpoint.Authentication = {};
-                
-
-                // authentication required
-                if( endpt.access !== undefined )
-                {
-                    // todo
-                    
-                    // get information from request to authenticate
-
-                    // verify who is asking has access to this endpoint (role)
-
-                    // if not, return error
-                    // Network.Status.UNAUTHORIZED
-                }
-
-                //
-                // have the endpoint execute the request
-                //
-                const response : Endpoint.Response = await endpt.execute( authenticate );
-
-                //
-                // reply to client
-                //
-                reply.header('Content-Type', Network.MimeType.JSON )
-                         //.header( Endpoint.Headers.TRANSACTION_ID, transaction_id )      // always give it back
-                         .code( response.status )
-                         .send( response.data );
+                reply.code( Network.Status.BAD_REQUEST ).send( { message: String( err?.message ?? err ) } );
+                return;
             }
+
+            let authenticate : RestfulEndpoint.Authentication = {};
+
+            // authentication required
+            if( endpt.access !== undefined )
+            {
+                // todo
+
+                // get information from request to authenticate
+
+                // verify who is asking has access to this endpoint (role)
+
+                // if not, return error
+                // Network.Status.UNAUTHORIZED
+            }
+
+            //
+            // have the endpoint execute the request
+            //
+            const response : RestfulEndpoint.Response = await endpt.execute( authenticate );
+
+            //
+            // reply to client
+            //
+            reply.header( Network.HeaderType.CONTENT, Network.MimeType.JSON )
+                 .code( response.status )
+                 .send( response.data );
         }
         catch( err : any )
         {
@@ -183,21 +227,21 @@ export class Service extends Application
             const start : number = Date.now();
 
             // all requests will have a transactionid, otherwise create one
-            let transaction_id : string = request.headers[ Endpoint.Headers.TRANSACTION_ID ] as string ?? randomUUID();
+            let transaction_id : string = request.headers[ RestfulEndpoint.RestfulHeaders.TRANSACTION_ID ] as string ?? randomUUID();
 
             // execute the callback that will fullfill the request
-            let got   : Endpoint.Response = await callback( request );
+            let got   : RestfulEndpoint.Response = await callback( request );
 
             // keep track of some stats about the request
-            let stats : Endpoint.Stats = { duration: Date.now() - start };
+            let stats : RestfulEndpoint.Stats = { duration: Date.now() - start };
 
             // log request here
             // todo
 
             // todo: make const enum reference for content types
             reply.header( Network.HeaderType.CONTENT, Network.MimeType.JSON )
-                 .header( Endpoint.Headers.TRANSACTION_ID, transaction_id )      // always give it back
-                 .header( Endpoint.Headers.STATS, JSON.stringify( stats ) )      // always give it back
+                 .header( RestfulEndpoint.RestfulHeaders.TRANSACTION_ID, transaction_id )      // always give it back
+                 .header( RestfulEndpoint.RestfulHeaders.STATS, JSON.stringify( stats ) )      // always give it back
                  .code( got.status )
                  .send( got.data );
         }
@@ -270,10 +314,26 @@ export class Service extends Application
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // A long-running service cannot continue without a successful boot, so a failed run()
+    // is fatal: log and exit non-zero. (process.exit lives here, not in Application.)
+    public async run() : Promise<void>
+    {
+        try
+        {
+            await super.run();
+        }
+        catch( err : any )
+        {
+            this.log.error( "Service::run boot failed - exiting", { code: 1 } );
+            process.exit( 1 );
+        }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // to override by actual service to do something
     protected serviceReady() : void
     {
-        this.log.info( "ServiceReady" );   
+        this.log.info( "ServiceReady" );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -287,8 +347,8 @@ export class Service extends Application
 
 export namespace Service
 {
-    //export interface RequestCallback{ ( request: FastifyRequest ) : Endpoint.Response }  
-    export interface RequestCallbackAsync{ ( request: FastifyRequest ) : Promise<Endpoint.Response> }  
+    //export interface RequestCallback{ ( request: FastifyRequest ) : RestfulEndpoint.Response }
+    export interface RequestCallbackAsync{ ( request: FastifyRequest ) : Promise<RestfulEndpoint.Response> }
 }
 
 export default Service;

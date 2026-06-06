@@ -2,6 +2,11 @@ export const add = (a: number, b: number): number => a + b;
 export const subtract = (a: number, b: number): number => a - b;
 
 //
+// shared types
+//
+export type { Type } from './Types';
+
+//
 // exported/public fucntion
 //
 export { default as MathUtils } from './utils/MathUtils';

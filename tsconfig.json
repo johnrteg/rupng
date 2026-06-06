@@ -7,12 +7,11 @@
   },
   "files": [],
   "references": [
-    { "path": "packages/tsconfig" },
     { "path": "packages/common" },
     { "path": "packages/endpoint" },
     { "path": "packages/services" },
     { "path": "packages/api" },
-    { "path": "apps/auth" },
-    { "path": "apps/dispatch" }
+    { "path": "apps/core/auth" },
+    { "path": "apps/core/dispatch" }
   ]
 }

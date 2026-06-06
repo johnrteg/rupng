@@ -7,7 +7,19 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "strict": true,
-    "skipLibCheck": true
-    
+    "skipLibCheck": true,
+
+    // Resolve @repo/* workspace packages to their source for dev/typecheck. These relative
+    // paths are anchored to this file; every package/app sits two levels below the repo root,
+    // the same depth as packages/tsconfig, so the same "../../packages/*" form resolves for all.
+    "paths": {
+      "@repo/common": ["../../packages/common/src/index.ts"],
+      "@repo/endpoint": ["../../packages/endpoint/src/index.ts"],
+      "@repo/api": ["../../packages/api/src/index.ts"],
+      "@repo/services": ["../../packages/services/src/index.ts"],
+      "@repo/cloud-spec": ["../../packages/cloud-spec/src/index.ts"],
+      "@repo/workflow": ["../../packages/workflow/src/index.ts"],
+      "@repo/ai": ["../../packages/ai/src/index.ts"]
+    }
   }
 }

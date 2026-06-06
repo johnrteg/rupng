@@ -3,10 +3,8 @@
   "compilerOptions": {
     "outDir": "./bin",
     "declaration": true,
-    "declarationMap": true
+    "declarationMap": true,
+    "types": ["vitest/globals", "node"]
   },
-  "paths": {
-      "@repo/endpoint": ["../../packages/endpoint/src/index.ts"]
-    },
-  "include": ["src/**/*"]
+  "include": ["src/**/*","tests/**/*" ]
 }

@@ -6,7 +6,7 @@ import axios, { AxiosError, HeadersDefaults, AxiosInstance, AxiosProgressEvent }
 
 import { Network, SysConstants, StringUtils, ObjectUtils, Validator } from '@repo/common';
 
-import { Endpoint }  from './Endpoint';
+import { RestfulEndpoint }  from './RestfulEndpoint';
 
 
 //
@@ -14,7 +14,7 @@ import { Endpoint }  from './Endpoint';
 //
 interface EndpointCache
 {
-    endpoint    : Endpoint;
+    endpoint    : RestfulEndpoint;
     last_access : number;               // ms from 1970
     lifespan    : number;               // minutes
     reply       : RestfulService.Reply;
@@ -34,7 +34,7 @@ export class RestfulService
 
     private cache               : Array<EndpointCache>;
 
-    private timer               : NodeJS.Timeout | null;
+    private timer               : ReturnType<typeof setInterval> | null;
     private cookies             : any = {};
 
     private csrfTag              : string | null = null;
@@ -121,7 +121,7 @@ export class RestfulService
         this.cache = [];
         if( Validator.notNull( this.timer ) )
         {
-            clearInterval( this.timer as NodeJS.Timeout );
+            clearInterval( this.timer as ReturnType<typeof setInterval> );
             this.timer = null;
         }
     }
@@ -133,7 +133,7 @@ export class RestfulService
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
-    private compareEndpts( endpt1 : Endpoint, endpt2 : Endpoint ) : boolean
+    private compareEndpts( endpt1 : RestfulEndpoint, endpt2 : RestfulEndpoint ) : boolean
     {
         // same urll and method
         if( endpt1.uri == endpt2.uri && endpt1.method == endpt2.method )
@@ -168,13 +168,13 @@ export class RestfulService
         if( this.cache.length == 0 )
         {
             //console.log("checkCache stopped" );
-            clearInterval( this.timer as  NodeJS.Timeout );
+            clearInterval( this.timer as ReturnType<typeof setInterval> );
             this.timer = null;
         }
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
-    private findCache( endpt : Endpoint ) : EndpointCache | null
+    private findCache( endpt : RestfulEndpoint ) : EndpointCache | null
     {
         let i : number;
         for( i=0; i < this.cache.length; i++ )
@@ -191,7 +191,7 @@ export class RestfulService
                     // cache now empty, so stop checking it
                     if( this.cache.length == 0 )
                     {
-                        clearInterval( this.timer as NodeJS.Timeout );
+                        clearInterval( this.timer as ReturnType<typeof setInterval> );
                         this.timer = null;
                     }
                     return null;
