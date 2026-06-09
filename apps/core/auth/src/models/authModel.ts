@@ -9,7 +9,7 @@
 //   * the role model (RoleScope, AccountRole, AppRole,  -> `Access` in @repo/endpoint
 //     Role, ACCOUNT_LADDER, APP_LADDER, isAllowed)
 //
-// Organized by WHERE each model lives (see README.md):
+// Organized by WHERE each model lives (see SPECS.md):
 //   1. PERSISTED  — DynamoDB tables (each block notes its PK/SK/GSI/TTL)
 //   2. EPHEMERAL  — Redis (revocation epoch, blacklist, rate counters)
 //   3. RUNTIME    — produced/consumed by the Lambda Authorizer, never stored
@@ -46,7 +46,12 @@ export namespace Auth
 
     // ────────────────────────────────────────────────────────────────────────
     // UserProfile — platform metadata for a Cognito identity (credentials stay in Cognito)
-    //   DynamoDB: users   PK: userId          GSI: email (login/lookup)
+    //   DynamoDB: users   PK: userId   GSI: email (login/lookup)   GSI: phone (verified-phone uniqueness)
+    //
+    // Cognito enforces EMAIL uniqueness; PHONE uniqueness is ours — the `phone` GSI is the lookup
+    // registration uses to detect an existing account by verified number (REGISTRATION.md
+    // "Existing-account detection"). Index/match only when `phoneVerified` is true (an unverified
+    // number proves nothing); store the number normalized to E.164 so the lookup is exact.
     // ────────────────────────────────────────────────────────────────────────
 
     export enum UserStatus
@@ -62,8 +67,8 @@ export namespace Auth
         userId         : Type.ID;       // Cognito sub
         email          : Type.Email;
         emailVerified  : boolean;
-        phone?         : Type.PhoneE164;
-        phoneVerified? : boolean;
+        phone?         : Type.PhoneE164;   // E.164; indexed (phone GSI) for uniqueness once verified
+        phoneVerified? : boolean;           // only a verified phone counts for the uniqueness check
 
         status         : UserStatus;
         appRole?       : Access.AppRole;    // global staff role (Cognito group is the authoritative edge ceiling)
@@ -74,6 +79,48 @@ export namespace Auth
         createdAt      : Type.ISODateTime;
         updatedAt      : Type.ISODateTime;
         lastLoginAt?   : Type.ISODateTime;
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // AuthMethod / UserIdentity — HOW a user signs in (a login method), distinct from
+    // CredentialType below (what's PRESENTED per request: a JWT or an API key).
+    //
+    // One user may have SEVERAL methods (password + Google + a passkey) — which is exactly what
+    // enables identity LINKING (REGISTRATION.md): an SSO sign-in whose email matches an existing
+    // password user attaches a new UserIdentity instead of forking an account. The enum is the
+    // extension point — add WebAuthn/magic-link/etc. without touching call sites.
+    //
+    // Boundary: **Cognito is the credential authority** (it federates social/SAML/OIDC IdPs, stores
+    // password hashes, runs MFA). This table is the platform-level **mapping + audit** — fast lookup
+    // of "IdP subject → our userId" and "which methods can this user use" (UI, and "don't remove the
+    // last method") — kept in sync with Cognito's linked identities, not a second credential store.
+    //   DynamoDB: user_identities  PK: userId  SK: METHOD#<method>#<providerSubject>
+    //   GSI: (method, providerSubject) -> userId   (resolve a federated login to our user)
+    // ────────────────────────────────────────────────────────────────────────
+
+    /** A login method. Extensible — new methods are added here without changing callers. */
+    export enum AuthMethod
+    {
+        PASSWORD   = "password",    // Cognito-native email + password (+ MFA) — baseline
+        GOOGLE     = "google",      // social IdP, federated through Cognito
+        MICROSOFT  = "microsoft",
+        SAML       = "saml",        // enterprise IdP (per the account's SsoConnection)
+        OIDC       = "oidc",        // enterprise IdP (OIDC)
+        PASSKEY    = "passkey",     // WebAuthn / FIDO2 — strategic primary passwordless; phishing-resistant
+        EMAIL_OTP  = "email_otp",   // emailed one-time code — convenience for low-privilege roles + recovery; never sole factor for privileged roles
+        MAGIC_LINK = "magic_link",  // emailed one-time sign-in link — DEPRIORITIZED in favor of EMAIL_OTP (link-scanner consumption, cross-device); reserved, not planned
+    }
+
+    /** One login method linked to a user; a user may have many (enables linking + "sign in with …"). */
+    export interface UserIdentity
+    {
+        userId           : Type.ID;
+        method           : AuthMethod;
+        providerSubject  : string;          // the IdP's user id (Google sub, SAML NameID, …); Cognito sub for PASSWORD
+        label?           : string;          // shown in the UI, e.g. the SSO email or "Work Google"
+        ssoConnectionId? : Type.ID;         // ties a SAML/OIDC identity to the account's SsoConnection
+        addedAt          : Type.ISODateTime;
+        lastUsedAt?      : Type.ISODateTime;
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -173,6 +220,10 @@ export namespace Auth
 
         scimEnabled    : boolean;
         scimTokenHash? : string;        // bearer token (hashed) for SCIM provisioning
+
+        // SSO-only enforcement: when true, account members may sign in ONLY via this IdP —
+        // password + email-OTP paths are refused for them (staff break-glass exempt). Opt-in, off by default.
+        ssoOnly        : boolean;
 
         status         : "active" | "disabled";
         createdAt      : Type.ISODateTime;
@@ -305,8 +356,31 @@ export namespace Auth
     // 4. ARTIFACT — endpoint -> min-role map, GENERATED from RestfulEndpoint at build time
     // ══════════════════════════════════════════════════════════════════════════
 
-    /** Exposure mirrors RestfulEndpoint: PUBLIC is edge-reachable; INTERNAL is VPC-only (default-deny). */
-    export enum EndpointExposure { PUBLIC = "public", INTERNAL = "internal" }
+    /**
+     * Mirrors RestfulEndpoint.Audience — the ascending ladder that decides **which credentials the
+     * authorizer accepts** (the rule below). PUBLIC ⊇ APP, so a public endpoint accepts a JWT too.
+     */
+    export enum EndpointAudience
+    {
+        INTERNAL = "internal",   // VPC-only — never reaches the edge authorizer
+        APP      = "app",        // edge — accepts a **JWT only** (reject a presented dev-key)
+        PUBLIC   = "public",     // edge — accepts a **JWT or a dev-key** (API key); the published API
+    }
+
+    /**
+     * Which {@link CredentialType}s an endpoint accepts, derived from its audience — the authorizer
+     * uses this to reject a dev-key on an APP endpoint (a dev-key is only valid on PUBLIC). The "JWT
+     * OR dev-key" union lives here, at the credential layer — not as overlapping audiences.
+     */
+    export function acceptedCredentials( audience : EndpointAudience ) : Array<CredentialType>
+    {
+        switch( audience )
+        {
+            case EndpointAudience.PUBLIC: return [ CredentialType.JWT, CredentialType.API_KEY ];
+            case EndpointAudience.APP:    return [ CredentialType.JWT ];
+            default:                      return [];   // INTERNAL: not edge-authorized at all
+        }
+    }
 
     export interface RoleRequirement
     {
@@ -318,7 +392,7 @@ export namespace Auth
     {
         method       : string;          // GET, POST, ...
         uri          : string;          // route template, e.g. "/contacts/{id}"
-        exposure     : EndpointExposure;
+        audience     : EndpointAudience; // drives accepted credentials (see acceptedCredentials) + publication
         authRequired : boolean;
         requirement? : RoleRequirement; // undefined => authenticated but no minimum role
     }

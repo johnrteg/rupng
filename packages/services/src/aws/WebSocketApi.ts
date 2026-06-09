@@ -4,6 +4,8 @@
 //
 import { ApiGatewayManagementApiClient, PostToConnectionCommand, DeleteConnectionCommand } from "@aws-sdk/client-apigatewaymanagementapi";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import { ResultUtils } from "@repo/common";
+import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
@@ -19,12 +21,14 @@ export class WebSocketApi
 {
     private _client? : ApiGatewayManagementApiClient;
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * @param cloud the owning service's resolver — maps the logical websocket key to its URL.
      * @param wsKey logical websocket key (default `"live"`).
      */
     constructor( private readonly cloud : CloudResolver, private readonly wsKey : ResourceKey = "live" ) {}
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * The `ApiGatewayManagementApiClient`, pointed at the API's callback (management) endpoint —
      * the WebSocket URL as `https`. Lazy + cached.
@@ -39,6 +43,7 @@ export class WebSocketApi
         return this._client;
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * Push a message to a single connected client. Non-string data is JSON-stringified.
      *
@@ -47,17 +52,24 @@ export class WebSocketApi
      * @param connectionId the id from the `$connect` event.
      * @param data         payload (object → JSON).
      */
-    async post( connectionId : string, data : string | object ) : Promise<void>
+    post( connectionId : string, data : string | object ) : Promise<Type.Result<void>>
     {
-        await this.client.send( new PostToConnectionCommand( {
-            ConnectionId : connectionId,
-            Data         : typeof data === "string" ? data : JSON.stringify( data ),
-        } ) );
+        return ResultUtils.from( async () : Promise<void> =>
+        {
+            await this.client.send( new PostToConnectionCommand( {
+                ConnectionId : connectionId,
+                Data         : typeof data === "string" ? data : JSON.stringify( data ),
+            } ) );
+        } );
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** Force-close a connection from the server side. */
-    async disconnect( connectionId : string ) : Promise<void>
+    disconnect( connectionId : string ) : Promise<Type.Result<void>>
     {
-        await this.client.send( new DeleteConnectionCommand( { ConnectionId: connectionId } ) );
+        return ResultUtils.from( async () : Promise<void> =>
+        {
+            await this.client.send( new DeleteConnectionCommand( { ConnectionId: connectionId } ) );
+        } );
     }
 }

@@ -12,6 +12,8 @@ import type {
     Target as SchedulerTarget, FlexibleTimeWindow,
 } from "@aws-sdk/client-scheduler";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import { ResultUtils } from "@repo/common";
+import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
@@ -32,6 +34,7 @@ export class Scheduler
 {
     private _client? : SchedulerClient;
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * @param cloud   the owning service's resolver — maps logical target keys to physical ARNs.
      * @param group   the schedule group (IAM/listing scope). Defaults to `SCHEDULER_GROUP`.
@@ -43,9 +46,11 @@ export class Scheduler
         private readonly roleArn : string = process.env.SCHEDULER_ROLE_ARN ?? "",
     ) {}
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** The raw `SchedulerClient` — escape hatch (tagging, dead-letter config, KMS). Lazy + cached. */
     get client() : SchedulerClient { return this._client ??= ClientUtils.createClient( SchedulerClient ); }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * Create the schedule, or update it in place if a schedule of that name already exists
      * (idempotent upsert). Exactly one of `every` / `cron` / `at` must be set.
@@ -53,95 +58,124 @@ export class Scheduler
      * @param name unique schedule name within this service's group (e.g. `"acct-42-digest"`).
      * @param opts cadence + target + payload — see {@link Scheduler.Options}.
      */
-    async upsert( name : string, opts : Scheduler.Options ) : Promise<void>
+    async upsert( name : string, opts : Scheduler.Options ) : Promise<Type.Result<void>>
     {
-        const input : {
-            Name : string; GroupName : string; ScheduleExpression : string;
-            ScheduleExpressionTimezone? : string; State : "ENABLED" | "DISABLED";
-            Target : SchedulerTarget; FlexibleTimeWindow : FlexibleTimeWindow;
-        } = {
-            Name                       : name,
-            GroupName                  : this.group,
-            ScheduleExpression         : this.expression( opts ),
-            ScheduleExpressionTimezone : opts.timezone,
-            State                      : ( opts.enabled ?? true ) ? "ENABLED" : "DISABLED",
-            Target                     : this.target( opts.target, opts.input ),
-            FlexibleTimeWindow         : { Mode: "OFF" },
-        };
+        // Pure validation up front (no throw) — only the SDK calls go through ResultUtils.from.
+        const expression : Type.Result<string> = this.expression( opts );
+        if( !expression.ok ) return expression;
+        if( opts.target.queueKey === undefined && opts.target.functionKey === undefined )
+            return ResultUtils.err( "Scheduler.upsert: target needs a queueKey or functionKey" );
 
-        try
+        return ResultUtils.from( async () : Promise<void> =>
         {
-            await this.client.send( new CreateScheduleCommand( input ) );
-        }
-        catch( err : unknown )
-        {
-            if( ( err as { name? : string } ).name !== "ConflictException" ) throw err;
-            await this.client.send( new UpdateScheduleCommand( input ) );
-        }
+            const input : {
+                Name : string; GroupName : string; ScheduleExpression : string;
+                ScheduleExpressionTimezone? : string; State : "ENABLED" | "DISABLED";
+                Target : SchedulerTarget; FlexibleTimeWindow : FlexibleTimeWindow;
+            } = {
+                Name                       : name,
+                GroupName                  : this.group,
+                ScheduleExpression         : expression.data,
+                ScheduleExpressionTimezone : opts.timezone,
+                State                      : ( opts.enabled ?? true ) ? "ENABLED" : "DISABLED",
+                Target                     : this.target( opts.target, opts.input ),
+                FlexibleTimeWindow         : { Mode: "OFF" },
+            };
+
+            try
+            {
+                await this.client.send( new CreateScheduleCommand( input ) );
+            }
+            catch( err : unknown )
+            {
+                if( ( err as { name? : string } ).name !== "ConflictException" ) throw err;
+                await this.client.send( new UpdateScheduleCommand( input ) );
+            }
+        } );
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** Fetch one schedule's full definition (cadence, target, state). */
-    get( name : string ) : Promise<GetScheduleCommandOutput>
+    get( name : string ) : Promise<Type.Result<GetScheduleCommandOutput>>
     {
-        return this.client.send( new GetScheduleCommand( { Name: name, GroupName: this.group } ) );
+        return ResultUtils.from( () => this.client.send( new GetScheduleCommand( { Name: name, GroupName: this.group } ) ) );
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * List schedules in this service's group, optionally filtered by name prefix. Returns
      * lightweight summaries — call {@link get} for a single schedule's full definition.
      */
-    async list( namePrefix? : string ) : Promise<Array<ScheduleSummary>>
+    list( namePrefix? : string ) : Promise<Type.Result<Array<ScheduleSummary>>>
     {
-        const result : ListSchedulesCommandOutput = await this.client.send(
-            new ListSchedulesCommand( { GroupName: this.group, NamePrefix: namePrefix } ) );
-        return result.Schedules ?? [];
+        return ResultUtils.from( async () : Promise<Array<ScheduleSummary>> =>
+        {
+            const result : ListSchedulesCommandOutput = await this.client.send(
+                new ListSchedulesCommand( { GroupName: this.group, NamePrefix: namePrefix } ) );
+            return result.Schedules ?? [];
+        } );
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** Pause a schedule (stop firing) without deleting it — reversible via {@link resume}. */
-    pause( name : string ) : Promise<void> { return this.setState( name, "DISABLED" ); }
+    pause( name : string ) : Promise<Type.Result<void>> { return this.setState( name, "DISABLED" ); }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** Resume a previously {@link pause}d schedule. */
-    resume( name : string ) : Promise<void> { return this.setState( name, "ENABLED" ); }
+    resume( name : string ) : Promise<Type.Result<void>> { return this.setState( name, "ENABLED" ); }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** Delete a schedule permanently. */
-    async remove( name : string ) : Promise<void>
+    remove( name : string ) : Promise<Type.Result<void>>
     {
-        await this.client.send( new DeleteScheduleCommand( { Name: name, GroupName: this.group } ) );
+        return ResultUtils.from( async () : Promise<void> =>
+        {
+            await this.client.send( new DeleteScheduleCommand( { Name: name, GroupName: this.group } ) );
+        } );
     }
 
     //////////////////////////////////////////////////////////////////////////////
     // internals
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** Flip a schedule's State, preserving its existing cadence + target (get-then-update). */
-    private async setState( name : string, state : "ENABLED" | "DISABLED" ) : Promise<void>
+    private setState( name : string, state : "ENABLED" | "DISABLED" ) : Promise<Type.Result<void>>
     {
-        const cur : GetScheduleCommandOutput = await this.get( name );
-        await this.client.send( new UpdateScheduleCommand( {
-            Name                       : name,
-            GroupName                  : this.group,
-            ScheduleExpression         : cur.ScheduleExpression,
-            ScheduleExpressionTimezone : cur.ScheduleExpressionTimezone,
-            State                      : state,
-            Target                     : cur.Target,
-            FlexibleTimeWindow         : cur.FlexibleTimeWindow ?? { Mode: "OFF" },
-        } ) );
+        return ResultUtils.from( async () : Promise<void> =>
+        {
+            const cur : GetScheduleCommandOutput = await this.client.send( new GetScheduleCommand( { Name: name, GroupName: this.group } ) );
+            await this.client.send( new UpdateScheduleCommand( {
+                Name                       : name,
+                GroupName                  : this.group,
+                ScheduleExpression         : cur.ScheduleExpression,
+                ScheduleExpressionTimezone : cur.ScheduleExpressionTimezone,
+                State                      : state,
+                Target                     : cur.Target,
+                FlexibleTimeWindow         : cur.FlexibleTimeWindow ?? { Mode: "OFF" },
+            } ) );
+        } );
     }
 
-    /** Build the `rate(...)` / `cron(...)` / `at(...)` ScheduleExpression from the options. */
-    private expression( opts : Scheduler.Options ) : string
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    /** Build the `rate(...)` / `cron(...)` / `at(...)` ScheduleExpression — {@link Type.Result}, no throw. */
+    private expression( opts : Scheduler.Options ) : Type.Result<string>
     {
-        if( opts.every ) return `rate(${opts.every})`;
-        if( opts.cron )  return `cron(${opts.cron})`;
-        if( opts.at )    return `at(${opts.at})`;
-        throw new Error( "Scheduler.upsert: exactly one of `every`, `cron`, or `at` is required" );
+        if( opts.every ) return ResultUtils.ok( `rate(${opts.every})` );
+        if( opts.cron )  return ResultUtils.ok( `cron(${opts.cron})` );
+        if( opts.at )    return ResultUtils.ok( `at(${opts.at})` );
+        return ResultUtils.err( "Scheduler.upsert: exactly one of `every`, `cron`, or `at` is required" );
     }
 
-    /** Resolve a logical target key to a Scheduler {@link SchedulerTarget} (ARN + role + payload). */
+    /**
+     * Resolve a logical target key to a Scheduler {@link SchedulerTarget} (ARN + role + payload).
+     * Presence of `queueKey`/`functionKey` is validated by {@link upsert} before this runs; the only
+     * throws here are CloudResolver lookups, which run inside {@link upsert}'s `ResultUtils.from`.
+     */
     private target( target : Scheduler.Target, payload? : object ) : SchedulerTarget
     {
         const arn : string = target.functionKey !== undefined
             ? this.cloud.functionArn( target.functionKey )
-            : this.queueArn( this.cloud.queueUrl( this.requireQueueKey( target ) ) );
+            : this.queueArn( this.cloud.queueUrl( target.queueKey as ResourceKey ) );
 
         return {
             Arn     : arn,
@@ -150,12 +184,7 @@ export class Scheduler
         };
     }
 
-    private requireQueueKey( target : Scheduler.Target ) : ResourceKey
-    {
-        if( target.queueKey === undefined ) throw new Error( "Scheduler target: set queueKey or functionKey" );
-        return target.queueKey;
-    }
-
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * Derive an SQS queue ARN from its URL. Queue URLs are
      * `https://sqs.<region>.amazonaws.com/<account>/<name>` (LocalStack uses a host:port prefix);

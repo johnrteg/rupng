@@ -4,7 +4,7 @@
 //
 import axios, { AxiosError, HeadersDefaults, AxiosInstance, AxiosProgressEvent } from "axios";
 
-import { Network, SysConstants, StringUtils, ObjectUtils, Validator } from '@repo/common';
+import { NetworkUtils, DateUtils, StringUtils, ObjectUtils, ValueUtils } from '@repo/common';
 
 import { RestfulEndpoint }  from './RestfulEndpoint';
 
@@ -45,7 +45,7 @@ export class RestfulService
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
     constructor( base_url       : string,
                 default_headers : any = {},
-                timeout         : number = 10 * SysConstants.Time.SECONDS_TO_MS,   // 10 seconds
+                timeout         : number = 10 * DateUtils.Time.SECONDS_TO_MS,   // 10 seconds
                 csrf_tag        : string | null = null,
                 csrf_tz_tag     : string | null = null,
                 monitor         : RestfulService.CallHandle | null = null )
@@ -58,9 +58,9 @@ export class RestfulService
         if( csrf_tag    != null && csrf_tag    != "" )this.csrfTag = csrf_tag.toLowerCase();      // future case insensitivity
         if( csrf_tz_tag != null && csrf_tz_tag != "" )this.csrfTzTag = csrf_tz_tag.toLowerCase();
 
-        this.default_headers = { ...default_headers, ContentType: Network.MimeType.JSON };
+        this.default_headers = { ...default_headers, ContentType: NetworkUtils.MimeType.JSON };
         //this.default_headers = default_headers;
-        this.default_headers[ 'ContentType' ]= Network.MimeType.JSON;
+        this.default_headers[ 'ContentType' ]= NetworkUtils.MimeType.JSON;
         //this.default_headers = default_headers;
         this.default_timeout = timeout;
         this.cache = [];
@@ -103,7 +103,7 @@ export class RestfulService
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
     public deleteHeader( name: string ) : void
     {
-        if( Validator.notNull( this.default_headers[name] ) )
+        if( ValueUtils.notNull( this.default_headers[name] ) )
         {
             delete this.default_headers[name];
         }
@@ -119,7 +119,7 @@ export class RestfulService
     public clear() : void
     {
         this.cache = [];
-        if( Validator.notNull( this.timer ) )
+        if( ValueUtils.notNull( this.timer ) )
         {
             clearInterval( this.timer as ReturnType<typeof setInterval> );
             this.timer = null;
@@ -154,7 +154,7 @@ export class RestfulService
         let i : number = 0;
         while( i < this.cache.length )
         {
-            if( this.cache[i].last_access + ( this.cache[i].lifespan * SysConstants.Time.MINUTES_TO_MS ) < now )
+            if( this.cache[i].last_access + ( this.cache[i].lifespan * DateUtils.Time.MINUTES_TO_MS ) < now )
             {
                 this.cache.splice( i, 1 );
             }
@@ -208,12 +208,12 @@ export class RestfulService
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
     public async head( url : string, parameters : any = null, data : any = {}, headers : any = {}, timeout: number | null = null ) : Promise<RestfulService.Reply>
     {
-        return await this.request( Network.Method.HEAD, url, parameters, data, headers, timeout );
+        return await this.request( NetworkUtils.Method.HEAD, url, parameters, data, headers, timeout );
     }
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
     public async post( url : string, parameters : any = null, data : any = {}, headers : any = {}, timeout: number | null = null ) : Promise<RestfulService.Reply>
     {
-        return await this.request( Network.Method.POST, url, parameters, data, headers, timeout );
+        return await this.request( NetworkUtils.Method.POST, url, parameters, data, headers, timeout );
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -235,7 +235,7 @@ export class RestfulService
             }
         } );
 
-        return await this.request( Network.Method.POST, url, parameters, formData, headers, timeout, onProgress );
+        return await this.request( NetworkUtils.Method.POST, url, parameters, formData, headers, timeout, onProgress );
     }
 
 
@@ -250,7 +250,7 @@ export class RestfulService
         let get_url : string = url;
         let args : string = RestfulService.queryString( parameters );
         if( args.length > 0 )get_url += ( '?' + args );
-        let endpt : Endpoint = new Endpoint( Network.Method.GET, get_url, undefined, timeout );
+        let endpt : Endpoint = new Endpoint( NetworkUtils.Method.GET, get_url, undefined, timeout );
 
         if( options != null && options.cache )
         {
@@ -263,11 +263,11 @@ export class RestfulService
             }
         }
 */
-        let reply : RestfulService.Reply = await this.request( Network.Method.GET, url, parameters, null, headers, timeout );
+        let reply : RestfulService.Reply = await this.request( NetworkUtils.Method.GET, url, parameters, null, headers, timeout );
 
         // check and store response if good
         if( options
-            && Validator.notNull( options.cache )
+            && ValueUtils.notNull( options.cache )
             && options.cache === true
             && reply.ok )
         {
@@ -292,18 +292,18 @@ export class RestfulService
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
     public async put( url : string, parameters : any = null, data : any = {}, headers : any = {}, timeout: number | null = null ) : Promise<RestfulService.Reply>
     {
-        return await this.request( Network.Method.PUT, url, parameters, data, headers, timeout );
+        return await this.request( NetworkUtils.Method.PUT, url, parameters, data, headers, timeout );
     }
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
     public async delete( url : string, parameters : any = null, data : any = {}, headers : any = {}, timeout: number | null = null ) : Promise<RestfulService.Reply>
     {
-        return await this.request( Network.Method.DELETE, url, parameters, data, headers, timeout );
+        return await this.request( NetworkUtils.Method.DELETE, url, parameters, data, headers, timeout );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////
     public static queryString( parameters : any ) : string
     {
-        if( Validator.isNull( parameters ) )return "";
+        if( ValueUtils.isNull( parameters ) )return "";
 
         let params : Array<string> = [];
         //let name : string;
@@ -327,7 +327,7 @@ export class RestfulService
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////
-    private async request(  method      : Network.Method,
+    private async request(  method      : NetworkUtils.Method,
                             url         : string,
                             parameters  : any | null = null,
                             data        : any | null = null,
@@ -335,7 +335,7 @@ export class RestfulService
                             timeout     : number | null = null,
                             onProgress? : RestfulService.ProgressCallback ) : Promise<RestfulService.Reply>
     {
-        let reply : RestfulService.Reply = { ok: true, duration: 0, status: Network.Status.OK };
+        let reply : RestfulService.Reply = { ok: true, duration: 0, status: NetworkUtils.Status.OK };
         let start : number = Date.now();
 
         try
@@ -408,7 +408,7 @@ export class RestfulService
             let error_code     : string = 'EXCEPTION';
             let error_messsage : string = 'server error';
             let error_type     : string = '';
-            let error_status   : number = Network.Status.INTERNAL_SERVER_ERROR;
+            let error_status   : number = NetworkUtils.Status.INTERNAL_SERVER_ERROR;
             let error_data     : any | undefined = undefined;
 
             //
@@ -480,7 +480,7 @@ export namespace RestfulService
     {
         ok       : boolean;
         data?    : any;
-        status   : Network.Status;
+        status   : NetworkUtils.Status;
         headers? : any;
         error?   : Error;
         duration : number;
@@ -495,7 +495,7 @@ export namespace RestfulService
         // autorefresh
     }
 
-    export type CallHandle = ( method: Network.Method, url : string, status: number, duration: number ) => void;
+    export type CallHandle = ( method: NetworkUtils.Method, url : string, status: number, duration: number ) => void;
 
     export type ProgressEvent = AxiosProgressEvent;
     export type ProgressCallback = ( progressEvent: ProgressEvent ) => void;

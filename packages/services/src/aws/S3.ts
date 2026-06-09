@@ -6,6 +6,8 @@ import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } fro
 import type { GetObjectCommandOutput, PutObjectCommandInput } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import { ResultUtils } from "@repo/common";
+import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
@@ -36,16 +38,94 @@ export class S3
 
     ////////////////////////////////////////////////////////////////////////////////////////
     /**
+     * Build an object key from a **typed, per-usage descriptor** ({@link S3.ObjectKey}) — a
+     * discriminated union keyed on the central {@link S3.Domain} enum. Each asset family has its **own
+     * fixed shape and path**, so there are **no free-form segments to typo or reorder** (a whole class
+     * of "lost file" bugs): the scope (`acct/` vs `user/`), the domain token, and the path order are
+     * baked into the builder per case, and variants are **enums**.
+     *
+     * Adding a new asset family is a deliberate edit in **one place** — add a {@link S3.Domain} member, a
+     * descriptor interface, and a `case` here; the `switch` is **exhaustive**, so omitting the case is a
+     * **compile error**. Two services therefore can't silently reuse a domain for different shapes.
+     *
+     * **Non-throwing:** a malformed *dynamic* segment (an id/ext containing `/`, whitespace, empty, …)
+     * returns `ok: false`; otherwise `ok: true` with the key in `data`. The I/O methods propagate it.
+     *
+     * `variant` is the filename stem (a required string) — use `"default"` for an asset with only one
+     * form, never an optional/omitted value.
+     *
+     * @example
+     *   key({ domain: S3.Domain.MEDIA, accountId, mediaId, variant: "1080p", ext: "mp4" })
+     *     → "acct/<accountId>/media/<mediaId>/1080p.mp4"
+     *   key({ domain: S3.Domain.AVATAR, userId, variant: "256", ext: "webp" })
+     *     → "user/<userId>/avatar/256.webp"
+     *   key({ domain: S3.Domain.BRANDING, accountId, variant: "logo", ext: "png" })
+     *     → "acct/<accountId>/branding/logo.png"
+     */
+    key( spec : S3.ObjectKey ) : Type.Result<string>
+    {
+        switch( spec.domain )
+        {
+            case S3.Domain.MEDIA:
+                return S3.build( [ "acct", spec.accountId, "media", spec.mediaId ], spec.variant, spec.ext );
+            case S3.Domain.AVATAR:
+                return S3.build( [ "user", spec.userId, "avatar" ], spec.variant, spec.ext );
+            case S3.Domain.BRANDING:
+                return S3.build( [ "acct", spec.accountId, "branding" ], spec.variant, spec.ext );
+            case S3.Domain.REPORT:
+                return S3.build( [ "acct", spec.accountId, "reports", spec.reportId ], spec.submissionId, spec.ext );
+            case S3.Domain.MARKETPLACE:
+                return S3.build( [ "global", "marketplace", spec.integrationId ], spec.variant, spec.ext );
+            default:
+                return S3.unhandled( spec );   // exhaustiveness: `spec` is `never` here once every case is handled
+        }
+    }
+
+    /** Allowed characters in an object-key segment — no `/` (phantom path), whitespace, or oddities. */
+    private static readonly SEGMENT : RegExp = /^[A-Za-z0-9._-]+$/;
+
+    /** Validate one segment — `ok: true` with the value when valid, else `ok: false` (no throw). */
+    private static segment( value : string ) : Type.Result<string>
+    {
+        return S3.SEGMENT.test( value )
+            ? ResultUtils.ok( value )
+            : ResultUtils.err( `S3.key: invalid segment ${JSON.stringify( value )} — must be non-empty and contain only [A-Za-z0-9._-] (no "/", whitespace, or PII).` );
+    }
+
+    /** Join `<…dir>/<stem>.<ext>` after validating every (dynamic) segment. Enum tokens pass trivially. */
+    private static build( dirs : Array<string>, stem : string, ext : string ) : Type.Result<string>
+    {
+        for( const value of [ ...dirs, stem, ext ] )
+        {
+            const checked : Type.Result<string> = S3.segment( value );
+            if( ! checked.ok ) return checked;
+        }
+        return ResultUtils.ok( `${dirs.join( "/" )}/${stem}.${ext}` );
+    }
+
+    /** Compile-time exhaustiveness guard — reached only if a {@link S3.Domain} lacks a `case` in {@link key}. */
+    private static unhandled( spec : never ) : Type.Result<string>
+    {
+        return ResultUtils.err( `S3.key: unhandled domain ${JSON.stringify( ( spec as { domain : string } ).domain )}` );
+    }
+
+    /** Normalize an {@link S3.Key} (raw string or {@link S3.ObjectKey}) to the physical object key (no throw). */
+    private resolveKey( key : S3.Key ) : Type.Result<string> { return typeof key === "string" ? ResultUtils.ok( key ) : this.key( key ); }
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+    /**
      * Fetch an object. The returned `Body` is a stream — read it with
      * `.Body.transformToString()` / `.transformToByteArray()`, or pipe it. Use for server-side
      * reads; to hand a download straight to an end user, prefer {@link presignGet} (no bytes
      * through your service).
      * @param bucketKey logical bucket key.
-     * @param objectKey object key/path within the bucket.
+     * @param objectKey object key — a built string or structured {@link S3.ObjectKey}.
      */
-    get( bucketKey : ResourceKey, objectKey : string ) : Promise<GetObjectCommandOutput>
+    get( bucketKey : ResourceKey, objectKey : S3.Key ) : Promise<Type.Result<GetObjectCommandOutput>>
     {
-        return this.client.send( new GetObjectCommand( { Bucket: this.bucket( bucketKey ), Key: objectKey } ) );
+        const objectName : Type.Result<string> = this.resolveKey( objectKey );
+        if( ! objectName.ok ) return Promise.resolve( objectName );
+        return ResultUtils.from( () => this.client.send( new GetObjectCommand( { Bucket: this.bucket( bucketKey ), Key: objectName.data } ) ) );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////
@@ -54,16 +134,26 @@ export class S3
      * `contentType` so browsers render/download correctly. For large or browser-originated
      * uploads that shouldn't transit your service, hand out a {@link presignPut} URL instead.
      */
-    async put( bucketKey : ResourceKey, objectKey : string, body : PutObjectCommandInput[ "Body" ], contentType? : string ) : Promise<void>
+    put( bucketKey : ResourceKey, objectKey : S3.Key, body : PutObjectCommandInput[ "Body" ], contentType? : string ) : Promise<Type.Result<void>>
     {
-        await this.client.send( new PutObjectCommand( { Bucket: this.bucket( bucketKey ), Key: objectKey, Body: body, ContentType: contentType } ) );
+        const objectName : Type.Result<string> = this.resolveKey( objectKey );
+        if( ! objectName.ok ) return Promise.resolve( objectName );
+        return ResultUtils.from( async () : Promise<void> =>
+        {
+            await this.client.send( new PutObjectCommand( { Bucket: this.bucket( bucketKey ), Key: objectName.data, Body: body, ContentType: contentType } ) );
+        } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////
     /** Delete an object. Idempotent — succeeds even if the key doesn't exist. */
-    async remove( bucketKey : ResourceKey, objectKey : string ) : Promise<void>
+    remove( bucketKey : ResourceKey, objectKey : S3.Key ) : Promise<Type.Result<void>>
     {
-        await this.client.send( new DeleteObjectCommand( { Bucket: this.bucket( bucketKey ), Key: objectKey } ) );
+        const objectName : Type.Result<string> = this.resolveKey( objectKey );
+        if( ! objectName.ok ) return Promise.resolve( objectName );
+        return ResultUtils.from( async () : Promise<void> =>
+        {
+            await this.client.send( new DeleteObjectCommand( { Bucket: this.bucket( bucketKey ), Key: objectName.data } ) );
+        } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////
@@ -73,9 +163,11 @@ export class S3
      * buckets. Use over {@link put} whenever the uploader is a browser/mobile client.
      * @param ttlSec link lifetime in seconds (default 900 = 15 min); keep it short.
      */
-    presignPut( bucketKey : ResourceKey, objectKey : string, ttlSec : number = 900 ) : Promise<string>
+    presignPut( bucketKey : ResourceKey, objectKey : S3.Key, ttlSec : number = 900 ) : Promise<Type.Result<string>>
     {
-        return getSignedUrl( this.client, new PutObjectCommand( { Bucket: this.bucket( bucketKey ), Key: objectKey } ), { expiresIn: ttlSec } );
+        const objectName : Type.Result<string> = this.resolveKey( objectKey );
+        if( ! objectName.ok ) return Promise.resolve( objectName );
+        return ResultUtils.from( () => getSignedUrl( this.client, new PutObjectCommand( { Bucket: this.bucket( bucketKey ), Key: objectName.data } ), { expiresIn: ttlSec } ) );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////
@@ -85,8 +177,56 @@ export class S3
      * consumer is an end user / external client.
      * @param ttlSec link lifetime in seconds (default 900).
      */
-    presignGet( bucketKey : ResourceKey, objectKey : string, ttlSec : number = 900 ) : Promise<string>
+    presignGet( bucketKey : ResourceKey, objectKey : S3.Key, ttlSec : number = 900 ) : Promise<Type.Result<string>>
     {
-        return getSignedUrl( this.client, new GetObjectCommand( { Bucket: this.bucket( bucketKey ), Key: objectKey } ), { expiresIn: ttlSec } );
+        const objectName : Type.Result<string> = this.resolveKey( objectKey );
+        if( ! objectName.ok ) return Promise.resolve( objectName );
+        return ResultUtils.from( () => getSignedUrl( this.client, new GetObjectCommand( { Bucket: this.bucket( bucketKey ), Key: objectName.data } ), { expiresIn: ttlSec } ) );
     }
+}
+
+export namespace S3
+{
+    /**
+     * The **asset family** — the central registry of object-key shapes. Adding a family is a deliberate
+     * edit *here*: add a member, a descriptor interface, and a `case` in {@link S3.key} (the `switch` is
+     * exhaustive, so a missing case is a compile error). Because each domain maps to exactly one typed
+     * shape, two services **can't** silently reuse a domain for different layouts.
+     */
+    export enum Domain
+    {
+        MEDIA       = "media",      // account media library — transcoded assets + renditions
+        AVATAR      = "avatar",     // user profile image — USER-scoped (follows the person across accounts)
+        BRANDING    = "branding",   // account branding — logo / icon / …
+        REPORT      = "reports",    // generated report artifacts
+        MARKETPLACE = "marketplace",// platform-GLOBAL marketplace catalog assets (e.g. integration icons)
+    }
+
+    // Each descriptor's path order + scope (acct/ vs user/ vs platform-global) is fixed by {@link S3.key};
+    // there are no free-form segments to typo or reorder. `variant` is the filename stem — a required
+    // string; use "default" for an asset with a single form (never optional/omitted). `ext` has no leading dot.
+
+    /** `acct/<accountId>/media/<mediaId>/<variant>.<ext>` — variant e.g. `"original"` | `"1080p"` | `"thumb"`. */
+    export interface MediaKey    { domain : Domain.MEDIA;    accountId : string; mediaId : string; variant : string; ext : string; }
+
+    /** `user/<userId>/avatar/<variant>.<ext>` — user-scoped; variant e.g. `"original"` | `"256"` | `"64"`. */
+    export interface AvatarKey   { domain : Domain.AVATAR;   userId : string; variant : string; ext : string; }
+
+    /** `acct/<accountId>/branding/<variant>.<ext>` — variant e.g. `"logo"` | `"icon"`. */
+    export interface BrandingKey { domain : Domain.BRANDING; accountId : string; variant : string; ext : string; }
+
+    /** `acct/<accountId>/reports/<reportId>/<submissionId>.<ext>` — submissions grouped under the report
+     *  definition (`reportId`, stable across a schedule's runs); each execution is its own `submissionId`.
+     *  The reports DB holds the metadata (type, schedule, requester, record count, timestamps) — not the key. */
+    export interface ReportKey   { domain : Domain.REPORT;   accountId : string; reportId : string; submissionId : string; ext : string; }
+
+    /** `global/marketplace/<integrationId>/<variant>.<ext>` — **platform-global** (the `global/` root, no
+     *  account/user scope); catalog assets like an integration's icon, e.g. variant `"icon"`. */
+    export interface MarketplaceKey { domain : Domain.MARKETPLACE; integrationId : string; variant : string; ext : string; }
+
+    /** A fully-typed object-key descriptor — one shape per {@link Domain} (discriminated on `domain`). */
+    export type ObjectKey = MediaKey | AvatarKey | BrandingKey | ReportKey | MarketplaceKey;
+
+    /** A key arg to the object methods: a raw string or a typed {@link S3.ObjectKey}. */
+    export type Key = string | ObjectKey;
 }

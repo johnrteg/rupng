@@ -2,6 +2,26 @@
 export default class ArrayUtils
 {
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** True if `value` is an array (moved from `Validator.isArray`). */
+    public static isValid( value : any ) : boolean
+    {
+        return Array.isArray( value );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * True if `value` is a **non-empty array of primitives** (moved from `Validator.isPrimitiveArray`).
+     * Judged by the first element (assumes a homogeneous array); false for empty arrays / non-arrays.
+     */
+    public static isPrimitive( value : any ) : boolean
+    {
+        if( !ArrayUtils.isValid( value ) || value.length === 0 ) return false;
+        const first : any = value[ 0 ];
+        const firstIsObject : boolean = first !== null && first !== undefined && typeof first === "object";
+        return !firstIsObject;
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /*
         This deals with some arrays being returned that are not defined yet, but all indications that they are
     */

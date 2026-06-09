@@ -4,6 +4,8 @@
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import type { InvokeCommandOutput } from "@aws-sdk/client-lambda";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import { ResultUtils } from "@repo/common";
+import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
@@ -19,40 +21,51 @@ export class Lambda
 {
     private _client? : LambdaClient;
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** @param cloud the owning service's resolver — maps logical function keys to function ARNs. */
     constructor( private readonly cloud : CloudResolver ) {}
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** The raw `LambdaClient` — escape hatch (aliases, async config, streaming). Lazy + cached. */
     get client() : LambdaClient { return this._client ??= ClientUtils.createClient( LambdaClient ); }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** Resolve a cloud-spec logical function key (e.g. `"processor"`) to its physical ARN. */
     fn( key : ResourceKey ) : string { return this.cloud.functionArn( key ); }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * Invoke **synchronously** (request/response) and return the parsed JSON result. Blocks until
      * the target finishes — use only when you need its output; otherwise prefer {@link fire}.
      * @typeParam T the expected JSON result shape.
      */
-    async invoke<T>( fnKey : ResourceKey, payload : unknown ) : Promise<T | undefined>
+    async invoke<T>( fnKey : ResourceKey, payload : unknown ) : Promise<Type.Result<T | undefined>>
     {
-        const result : InvokeCommandOutput = await this.client.send( new InvokeCommand( {
-            FunctionName   : this.fn( fnKey ),
-            InvocationType : "RequestResponse",
-            Payload        : new TextEncoder().encode( JSON.stringify( payload ) ),
-        } ) );
-        return result.Payload ? ( JSON.parse( new TextDecoder().decode( result.Payload ) ) as T ) : undefined;
+        return ResultUtils.from( async () : Promise<T | undefined> =>
+        {
+            const result : InvokeCommandOutput = await this.client.send( new InvokeCommand( {
+                FunctionName   : this.fn( fnKey ),
+                InvocationType : "RequestResponse",
+                Payload        : new TextEncoder().encode( JSON.stringify( payload ) ),
+            } ) );
+            return result.Payload ? ( JSON.parse( new TextDecoder().decode( result.Payload ) ) as T ) : undefined;
+        } );
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * Invoke **asynchronously** (event) — returns as soon as the event is accepted; the result
      * is discarded and failures route to the function's own async dead-letter/destination.
      */
-    async fire( fnKey : ResourceKey, payload : unknown ) : Promise<void>
+    fire( fnKey : ResourceKey, payload : unknown ) : Promise<Type.Result<void>>
     {
-        await this.client.send( new InvokeCommand( {
-            FunctionName   : this.fn( fnKey ),
-            InvocationType : "Event",
-            Payload        : new TextEncoder().encode( JSON.stringify( payload ) ),
-        } ) );
+        return ResultUtils.from( async () : Promise<void> =>
+        {
+            await this.client.send( new InvokeCommand( {
+                FunctionName   : this.fn( fnKey ),
+                InvocationType : "Event",
+                Payload        : new TextEncoder().encode( JSON.stringify( payload ) ),
+            } ) );
+        } );
     }
 }

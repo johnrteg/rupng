@@ -1,6 +1,6 @@
 //
 import { RestfulEndpoint, Access } from "@repo/endpoint";
-import { Network } from "@repo/common";
+import { NetworkUtils } from "@repo/common";
 
 /*
     client:
@@ -17,10 +17,10 @@ import { Network } from "@repo/common";
 export class PostLogin extends RestfulEndpoint<{}, PostLogin.Body>
 {
     public readonly uri      : string = PostLogin.URI;
-    public readonly method   : Network.Method = Network.Method.POST;
+    public readonly method   : NetworkUtils.Method = NetworkUtils.Method.POST;
     public readonly access   : Access.Role | undefined = undefined;   // non-authenticated
     public readonly timeout  : number | undefined = undefined;
-    public readonly exposure : RestfulEndpoint.Exposure = RestfulEndpoint.Exposure.PUBLIC;
+    public readonly audience : RestfulEndpoint.Audience = RestfulEndpoint.Audience.APP;   // edge-reachable, not a published dev API
 
     constructor( body? : PostLogin.Body )
     {
@@ -73,8 +73,8 @@ export namespace PostLogin
     // possible error type
     export enum Error
     {
-        BAD_REQUEST = Network.Status.BAD_REQUEST,
-        INTERNAL_SERVER_ERROR = Network.Status.INTERNAL_SERVER_ERROR,
+        BAD_REQUEST = NetworkUtils.Status.BAD_REQUEST,
+        INTERNAL_SERVER_ERROR = NetworkUtils.Status.INTERNAL_SERVER_ERROR,
     }
 
 }

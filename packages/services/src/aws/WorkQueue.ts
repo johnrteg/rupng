@@ -19,6 +19,8 @@
 //
 import type { Message } from "@aws-sdk/client-sqs";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import { ResultUtils } from "@repo/common";
+import type { Type } from "@repo/common";
 
 import { Sqs } from "./Sqs";
 
@@ -36,6 +38,7 @@ export class WorkQueue
     private readonly opts : WorkQueue.Options;
     private fairAccumulator : number = 0;       // weighted-token state for fair-queue turns
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * @param cloud the owning service's resolver — maps logical queue keys to physical urls.
      * @param opts  the fair queue key (required) + optional system-priority queue key.
@@ -46,6 +49,7 @@ export class WorkQueue
         this.opts = opts;
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * Enqueue work. By default it goes to the **fair** (per-tenant) queue under `fairnessKey`; set
      * `priority: true` to route it to the **system priority** queue instead (drained first).
@@ -53,20 +57,22 @@ export class WorkQueue
      * @param body    the message payload (object → JSON).
      * @param submit  routing — `fairnessKey` (required unless `priority`), `priority`, `dedupeId`.
      */
-    async submit( body : string | object, submit : WorkQueue.SubmitOptions ) : Promise<void>
+    submit( body : string | object, submit : WorkQueue.SubmitOptions ) : Promise<Type.Result<void>>
     {
         if( submit.priority )
         {
-            if( this.opts.priorityKey === undefined ) throw new Error( "WorkQueue.submit: priority requested but no priorityKey configured" );
-            await this.sqs.send( this.opts.priorityKey, body );
-            return;
+            if( this.opts.priorityKey === undefined )
+                return Promise.resolve( ResultUtils.err<void>( "WorkQueue.submit: priority requested but no priorityKey configured" ) );
+            return this.sqs.send( this.opts.priorityKey, body );
         }
 
-        if( submit.fairnessKey === undefined ) throw new Error( "WorkQueue.submit: fairnessKey is required for fair-share work" );
+        if( submit.fairnessKey === undefined )
+            return Promise.resolve( ResultUtils.err<void>( "WorkQueue.submit: fairnessKey is required for fair-share work" ) );
         // FIFO requires a group id (the tenant) and a dedup id (or content-based dedup on the queue).
-        await this.sqs.send( this.opts.fairKey, body, { groupId: submit.fairnessKey, dedupeId: submit.dedupeId } );
+        return this.sqs.send( this.opts.fairKey, body, { groupId: submit.fairnessKey, dedupeId: submit.dedupeId } );
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * Receive a batch to process. Which queue gets first dibs this cycle is governed by
      * {@link WorkQueue.Options.fairWeight}: by default (`0`) the **priority** queue is checked first
@@ -79,13 +85,16 @@ export class WorkQueue
      * @param max         max messages (1–10, default 10).
      * @param waitSeconds long-poll wait on the fallback queue (0–20, default 20).
      */
-    async receive( max : number = 10, waitSeconds : number = 20 ) : Promise<Array<WorkQueue.Item>>
+    async receive( max : number = 10, waitSeconds : number = 20 ) : Promise<Type.Result<Array<WorkQueue.Item>>>
     {
+        const tag = ( messages : Array<Message>, source : WorkQueue.Item[ "source" ], queueKey : ResourceKey ) : Array<WorkQueue.Item> =>
+            messages.map( ( message ) => ( { source, queueKey, message } ) );
+
         // No priority queue → always the fair queue.
         if( this.opts.priorityKey === undefined )
         {
-            const fair : Array<Message> = await this.sqs.receive( this.opts.fairKey, max, waitSeconds );
-            return fair.map( ( message ) => ( { source: "fair", queueKey: this.opts.fairKey, message } ) );
+            const fair : Type.Result<Array<Message>> = await this.sqs.receive( this.opts.fairKey, max, waitSeconds );
+            return fair.ok ? ResultUtils.ok( tag( fair.data, "fair", this.opts.fairKey ) ) : fair;
         }
 
         // Pick this cycle's order by weight (anti-starvation), then short-poll first / long-poll fallback.
@@ -95,14 +104,15 @@ export class WorkQueue
         const secondKey  : ResourceKey                  = fairFirst ? this.opts.priorityKey : this.opts.fairKey;
         const secondSrc  : WorkQueue.Item[ "source" ]   = fairFirst ? "priority" : "fair";
 
-        const first : Array<Message> = await this.sqs.receive( firstKey, max, 0 );
-        if( first.length > 0 )
-            return first.map( ( message ) => ( { source: firstSrc, queueKey: firstKey, message } ) );
+        const first : Type.Result<Array<Message>> = await this.sqs.receive( firstKey, max, 0 );
+        if( !first.ok ) return first;
+        if( first.data.length > 0 ) return ResultUtils.ok( tag( first.data, firstSrc, firstKey ) );
 
-        const second : Array<Message> = await this.sqs.receive( secondKey, max, waitSeconds );
-        return second.map( ( message ) => ( { source: secondSrc, queueKey: secondKey, message } ) );
+        const second : Type.Result<Array<Message>> = await this.sqs.receive( secondKey, max, waitSeconds );
+        return second.ok ? ResultUtils.ok( tag( second.data, secondSrc, secondKey ) ) : second;
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * Deterministic weighted token: returns true on a `fairWeight` fraction of cycles (so the fair
      * queue gets first dibs that often). `0` → never (priority rules); `1` → always (fair rules).
@@ -118,13 +128,16 @@ export class WorkQueue
         return false;
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** Acknowledge (delete) a processed item so it isn't redelivered. */
-    async ack( item : WorkQueue.Item ) : Promise<void>
+    ack( item : WorkQueue.Item ) : Promise<Type.Result<void>>
     {
-        if( item.message.ReceiptHandle === undefined ) throw new Error( "WorkQueue.ack: message has no ReceiptHandle" );
-        await this.sqs.delete( item.queueKey, item.message.ReceiptHandle );
+        if( item.message.ReceiptHandle === undefined )
+            return Promise.resolve( ResultUtils.err<void>( "WorkQueue.ack: message has no ReceiptHandle" ) );
+        return this.sqs.delete( item.queueKey, item.message.ReceiptHandle );
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** Escape hatch — the underlying {@link Sqs} facade for batch/attribute operations. */
     get queue() : Sqs { return this.sqs; }
 }

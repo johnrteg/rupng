@@ -174,6 +174,26 @@ All keyed by logical name; the CDK injects the physical id as an env var the fac
 
 This local friction is a real reason DynamoDB is the default. (See `cloud/local/README.md`.)
 
+### Managed engine: Aurora PostgreSQL-Compatible
+
+When a service does need relational, the managed engine is **Amazon Aurora PostgreSQL-Compatible**
+(not plain RDS-for-Postgres) — so the same CDK cluster construct and the same Postgres wire
+protocol / SQL / `pg` driver work in both environments.
+
+* **AWS** — real managed Aurora: Serverless v2 ACU autoscaling, reader replicas, Multi-AZ, Aurora
+  Global Database, optional RDS Data API.
+* **LocalStack (Pro)** — emulates the **cluster control plane** (`CreateDBCluster` with
+  `Engine = aurora-postgresql`, `CreateDBInstance`) and the **RDS Data API** (`rds-data`
+  `ExecuteStatement` / `BatchExecuteStatement`), **backed by a real PostgreSQL** process. You get a
+  cluster + endpoint and normal SQL behavior — enough to develop and integration-test the same
+  constructs.
+* **Stubbed locally — don't test these against LocalStack:** Serverless v2 **autoscaling / pause-resume**
+  (fixed local Postgres), and Aurora's **storage architecture, replicas/replication, Global Database,
+  and failover** behavior/timing. Local = "Aurora API shape over one real Postgres"; the elastic/HA
+  characteristics are AWS-only.
+* The **RDS Proxy** caveat above still applies locally — the `Database` facade's local branch uses
+  password auth + no TLS + no proxy (`DB_PASSWORD`), reserving IAM-via-Proxy for the cloud.
+
 ## Connections & auth
 
 - **DynamoDB** — **connectionless**: HTTPS calls signed with IAM. No pools, no exhaustion — ideal
@@ -191,6 +211,26 @@ This local friction is a real reason DynamoDB is the default. (See `cloud/local/
   `Database.tx()` (BEGIN/COMMIT/ROLLBACK on the writer).
 - **Redis** — `MULTI/EXEC` + Lua are atomic on a node, but it's not a transactional SoR; don't rely
   on it for durability.
+
+### Read-after-write — "I POST then GET, is it there?"
+
+A successful write is **durably committed** in both stores; the catch is purely *which read sees it*.
+
+| Read | Read-after-write? |
+|---|---|
+| DynamoDB `GetItem` (default) | ❌ not guaranteed (eventually consistent — usually ms) |
+| DynamoDB `get(..., { consistent: true })` / `ConsistentRead` (base table) | ✅ guaranteed |
+| DynamoDB **GSI** query | ❌ *always* eventually consistent — `ConsistentRead` not allowed |
+| RDS read from the **writer** | ✅ guaranteed (ACID; sees committed data) |
+| RDS read from a **reader** (`Database.Access.READ`) | ❌ replication lag (usually ms) |
+
+So immediately after a write:
+- **Same item, by key, must be visible** → DynamoDB: `get(key, { consistent: true })`; RDS: read from the
+  **writer** (`Access.WRITE` / `ReadWrite`), not the reader.
+- **GET is a list/search** (DynamoDB GSI, or an OpenSearch projection) → you *can't* get strong
+  consistency; design for eventual.
+- **Best pattern regardless:** have the **POST return the created resource** in its response, so the
+  client needn't immediately re-GET — sidesteps the consistency window entirely.
 
 ## Backups & disaster recovery
 

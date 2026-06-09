@@ -3,6 +3,8 @@
 //
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import type { CloudResolver } from "@repo/cloud-spec";
+import { ResultUtils } from "@repo/common";
+import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
@@ -18,12 +20,15 @@ export class Ses
 {
     private _client? : SESv2Client;
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** @param cloud the owning service's resolver (kept for a uniform facade signature). */
     constructor( private readonly cloud : CloudResolver ) {}
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** The raw `SESv2Client` — escape hatch (templates, raw MIME, suppression list). Lazy + cached. */
     get client() : SESv2Client { return this._client ??= ClientUtils.createClient( SESv2Client ); }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * Send a simple HTML and/or text email.
      * @param opts.from    a **verified** SES identity (address or domain).
@@ -33,8 +38,10 @@ export class Ses
      * @param opts.text    plain-text body (fallback for non-HTML clients).
      * @param opts.replyTo optional Reply-To addresses.
      */
-    async send( opts : { from : string; to : Array<string>; subject : string; html? : string; text? : string; replyTo? : Array<string> } ) : Promise<void>
+    send( opts : { from : string; to : Array<string>; subject : string; html? : string; text? : string; replyTo? : Array<string> } ) : Promise<Type.Result<void>>
     {
+        return ResultUtils.from( async () : Promise<void> =>
+        {
         await this.client.send( new SendEmailCommand( {
             FromEmailAddress : opts.from,
             Destination      : { ToAddresses: opts.to },
@@ -49,5 +56,6 @@ export class Ses
                 },
             },
         } ) );
+        } );
     }
 }

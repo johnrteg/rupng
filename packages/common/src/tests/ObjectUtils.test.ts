@@ -59,3 +59,15 @@ describe('ObjectUtils.parseKeyValueString', () => {
     expect(ObjectUtils.parseKeyValueString('a:1,b:2')).toEqual({ a: '1', b: '2' });
   });
 });
+describe('ObjectUtils.isValid (moved from Validator.isObject)', () => {
+    test('true for non-null objects (incl. arrays/dates)', () => {
+        expect( ObjectUtils.isValid( { food: 'bar' } ) ).toBe( true );
+        expect( ObjectUtils.isValid( [ 'a', 'b' ] ) ).toBe( true );
+        expect( ObjectUtils.isValid( new Date() ) ).toBe( true );
+        expect( ObjectUtils.isValid( null ) ).toBe( false );
+        expect( ObjectUtils.isValid( undefined ) ).toBe( false );
+        expect( ObjectUtils.isValid( 'text' ) ).toBe( false );
+        expect( ObjectUtils.isValid( 34 ) ).toBe( false );
+        expect( ObjectUtils.isValid( true ) ).toBe( false );
+    });
+});

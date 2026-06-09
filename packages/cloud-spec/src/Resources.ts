@@ -513,10 +513,12 @@ export interface CacheSpec
 
 export interface AppConfigSpec
 {
-    key          : ResourceKey;
-    application? : string;                   // AppConfig application name (defaults to the service)
-    profiles     : Array<AppConfigProfile>;  // one or more configuration profiles
-    // Environments map to the deployment Environment (dev/staging/production).
+    key           : ResourceKey;
+    application?  : string;                  // AppConfig application name (defaults to the service)
+    profiles      : Array<AppConfigProfile>; // one or more configuration profiles
+    environments? : Array<string>;           // in-account deploy targets — default ["default"].
+                                             // NOT dev/staging/prod (that's the AWS account boundary);
+                                             // use for rings (canary/production), regions, or cells.
 }
 
 export interface AppConfigProfile

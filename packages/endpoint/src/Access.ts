@@ -12,6 +12,12 @@
 // a session and must still pass the lower endpoints. An endpoint declares one minimum
 // role; the authorizer checks the caller's highest granted role against it.
 //
+// NOT here: cross-account / resource-scoped access ("a user from account A may send on
+// account B's campaign #123", or "support may enter my account"). That is a SEPARATE
+// authorization primitive — delegation GRANTS — owned by auth, layered on these ladders
+// (capped at the issuer's own rank, windowed, revocable). Do NOT model it as a role.
+// See apps/core/auth/SPECS.md → Cross-account delegation grants.
+//
 
 export namespace Access
 {

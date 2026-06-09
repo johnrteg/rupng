@@ -42,13 +42,33 @@ that centralize the cross-cutting concerns and complete the cloud-spec contract.
 Facades wrap the **common 80%**. Every facade exposes its raw underlying client as
 **`.client`** for the exotic 20% — we don't reinvent the SDK.
 
-```ts
-await this.s3.put("uploads", key, body);     // logical key "uploads" -> physical bucket
-const url = await this.s3.presignPut("uploads", key, 900);
-await this.kafka.publish("events", [{ value: JSON.stringify(evt) }]);
+Facade methods **don't throw** — they return a `Type.Result<T>` (`{ ok, data } | { ok, error }`),
+so callers branch on `.ok` instead of wrapping every call in try/catch (the one try/catch lives
+inside `ResultUtils.from`). On success, `data` is correctly typed:
 
-await this.s3.client.send(new SelectObjectContentCommand({ /* … */ }));   // escape hatch
+```ts
+import type { Type } from "@repo/common";
+
+const put : Type.Result<void> = await this.s3.put("uploads", key, body);   // logical key "uploads" -> physical bucket
+if ( !put.ok ) { this.log.error("upload failed", put.error); return; }
+
+const link : Type.Result<string> = await this.s3.presignPut("uploads", key, 900);
+if ( !link.ok ) { this.log.error("presign failed", link.error); return; }
+use( link.data );                                        // link.data : string  (narrowed by the ok check)
+
+const got : Type.Result<User | undefined> = await this.dynamo.get<User>("users", { id });
+if ( got.ok && got.data ) render( got.data );            // got.data : User  (narrowed)
+
+const sent : Type.Result<void> = await this.kafka.publishEvent("contact", { type: "contact.created", key: id, data: contact });
+if ( !sent.ok ) this.log.error("publish failed", sent.error);
+
+await this.s3.client.send(new SelectObjectContentCommand({ /* … */ }));   // escape hatch — raw SDK (may throw)
 ```
+
+Every facade method returns `Promise<Type.Result<T>>`, so the result is **always** fully typed — the
+`<T>` flows through (`get<User>` → `Type.Result<User | undefined>`), and after the `if (...ok)` guard
+TypeScript narrows `data` to the success type. The annotations above are optional (inference already
+gives the same types) but make the contract explicit.
 
 ### Lazy, by design
 

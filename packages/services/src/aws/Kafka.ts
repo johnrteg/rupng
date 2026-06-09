@@ -7,6 +7,8 @@
 import { Kafka as KafkaJS } from "kafkajs";
 import type { Producer, Consumer, Message, EachMessagePayload, IHeaders } from "kafkajs";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import { ResultUtils } from "@repo/common";
+import type { Type } from "@repo/common";
 
 /**
  * Kafka (MSK) facade — wraps `kafkajs` (MSK speaks the Kafka wire protocol, not an AWS SDK),
@@ -38,8 +40,10 @@ import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
  *     protected get kafka() : Kafka { return this._kafka ??= new Kafka( this.cloud ); }
  *
  *     // PRODUCE — one "contact" topic; key by contactId so a contact's events stay ordered.
+ *     // publish* return a Result (no throw) — check `.ok`.
  *     async created( contact : Contact ) : Promise<void> {
- *         await this.kafka.publishEvent( "contact", { type: "contact.created", key: contact.id, data: contact } );
+ *         const published = await this.kafka.publishEvent( "contact", { type: "contact.created", key: contact.id, data: contact } );
+ *         if ( !published.ok ) this.log.error( "publish failed", published.error );
  *     }
  *     async deleted( contactId : string ) : Promise<void> {
  *         await this.kafka.publishEvent( "contact", { type: "contact.deleted", key: contactId, data: { id: contactId } } );
@@ -103,14 +107,17 @@ export class Kafka
      * @param topicKey logical topic key.
      * @param messages kafkajs messages (`{ key?, value, headers?, … }`).
      */
-    async publish( topicKey : ResourceKey, messages : Array<Message> ) : Promise<void>
+    publish( topicKey : ResourceKey, messages : Array<Message> ) : Promise<Type.Result<void>>
     {
-        if( this._producer === undefined )
+        return ResultUtils.from( async () : Promise<void> =>
         {
-            this._producer = this.kafka.producer();
-            await this._producer.connect();
-        }
-        await this._producer.send( { topic: this.topic( topicKey ), messages } );
+            if( this._producer === undefined )
+            {
+                this._producer = this.kafka.producer();
+                await this._producer.connect();
+            }
+            await this._producer.send( { topic: this.topic( topicKey ), messages } );
+        } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -126,7 +133,7 @@ export class Kafka
      * @param payload  a single value or an array of values to publish.
      * @param opts     optional per-value `key` extractor + common `headers`.
      */
-    async publishJson<T>( topicKey : ResourceKey, payload : T | Array<T>, opts : Kafka.PublishOptions<T> = {} ) : Promise<void>
+    publishJson<T>( topicKey : ResourceKey, payload : T | Array<T>, opts : Kafka.PublishOptions<T> = {} ) : Promise<Type.Result<void>>
     {
         const values   : Array<T>       = Array.isArray( payload ) ? payload : [ payload ];
         const messages : Array<Message> = values.map( ( value : T ) : Message => ( {
@@ -134,26 +141,31 @@ export class Kafka
             value   : JSON.stringify( value ),
             headers : opts.headers,
         } ) );
-        await this.publish( topicKey, messages );
+        return this.publish( topicKey, messages );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
     /**
      * Publish a typed **event envelope** ({@link Kafka.Event}) to an **entity topic** — the
-     * recommended shape for entity lifecycle streams. The envelope's `key` becomes the Kafka message
-     * **key** (so all events for one entity share a partition and stay **ordered**), and `type` is
-     * also copied to a `type` **header** for cheap inspection. Consume with {@link subscribeEvents}.
+     * recommended shape for entity state-change streams. The envelope's `key` becomes the Kafka message
+     * **key** (so all events for one entity share a partition and stay **ordered**), and the metadata
+     * (`type` / `id` / `source` / `transactionId` / `version` / `seq`) is mirrored to **headers** for
+     * cheap broker-side filtering. Consume with {@link subscribeEvents} or {@link subscribeObject}.
      *
      * @typeParam T the `data` payload shape.
      * @param topicKey logical topic key (one per entity, e.g. `"contact"`).
-     * @param event    the envelope: `{ type, key, data, id?, time?, source? }`.
+     * @param event    the {@link Kafka.Event} envelope.
      */
-    async publishEvent<T>( topicKey : ResourceKey, event : Kafka.Event<T> ) : Promise<void>
+    publishEvent<T>( topicKey : ResourceKey, event : Kafka.Event<T> ) : Promise<Type.Result<void>>
     {
         const headers : Record<string, string> = { type: event.type };
-        if( event.id !== undefined ) headers[ "id" ] = event.id;
+        if( event.id            !== undefined ) headers[ "id" ]            = event.id;
+        if( event.source        !== undefined ) headers[ "source" ]        = event.source;
+        if( event.transactionId !== undefined ) headers[ "transactionId" ] = event.transactionId;
+        if( event.version       !== undefined ) headers[ "version" ]       = String( event.version );
+        if( event.seq           !== undefined ) headers[ "seq" ]           = String( event.seq );
 
-        await this.publish( topicKey, [ { key: event.key, value: JSON.stringify( event ), headers } ] );
+        return this.publish( topicKey, [ { key: event.key, value: JSON.stringify( event ), headers } ] );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -183,11 +195,11 @@ export class Kafka
      * @returns the running {@link Consumer} (for pause/resume/seek or manual disconnect).
      */
     async subscribe(
-        groupId   : string,
-        topicKeys : ResourceKey | Array<ResourceKey>,
-        handler   : ( message : Kafka.Incoming ) => Promise<void>,
-        opts      : Kafka.SubscribeOptions = {},
-    ) : Promise<Consumer>
+                        groupId   : string,
+                        topicKeys : ResourceKey | Array<ResourceKey>,
+                        handler   : ( message : Kafka.Incoming ) => Promise<void>,
+                        opts      : Kafka.SubscribeOptions = {},
+                    ) : Promise<Consumer>
     {
         const keys     : Array<ResourceKey> = Array.isArray( topicKeys ) ? topicKeys : [ topicKeys ];
         const consumer : Consumer           = this.kafka.consumer( { groupId } );
@@ -203,7 +215,7 @@ export class Kafka
                     topic     : payload.topic,
                     partition : payload.partition,
                     key       : payload.message.key?.toString(),
-                    value     : payload.message.value?.toString() ?? "",
+                    value     : Kafka.decodeValue( payload.message.value ),   // JSON-parsed (our topics are always JSON)
                     headers   : Kafka.decodeHeaders( payload.message.headers ),
                     raw       : payload,
                 } );
@@ -216,10 +228,10 @@ export class Kafka
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
     /**
-     * Subscribe and receive each message's value **already `JSON.parse`d** — the consume-side
-     * counterpart to {@link publishJson}. The handler gets the typed value plus the raw
-     * {@link Kafka.Incoming} (for key/partition/headers). Same delivery + group semantics as
-     * {@link subscribe}; a value that fails to parse throws (and is therefore redelivered).
+     * Subscribe and receive each message's **JSON-parsed value** typed as `T` — the consume-side
+     * counterpart to {@link publishJson}. The handler gets the value plus the {@link Kafka.Incoming}
+     * (for key/partition/headers). The value is parsed once in {@link subscribe} (a non-JSON message
+     * throws there and is redelivered); same delivery + group semantics.
      *
      * @typeParam T the expected payload shape.
      * @param handler async callback — receives the parsed value and the decoded message.
@@ -232,14 +244,16 @@ export class Kafka
     ) : Promise<Consumer>
     {
         return this.subscribe( groupId, topicKeys, ( message : Kafka.Incoming ) : Promise<void> =>
-            handler( JSON.parse( message.value ) as T, message ), opts );
+            handler( message.value as T, message ), opts );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
     /**
-     * Subscribe to an **entity topic** and receive each {@link Kafka.Event} envelope parsed + typed —
-     * the consume-side counterpart to {@link publishEvent}. `switch` on `event.type` in the handler.
-     * Same delivery + group semantics as {@link subscribe} (at-least-once; throw to redeliver).
+     * Subscribe to an **entity topic** and receive each {@link Kafka.Event} envelope typed — the
+     * consume-side counterpart to {@link publishEvent}. `switch` on `event.type` in the handler. The
+     * envelope is the already-parsed message value; same delivery + group semantics as {@link subscribe}
+     * (at-least-once; throw to redeliver). Use {@link subscribeObject} to get the envelope **merged with**
+     * the message metadata in one object.
      *
      * @typeParam T the `data` payload shape.
      * @param handler async callback — receives the typed {@link Kafka.Event} and the raw {@link Kafka.Incoming}.
@@ -252,7 +266,31 @@ export class Kafka
     ) : Promise<Consumer>
     {
         return this.subscribe( groupId, topicKeys, ( message : Kafka.Incoming ) : Promise<void> =>
-            handler( JSON.parse( message.value ) as Kafka.Event<T>, message ), opts );
+            handler( message.value as Kafka.Event<T>, message ), opts );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Subscribe to an **entity topic** and receive the {@link Kafka.Event} envelope **merged with** its
+     * transport metadata as a single {@link Kafka.Received} object — `type` / `key` / `data` / `id` /
+     * `time` / `source` / `transactionId` / `version` / `seq` / `changed` alongside
+     * `topic` / `partition` / `headers` / `raw`. The ergonomic consume-side counterpart to
+     * {@link publishEvent} when you want everything in one argument; same delivery + group semantics as
+     * {@link subscribe} (at-least-once; throw to redeliver).
+     *
+     * @typeParam T the `data` payload shape.
+     * @param handler async callback — receives one merged {@link Kafka.Received}.
+     */
+    async subscribeObject<T>(
+        groupId   : string,
+        topicKeys : ResourceKey | Array<ResourceKey>,
+        handler   : ( received : Kafka.Received<T> ) => Promise<void>,
+        opts      : Kafka.SubscribeOptions = {},
+    ) : Promise<Consumer>
+    {
+        // envelope fields win on overlap (key, type); topic/partition/headers/raw come from the message
+        return this.subscribe( groupId, topicKeys, ( message : Kafka.Incoming ) : Promise<void> =>
+            handler( { ...message, ...( message.value as Kafka.Event<T> ) } ), opts );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -265,6 +303,18 @@ export class Kafka
     consumer( groupId : string ) : Consumer
     {
         return this.kafka.consumer( { groupId } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Decode + **`JSON.parse`** a message value (our topics are always JSON). Returns `undefined` for an
+     * empty/absent value (e.g. a tombstone). A non-JSON value throws — which, inside the run loop, leaves
+     * the offset uncommitted so the message is redelivered (at-least-once). For raw bytes use `Incoming.raw`.
+     */
+    private static decodeValue( value : Buffer | null | undefined ) : any
+    {
+        const text : string | undefined = value?.toString();
+        return text !== undefined && text.length > 0 ? JSON.parse( text ) : undefined;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -284,6 +334,31 @@ export class Kafka
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Tear down **one** subscription created by {@link subscribe} — disconnects that {@link Consumer}
+     * (leaving its group, triggering a partition rebalance) and stops tracking it, so {@link disconnect}
+     * won't touch it again. The counterpart to a single {@link subscribe} call.
+     *
+     * **Kafka note:** there is no "drop a single topic from a live consumer" — a subscription *is* the
+     * whole consumer, so this disconnects it. To merely *halt* consumption while keeping group
+     * membership, use the returned `Consumer`'s `pause()`/`resume()` instead. For full shutdown of
+     * everything, call {@link disconnect}.
+     *
+     * Mainly for **dynamic** subscribers (per-tenant/feature subscriptions that come and go, tests);
+     * a service that subscribes once and runs for its lifetime just needs {@link disconnect}.
+     * Idempotent — a consumer that isn't (or is no longer) tracked is ignored.
+     *
+     * @param consumer the {@link Consumer} returned by an earlier {@link subscribe} call.
+     */
+    async unsubscribe( consumer : Consumer ) : Promise<void>
+    {
+        const index : number = this._consumers.indexOf( consumer );
+        if( index === -1 ) return;                  // not tracked (already torn down) — nothing to do
+        this._consumers.splice( index, 1 );         // untrack first so disconnect() can't double-disconnect
+        await consumer.disconnect();
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////
     /** Disconnect the shared producer + every {@link subscribe}d consumer — call on graceful shutdown. */
     async disconnect() : Promise<void>
     {
@@ -295,18 +370,22 @@ export class Kafka
 export namespace Kafka
 {
     /**
-     * A typed **event envelope** for an entity stream ({@link Kafka.publishEvent} /
-     * {@link Kafka.subscribeEvents}). `key` is the partition/ordering key (one topic per entity,
-     * keyed by entity id → all of an entity's events stay ordered); `type` is the verb to switch on.
+     * A typed **event envelope** for an entity state-change stream ({@link Kafka.publishEvent} /
+     * {@link Kafka.subscribeEvents} / {@link Kafka.subscribeObject}). `key` is the partition/ordering
+     * key (one topic per entity, keyed by entity id → all of an entity's events stay ordered); `type`
+     * is the verb to switch on. A lightweight CloudEvents-style envelope.
+     *
+     * `type`/`key`/`data` are always present; the metadata below is optional on the type but, by
+     * **convention, required for state-change events** — see `aws/SPECS.md` → "Entity state-change
+     * events". `publishEvent` mirrors `id`/`type`/`source`/`transactionId`/`version`/`seq` to headers
+     * for broker-side filtering.
+     *
+     * This is the platform-wide {@link Type.MessageEnvelope} — the same body the WebSocket push frame
+     * and the client pub/sub bus carry — with `key` re-required (Kafka needs it as the partition key).
      */
-    export interface Event<T = unknown>
+    export interface Event<T = unknown> extends Type.MessageEnvelope<T>
     {
-        type    : string;       // the event verb, e.g. "contact.created" | "contact.deleted"
-        key     : string;       // entity/ordering key (becomes the Kafka message key)
-        data    : T;            // the typed payload
-        id?     : string;       // optional unique event id (dedup) — also sent as a `type`/`id` header
-        time?   : string;       // optional ISO-8601 occurred-at
-        source? : string;       // optional emitting service name
+        key : string;   // entity/ordering key (becomes the Kafka message key) — required on Kafka
     }
 
     /** A decoded inbound message handed to a {@link Kafka.subscribe} handler. */
@@ -315,10 +394,17 @@ export namespace Kafka
         topic     : string;                    // resolved physical topic name the message came from
         partition : number;                    // source partition (ordering scope)
         key       : string | undefined;        // decoded message key (undefined if unkeyed)
-        value     : string;                    // decoded message value (UTF-8; JSON.parse if needed)
+        value     : any;                        // JSON-parsed message value (our topics are always JSON); undefined if empty. Raw bytes: `raw.message.value`
         headers   : Record<string, string>;    // decoded headers (e.g. transactionId, contentType)
         raw       : EachMessagePayload;         // escape hatch — original kafkajs payload (binary, ts, offset)
     }
+
+    /**
+     * The parsed {@link Event} envelope **merged with** its {@link Incoming} transport metadata — what a
+     * {@link Kafka.subscribeObject} handler receives in a single object. Envelope fields win on overlap
+     * (`key`, `type`); `topic`/`partition`/`value`/`headers`/`raw` come from the message.
+     */
+    export type Received<T = unknown> = Event<T> & Incoming;
 
     /** Options for {@link Kafka.subscribe}. */
     export interface SubscribeOptions

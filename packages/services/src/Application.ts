@@ -39,7 +39,7 @@ export class Application
     }
 
     // TODO(monitor): transaction-id (request) correlation — a cross-cutting capability the
-    // monitor service depends on (see apps/core/monitor/README.md "Tracing & correlation").
+    // monitor service depends on (see apps/core/monitor/SPECS.md "Tracing & correlation").
     // Today `this.id` / `Trace.id` is ONE process-level UUID; there is no per-request id.
     // Add to this base so every service threads it automatically (no per-service code):
     //   1. Inbound (Service): read `x-transactionid` from the request (API Gateway injects it via

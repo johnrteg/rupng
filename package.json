@@ -21,7 +21,9 @@
         "dispatch.image": "docker build --build-arg APP_NAME=dispatch --build-arg APP_PATH=core/dispatch -t rupapp-dispatch .",
         "dispatch.docker": "docker run -p 3001:3000 rupapp-dispatch",
         "proxy": "npm run dev -- --filter=proxy",
-        "proxy.local": "npm run dev -- --filter=proxy -- --config local"
+        "proxy.local": "npm run dev -- --filter=proxy -- --config local",
+
+        "web.build" : "npm run build -- --filter=web"
     },
     "devDependencies": {
         "@repo/tsconfig": "*",

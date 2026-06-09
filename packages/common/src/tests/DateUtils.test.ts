@@ -117,3 +117,13 @@ describe('DateUtils.parseTimeTo12HourClock', () => {
         expect(DateUtils.parseTimeTo12HourClock(' 13:45 ')).toBe('01:45 PM');
     });
 });
+describe('DateUtils.isValid (moved from Validator.isDate)', () => {
+    test('true only for Date instances', () => {
+        expect( DateUtils.isValid( new Date() ) ).toBe( true );
+        expect( DateUtils.isValid( new Date('2023-01-01') ) ).toBe( true );
+        expect( DateUtils.isValid( '2023-01-01' ) ).toBe( false );
+        expect( DateUtils.isValid( 1640995200000 ) ).toBe( false );
+        expect( DateUtils.isValid( null ) ).toBe( false );
+        expect( DateUtils.isValid( undefined ) ).toBe( false );
+    });
+});

@@ -19,7 +19,8 @@
       "@repo/services": ["../../packages/services/src/index.ts"],
       "@repo/cloud-spec": ["../../packages/cloud-spec/src/index.ts"],
       "@repo/workflow": ["../../packages/workflow/src/index.ts"],
-      "@repo/ai": ["../../packages/ai/src/index.ts"]
+      "@repo/ai": ["../../packages/ai/src/index.ts"],
+      "@repo/oauth": ["../../packages/oauth/src/index.ts"]
     }
   }
 }

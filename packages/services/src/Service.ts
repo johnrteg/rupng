@@ -10,7 +10,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest, FastifyError, FastifyLis
 import { randomUUID } from 'crypto';
 
 import { RestfulEndpoint } from '@repo/endpoint';
-import { Network } from '@repo/common';
+import { NetworkUtils } from '@repo/common';
 
 import { Application } from './Application';
 import { GetHealthImpl } from './endpoints/GetHealthImpl';
@@ -145,7 +145,7 @@ export class Service extends Application
             }
             catch( err : any )
             {
-                reply.code( Network.Status.BAD_REQUEST ).send( { message: String( err?.message ?? err ) } );
+                reply.code( NetworkUtils.Status.BAD_REQUEST ).send( { message: String( err?.message ?? err ) } );
                 return;
             }
 
@@ -161,7 +161,7 @@ export class Service extends Application
                 // verify who is asking has access to this endpoint (role)
 
                 // if not, return error
-                // Network.Status.UNAUTHORIZED
+                // NetworkUtils.Status.UNAUTHORIZED
             }
 
             //
@@ -172,14 +172,14 @@ export class Service extends Application
             //
             // reply to client
             //
-            reply.header( Network.HeaderType.CONTENT, Network.MimeType.JSON )
+            reply.header( NetworkUtils.HeaderType.CONTENT, NetworkUtils.MimeType.JSON )
                  .code( response.status )
                  .send( response.data );
         }
         catch( err : any )
         {
             this.log.error( "processEndpoint:exception", err );
-            reply.code( Network.Status.INTERNAL_SERVER_ERROR ).send('server exception');
+            reply.code( NetworkUtils.Status.INTERNAL_SERVER_ERROR ).send('server exception');
         }
     }
 
@@ -239,7 +239,7 @@ export class Service extends Application
             // todo
 
             // todo: make const enum reference for content types
-            reply.header( Network.HeaderType.CONTENT, Network.MimeType.JSON )
+            reply.header( NetworkUtils.HeaderType.CONTENT, NetworkUtils.MimeType.JSON )
                  .header( RestfulEndpoint.RestfulHeaders.TRANSACTION_ID, transaction_id )      // always give it back
                  .header( RestfulEndpoint.RestfulHeaders.STATS, JSON.stringify( stats ) )      // always give it back
                  .code( got.status )
@@ -248,7 +248,7 @@ export class Service extends Application
         catch( err: any )
         {
             this.log.error( "Service::processRequestAsync: exception", err );
-            reply.code( Network.Status.INTERNAL_SERVER_ERROR ).send('Service::processRequestAsync exception');
+            reply.code( NetworkUtils.Status.INTERNAL_SERVER_ERROR ).send('Service::processRequestAsync exception');
         }
     }
 
@@ -269,7 +269,7 @@ export class Service extends Application
     private processError( error: FastifyError, request: FastifyRequest, reply: FastifyReply ) : void
     {
         this.log.error( "processError", { error: error, url: request.url, method: request.method } );
-        reply.status( Network.Status.INTERNAL_SERVER_ERROR ).send( error );
+        reply.status( NetworkUtils.Status.INTERNAL_SERVER_ERROR ).send( error );
         //this.stop( 1 );
     }
 

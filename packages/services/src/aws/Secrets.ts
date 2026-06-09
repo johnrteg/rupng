@@ -4,6 +4,8 @@
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import type { GetSecretValueCommandOutput } from "@aws-sdk/client-secrets-manager";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import { ResultUtils } from "@repo/common";
+import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
@@ -40,10 +42,13 @@ export class Secrets
      * @param secretKey logical secret key.
      * @returns the secret string, or `undefined` if it has no string value.
      */
-    async get( secretKey : ResourceKey ) : Promise<string | undefined>
+    async get( secretKey : ResourceKey ) : Promise<Type.Result<string | undefined>>
     {
-        const result : GetSecretValueCommandOutput = await this.client.send( new GetSecretValueCommand( { SecretId: this.arn( secretKey ) } ) );
-        return result.SecretString;
+        return ResultUtils.from( async () : Promise<string | undefined> =>
+        {
+            const result : GetSecretValueCommandOutput = await this.client.send( new GetSecretValueCommand( { SecretId: this.arn( secretKey ) } ) );
+            return result.SecretString;
+        } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////
@@ -52,9 +57,10 @@ export class Secrets
      * @typeParam T the expected shape of the parsed secret.
      * @returns the parsed object, or `undefined` if the secret is empty.
      */
-    async getJson<T>( secretKey : ResourceKey ) : Promise<T | undefined>
+    async getJson<T>( secretKey : ResourceKey ) : Promise<Type.Result<T | undefined>>
     {
-        const raw : string | undefined = await this.get( secretKey );
-        return raw ? ( JSON.parse( raw ) as T ) : undefined;
+        const result : Type.Result<string | undefined> = await this.get( secretKey );
+        if( !result.ok ) return result;
+        return ResultUtils.attempt( () => result.data ? ( JSON.parse( result.data ) as T ) : undefined );
     }
 }

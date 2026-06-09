@@ -10,6 +10,8 @@ import type {
     GetJobCommandOutput, ListPresetsCommandOutput, Job, Output, Preset,
 } from "@aws-sdk/client-mediaconvert";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import { ResultUtils } from "@repo/common";
+import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
@@ -39,8 +41,10 @@ interface VideoRateSettings
  *
  * The common case ("a file in S3 → transcoded file(s) in S3") is {@link transcode}: an input object,
  * a destination prefix, and one or more renditions — each is **either an inline `encode` recipe**
- * (name/value options, no magic strings) **or a `preset` name**. It returns a **job id** — transcoding
- * is async; you learn the outcome from a MediaConvert→EventBridge event (see "Progress & errors").
+ * (name/value options, no magic strings) **or a `preset` name**. Methods **never throw** — they return
+ * a {@link Type.Result} (`{ ok, data } | { ok, error }`), so callers branch on `.ok`, no try/catch.
+ * On success `data` is the **job id** — transcoding is async; you learn the final outcome from a
+ * MediaConvert→EventBridge event (see "Progress & errors").
  *
  * @example Inline encode options (no preset strings) — 1080p + 720p H.264 MP4
  * ```ts
@@ -50,8 +54,8 @@ interface VideoRateSettings
  *     private _media? : MediaConvert;
  *     protected get media() : MediaConvert { return this._media ??= new MediaConvert( this.cloud ); }
  *
- *     async process( srcKey : string ) : Promise<string | undefined> {
- *         return this.media.transcode(
+ *     async process( srcKey : string ) : Promise<void> {
+ *         const job = await this.media.transcode(
  *             "transcode",                          // logical mediaConvert (queue) key
  *             `s3://uploads/${srcKey}`,             // input object
  *             "s3://processed/output/",             // destination PREFIX
@@ -62,6 +66,8 @@ interface VideoRateSettings
  *                 // { preset: "MyCustom-Hevc-1080p", nameModifier: "-hevc" },
  *             ] },
  *         );
+ *         if ( !job.ok ) { this.log.error( "transcode failed", job.error ); return; }
+ *         this.log.info( "submitted job", { jobId: job.data } );   // job.data is typed string | undefined
  *     }
  * }
  * ```
@@ -78,7 +84,7 @@ interface VideoRateSettings
  * - **`role`** *(optional)* — MediaConvert IAM role ARN (defaults to `MEDIACONVERT_ROLE_ARN`).
  *
  * **Progress & errors (it's async — submit, don't wait):**
- * - {@link transcode}/{@link createJob} return a **job id** immediately; the job runs in the background.
+ * - {@link transcode}/{@link createJob} return `Result<jobId>` immediately; the job runs in the background.
  * - MediaConvert emits an **EventBridge** "MediaConvert Job State Change" event on
  *   `PROGRESSING` / `COMPLETE` / `ERROR` (with `errorCode`/`errorMessage` on failure) — route it via the
  *   incoming-event pipeline to a worker (and to analytics). This is how you react to completion/failure.
@@ -124,13 +130,16 @@ export class MediaConvert
      * @param queueKey logical mediaConvert key.
      * @param role     the MediaConvert IAM role ARN (it reads/writes the input/output S3 buckets).
      * @param settings the job spec (`CreateJobCommandInput["Settings"]` — inputs, output groups, …).
-     * @returns the created job id.
+     * @returns a {@link Type.Result} with the created job id (never throws — check `.ok`).
      */
-    async createJob( queueKey : ResourceKey, role : string, settings : CreateJobCommandInput[ "Settings" ] ) : Promise<string | undefined>
+    async createJob( queueKey : ResourceKey, role : string, settings : CreateJobCommandInput[ "Settings" ] ) : Promise<Type.Result<string | undefined>>
     {
-        const client : MediaConvertClient = await this.client();
-        const result : CreateJobCommandOutput = await client.send( new CreateJobCommand( { Queue: this.queue( queueKey ), Role: role, Settings: settings } ) );
-        return result.Job?.Id;
+        return ResultUtils.from( async () : Promise<string | undefined> =>
+        {
+            const client : MediaConvertClient = await this.client();
+            const result : CreateJobCommandOutput = await client.send( new CreateJobCommand( { Queue: this.queue( queueKey ), Role: role, Settings: settings } ) );
+            return result.Job?.Id;
+        } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////
@@ -154,13 +163,23 @@ export class MediaConvert
      * @param destination the output **prefix**, `s3://bucket/path/` (the input name + each output's
      *                    `nameModifier` + extension are appended by MediaConvert).
      * @param opts        the presets to apply + IAM role (see {@link MediaConvert.TranscodeOptions}).
-     * @returns the created job id.
+     * @returns a {@link Type.Result} with the created job id (never throws — check `.ok`; a bad role
+     *          or mis-configured rendition comes back as `{ ok: false, error }`).
      */
-    async transcode( queueKey : ResourceKey, input : string, destination : string, opts : MediaConvert.TranscodeOptions ) : Promise<string | undefined>
+    async transcode( queueKey : ResourceKey, input : string, destination : string, opts : MediaConvert.TranscodeOptions ) : Promise<Type.Result<string | undefined>>
     {
         const role : string | undefined = opts.role ?? process.env.MEDIACONVERT_ROLE_ARN;
         if( role === undefined || role === "" )
-            throw new Error( "MediaConvert.transcode: no IAM role (pass opts.role or set MEDIACONVERT_ROLE_ARN)" );
+            return ResultUtils.err( "MediaConvert.transcode: no IAM role (pass opts.role or set MEDIACONVERT_ROLE_ARN)" );
+
+        // Build each rendition, short-circuiting on the first bad one — no throwing.
+        const outputs : Array<Output> = [];
+        for( let index : number = 0; index < opts.outputs.length; index++ )
+        {
+            const built : Type.Result<Output> = this.buildRendition( opts.outputs[ index ], index );
+            if( !built.ok ) return built;
+            outputs.push( built.data );
+        }
 
         const settings : CreateJobCommandInput[ "Settings" ] = {
             Inputs: [ {
@@ -172,20 +191,28 @@ export class MediaConvert
             OutputGroups: [ {
                 Name                : "File Group",
                 OutputGroupSettings : { Type: "FILE_GROUP_SETTINGS", FileGroupSettings: { Destination: destination } },
-                Outputs             : opts.outputs.map( ( rendition, index ) => this.buildRendition( rendition, index ) ),
+                Outputs             : outputs,
             } ],
         };
 
-        return this.createJob( queueKey, role, settings );
+        return ResultUtils.from( async () : Promise<string | undefined> =>
+        {
+            const client : MediaConvertClient = await this.client();
+            const result : CreateJobCommandOutput = await client.send( new CreateJobCommand( { Queue: this.queue( queueKey ), Role: role, Settings: settings } ) );
+            return result.Job?.Id;
+        } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////
-    /** Fetch a job's current state — `Status` (SUBMITTED/PROGRESSING/COMPLETE/CANCELED/ERROR), `JobPercentComplete`, and on failure `ErrorCode`/`ErrorMessage`. */
-    async getJob( jobId : string ) : Promise<Job | undefined>
+    /** Fetch a job's current state — `Status` (SUBMITTED/PROGRESSING/COMPLETE/CANCELED/ERROR), `JobPercentComplete`, and on failure `ErrorCode`/`ErrorMessage`. Never throws — check `.ok`. */
+    async getJob( jobId : string ) : Promise<Type.Result<Job | undefined>>
     {
-        const client : MediaConvertClient = await this.client();
-        const result : GetJobCommandOutput = await client.send( new GetJobCommand( { Id: jobId } ) );
-        return result.Job;
+        return ResultUtils.from( async () : Promise<Job | undefined> =>
+        {
+            const client : MediaConvertClient = await this.client();
+            const result : GetJobCommandOutput = await client.send( new GetJobCommand( { Id: jobId } ) );
+            return result.Job;
+        } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////
@@ -194,38 +221,41 @@ export class MediaConvert
      * presets), one page. Use this to discover valid preset names instead of hard-coding strings;
      * paginate via `.client` for more.
      */
-    async listPresets() : Promise<Array<Preset>>
+    async listPresets() : Promise<Type.Result<Array<Preset>>>
     {
-        const client : MediaConvertClient = await this.client();
-        const result : ListPresetsCommandOutput = await client.send( new ListPresetsCommand( {} ) );
-        return result.Presets ?? [];
+        return ResultUtils.from( async () : Promise<Array<Preset>> =>
+        {
+            const client : MediaConvertClient = await this.client();
+            const result : ListPresetsCommandOutput = await client.send( new ListPresetsCommand( {} ) );
+            return result.Presets ?? [];
+        } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////
-    /** Turn one {@link MediaConvert.Rendition} into a MediaConvert `Output` — either a preset reference or inline encode settings. */
-    private buildRendition( rendition : MediaConvert.Rendition, index : number ) : Output
+    /** Turn one {@link MediaConvert.Rendition} into a MediaConvert `Output` (preset ref or inline encode). Returns a {@link Type.Result} — no throw. */
+    private buildRendition( rendition : MediaConvert.Rendition, index : number ) : Type.Result<Output>
     {
         if( rendition.preset !== undefined )
-            return { Preset: rendition.preset, NameModifier: rendition.nameModifier ?? `-${rendition.preset}` };
+            return ResultUtils.ok( { Preset: rendition.preset, NameModifier: rendition.nameModifier ?? `-${rendition.preset}` } );
         if( rendition.encode !== undefined )
             return this.buildEncodeOutput( rendition.encode, rendition.nameModifier ?? `-${index + 1}` );
-        throw new Error( "MediaConvert.transcode: each output needs a `preset` or an `encode` recipe" );
+        return ResultUtils.err( "MediaConvert.transcode: each output needs a `preset` or an `encode` recipe" );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////
-    /** Build an `Output` from inline {@link MediaConvert.EncodeOptions} (MP4/MOV · H.264/H.265 · AAC). */
-    private buildEncodeOutput( encode : MediaConvert.EncodeOptions, nameModifier : string ) : Output
+    /** Build an `Output` from inline {@link MediaConvert.EncodeOptions} (MP4/MOV · H.264/H.265 · AAC). Returns a {@link Type.Result} — no throw. */
+    private buildEncodeOutput( encode : MediaConvert.EncodeOptions, nameModifier : string ) : Type.Result<Output>
     {
         const container : MediaConvert.Container = encode.container ?? MediaConvert.Container.MP4;
         const video     : MediaConvert.Video     = encode.video ?? MediaConvert.Video.H264;
         const audio     : MediaConvert.Audio     = encode.audio ?? MediaConvert.Audio.AAC;
 
         if( container !== MediaConvert.Container.MP4 && container !== MediaConvert.Container.MOV )
-            throw new Error( `MediaConvert encode: container '${container}' not supported inline — use a preset or createJob` );
+            return ResultUtils.err( `MediaConvert encode: container '${container}' not supported inline — use a preset or createJob` );
         if( video !== MediaConvert.Video.H264 && video !== MediaConvert.Video.H265 )
-            throw new Error( `MediaConvert encode: video codec '${video}' not supported inline — use a preset or createJob` );
+            return ResultUtils.err( `MediaConvert encode: video codec '${video}' not supported inline — use a preset or createJob` );
         if( audio !== MediaConvert.Audio.AAC )
-            throw new Error( `MediaConvert encode: audio codec '${audio}' not supported inline — use a preset or createJob` );
+            return ResultUtils.err( `MediaConvert encode: audio codec '${audio}' not supported inline — use a preset or createJob` );
 
         // QVBR (quality-driven, default) or CBR (when an explicit bitrate is given).
         const rate : VideoRateSettings = encode.bitrate !== undefined
@@ -240,7 +270,7 @@ export class MediaConvert
         const isMp4  : boolean = container === MediaConvert.Container.MP4;
         const isH264 : boolean = video === MediaConvert.Video.H264;
 
-        return {
+        return ResultUtils.ok( {
             NameModifier      : nameModifier,
             ContainerSettings : { Container: isMp4 ? ContainerType.MP4 : ContainerType.MOV, ...( isMp4 ? { Mp4Settings: {} } : { MovSettings: {} } ) },
             VideoDescription  : {
@@ -253,7 +283,7 @@ export class MediaConvert
             AudioDescriptions : [ {
                 CodecSettings : { Codec: AudioCodec.AAC, AacSettings: { Bitrate: encode.audioBitrate ?? 96_000, CodingMode: "CODING_MODE_2_0" as const, SampleRate: 48_000 } },
             } ],
-        };
+        } );
     }
 }
 

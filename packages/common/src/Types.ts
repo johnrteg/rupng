@@ -11,14 +11,25 @@
 
 export namespace Type
 {
-    /** Opaque identifier (uuid / provider subject). */
+    /** Opaque identifier — may be a {@link UUID}, a provider subject (Cognito sub, OAuth sub), or a
+     *  composite key. Use this when the *form* of the id shouldn't be assumed. */
     export type ID = string;
+
+    /**
+     * RFC-4122 / RFC-9562 **UUID** string, e.g. "9f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f".
+     * "UUID" (not "GUID" — the Microsoft name for the same thing) is the standard term in our
+     * Node / PostgreSQL / AWS stack: `crypto.randomUUID()`, the Postgres `uuid` column, etc.
+     * Prefer {@link ID} when an identifier is opaque; use `UUID` when the value is guaranteed a UUID.
+     */
+    export type UUID = string;
 
     /** ISO-8601 timestamp, e.g. "2026-06-05T09:00:00Z". */
     export type ISODateTime = string;
 
     /** Unix time in **seconds** — e.g. a DynamoDB TTL attribute (TTL requires seconds). */
     export type EpochSeconds = number;
+
+    export type Seconds = number;
 
     /**
      * Unix time in **milliseconds** — what `Date.now()` and most JS/Kafka timestamps produce.
@@ -27,6 +38,27 @@ export namespace Type
      * backoff — use a plain `number` field named `…Ms`; that's an interval, not a point in time.)
      */
     export type EpochMilliseconds = number;
+
+    /** An **IANA** time-zone name, e.g. `"America/New_York"`. Validate with `TimeZoneUtils.isValidTimeZone`
+     *  (checked against the runtime's `Intl` list — we don't hardcode the ~400 zones, they drift). */
+    export type TimeZone = string;
+
+    /** A **local** wall-clock date-time **without** offset/zone — `"YYYY-MM-DDTHH:mm:ss"` (`.SSS` optional).
+     *  Only meaningful paired with a {@link TimeZone}; on its own it's not an instant. */
+    export type LocalDateTime = string;
+
+    /**
+     * A **wall-clock time in a zone** — "3 PM in America/New_York". The actual instant depends on the
+     * zone's offset/DST at that local time, so this is **not** itself a point in time: resolve it with
+     * `TimeZoneUtils.toInstant`. Use this for *user-facing scheduled times* (schedules, quiet hours,
+     * window anchors); for a pure **instant**, use {@link ISODateTime} / {@link EpochMilliseconds} (UTC).
+     * See `common/src/SPECS.md` → Date, time & timezones.
+     */
+    export interface ZonedDateTime
+    {
+        local    : LocalDateTime;   // e.g. "2026-06-08T15:00:00"
+        timeZone : TimeZone;        // e.g. "America/New_York"
+    }
 
     /** RFC-5322 email address. */
     export type Email = string;
@@ -63,4 +95,59 @@ export namespace Type
 
     /** Any value expressible as JSON (recursive). */
     export type Json = JsonPrimitive | JsonObject | JsonArray;
+
+    /**
+     * The platform's standard **non-throwing result** — return this instead of throwing, so callers
+     * branch on `ok` rather than wrapping every call in try/catch. **Generic in `T`**, so on success
+     * `data` carries the correctly-typed value; on failure `error` is a human-readable message and
+     * `cause` keeps the original error for logging/debugging.
+     *
+     * Discriminated on `ok`: after `if (r.ok)`, `r.data` is `T`; in the `else`, `r.error` is a string.
+     * Build these with the `ResultUtils` helpers (`ok` / `err` / `from` / `attempt`).
+     */
+    export type Result<T> =
+        | { ok : true;  data : T }
+        | { ok : false; error : string; cause? : unknown };
+
+    /**
+     * The platform's **one event envelope** — the single body shape carried by every transport:
+     * Kafka (service ↔ service), the WebSocket push frame (server → client), and the client-side
+     * pub/sub bus. Define an event once and it flows end-to-end without being reshaped.
+     *
+     * Only `type` + `data` are required; the rest is metadata that the originating layer fills in
+     * as it has it (Kafka sets `key`/`seq`/`transactionId`; a UI-origin signal may set just `type`
+     * + `data`). Named `MessageEnvelope` — not `Event` — to avoid colliding with DOM `Event`.
+     *
+     * @typeParam T - the typed payload in `data`.
+     */
+    export interface MessageEnvelope<T = Json>
+    {
+        /** The verb — what happened. e.g. `"contact.updated"`, `"theme"`. */
+        type            : string;
+        /** The typed payload. */
+        data            : T;
+        /** Entity / ordering key (Kafka partition key). */
+        key?            : string;
+        /** Unique id for this emission — dedup / idempotency. */
+        id?             : string;
+        /** Occurred-at instant (UTC). */
+        time?           : ISODateTime;
+        /** Emitting service / origin. */
+        source?         : string;
+        /** Correlation id linking events from one logical operation. */
+        transactionId?  : string;
+        /** Payload schema version. */
+        version?        : number;
+        /** Entity version / per-key sequence for ordering. */
+        seq?            : number;
+        /** On updates, the names of the fields that changed. */
+        changed?        : Array<string>;
+        /**
+         * Minimum access role required to *receive* this event — an `Access.Role` value (the role's
+         * string, e.g. `"user"`; carried as a string, not the `@repo/endpoint` enum, so `@repo/common`
+         * stays dependency-free). The **publishing service stamps it** (the object's required role); the
+         * **realtime service enforces it** before pushing to a browser. See `apps/core/realtime/SPECS.md`.
+         */
+        minAccess?      : string;
+    }
 }

@@ -368,11 +368,16 @@ export class ServiceStack extends cdk.Stack
     }
 
     //////////////////////////////////////////////////////////////////////////////
-    /** Create an AppConfig application, an environment, and its configuration profiles. */
+    /** Create an AppConfig application, its environment(s), and its configuration profiles. */
     private makeAppConfig( spec : AppConfigSpec ) : void
     {
         const app : appconfig.CfnApplication = new appconfig.CfnApplication( this, `AppConfig-${spec.key}`, { name: spec.application ?? this.service } );
-        new appconfig.CfnEnvironment( this, `AppConfigEnv-${spec.key}`, { applicationId: app.ref, name: this.deployEnv } );
+
+        // AppConfig environments are in-account deploy targets (rings/regions/cells), NOT dev/staging/prod
+        // — that's the AWS account boundary. Default to a single "default" target (matches the facade's
+        // APPCONFIG_ENV ?? "default"). See packages/services/src/aws/SPECS.md → AppConfig configuration layout.
+        ( spec.environments ?? [ "default" ] ).forEach( envName =>
+            new appconfig.CfnEnvironment( this, `AppConfigEnv-${spec.key}-${envName}`, { applicationId: app.ref, name: envName } ) );
         spec.profiles.forEach( p => new appconfig.CfnConfigurationProfile( this, `AppConfigProfile-${spec.key}-${p.key}`, {
             applicationId : app.ref,
             name          : p.key,
