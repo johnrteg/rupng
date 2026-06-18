@@ -1,19 +1,19 @@
 //
 // OpenSearch facade — index/search over `@opensearch-project/opensearch` (NOT an AWS SDK
-// client), against the endpoint resolved from a cloud-spec LOGICAL search key. Bound to one
+// client), against the endpoint resolved from a cloud-manifest LOGICAL search key. Bound to one
 // cluster; methods operate on indices within it.
 //
 import { Client } from "@opensearch-project/opensearch";
 import type { ApiResponse } from "@opensearch-project/opensearch";
 import { AwsSigv4Signer } from "@opensearch-project/opensearch/aws";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 
 /**
  * OpenSearch facade — full-text search + analytics over `@opensearch-project/opensearch`,
- * against the endpoint resolved from a cloud-spec LOGICAL search key (default `"search"`).
+ * against the endpoint resolved from a cloud-manifest LOGICAL search key (default `"search"`).
  *
  * **Use for** search and log/analytics queries — never as the system of record (index
  * *projections* of data owned by DynamoDB/RDS). In the cloud, requests are SigV4-signed with
@@ -123,7 +123,7 @@ export namespace Search
 {
     /**
      * The SigV4 signing service name — differs by OpenSearch flavor (must match the cluster you
-     * provisioned in cloud-spec):
+     * provisioned in cloud-manifest):
      * - **`SERVERLESS`** (`"aoss"`) — OpenSearch **Serverless** collection (the platform default).
      * - **`DOMAIN`** (`"es"`) — a managed OpenSearch **domain** (node-based).
      */

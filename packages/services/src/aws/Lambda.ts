@@ -1,15 +1,15 @@
 //
-// Lambda facade — invoke other functions, keyed by cloud-spec LOGICAL function keys.
+// Lambda facade — invoke other functions, keyed by cloud-manifest LOGICAL function keys.
 //
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import type { InvokeCommandOutput } from "@aws-sdk/client-lambda";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
- * Lambda facade — invoke functions over `@aws-sdk/client-lambda`, addressed by cloud-spec
+ * Lambda facade — invoke functions over `@aws-sdk/client-lambda`, addressed by cloud-manifest
  * LOGICAL function keys (e.g. `"processor"`).
  *
  * **Use for** service-to-service calls to a function you own. Prefer {@link invoke}
@@ -30,7 +30,7 @@ export class Lambda
     get client() : LambdaClient { return this._client ??= ClientUtils.createClient( LambdaClient ); }
 
     ///////////////////////////////////////////////////////////////////////////////////////////
-    /** Resolve a cloud-spec logical function key (e.g. `"processor"`) to its physical ARN. */
+    /** Resolve a cloud-manifest logical function key (e.g. `"processor"`) to its physical ARN. */
     fn( key : ResourceKey ) : string { return this.cloud.functionArn( key ); }
 
     ///////////////////////////////////////////////////////////////////////////////////////////

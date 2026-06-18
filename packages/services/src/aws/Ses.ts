@@ -2,7 +2,7 @@
 // SES facade — send transactional email over SES v2.
 //
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
-import type { CloudResolver } from "@repo/cloud-spec";
+import type { CloudResolver } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";

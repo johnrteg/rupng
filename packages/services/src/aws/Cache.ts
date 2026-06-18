@@ -1,15 +1,15 @@
 //
 // Cache facade — Redis (ElastiCache) via ioredis. NOT an AWS SDK client (Redis speaks its own
-// protocol), keyed by a cloud-spec LOGICAL cache key (CloudResolver -> endpoint).
+// protocol), keyed by a cloud-manifest LOGICAL cache key (CloudResolver -> endpoint).
 //
 import Redis from "ioredis";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 
 /**
  * Cache facade — Redis over `ioredis`, against the ElastiCache endpoint resolved from a
- * cloud-spec LOGICAL cache key (default `"cache"`).
+ * cloud-manifest LOGICAL cache key (default `"cache"`).
  *
  * **Use for** ephemeral, fast-access data: caching, rate-limit counters, sessions, locks,
  * pub/sub. Never the source of truth — anything durable belongs in DynamoDB/RDS. The

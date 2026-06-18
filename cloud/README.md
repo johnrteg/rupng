@@ -1,254 +1,164 @@
-#
-# Infrastructure defintion
-#
+# /cloud — infrastructure how-to
 
-/cloud
-/packages
-    /cloud-specs
+The CDK app that turns each service's **manifest** into AWS resources. This is the **how-to**;
+[`SPECS.md`](./SPECS.md) is the **design** (why manifests, the tenets, the topology).
 
-# Services define a `manifest`, not CDK
+**The model in one line:** a service declares *what AWS it needs* in a typed `CloudManifest`; `/cloud`
+imports every manifest and synthesizes one stack per service — creating the resources, deriving
+least-privilege IAM from declared access intent, and injecting resource identifiers back to the
+service as env vars. **You never write CDK or IAM in a service.**
 
-Each service exports a typed resource manifest — service-agnostic, no CDK/AWS coupling. Keep it in a dedicated entry (src/infra.ts) so the CDK synth pulls only the manifest, not the service's runtime code:
+---
 
+## Add a service to the cloud — 3 steps
 
-// packages/cloud-spec — the shared contract
-export interface ResourceManifest {
-  service: string;
-  owns: {
-    tables?:  TableSpec[];     // { key, partitionKey, sortKey?, ttlAttr?, stream? }
-    queues?:  QueueSpec[];     // { key, fifo?, dlq?, visibilityTimeout? }
-    buckets?: BucketSpec[];    // { key, public?, lifecycleDays? }
-    secrets?: SecretSpec[];    // { key }
-  };
-  uses?: ResourceRef[];        // resources OWNED by other services, + access intent
-}
-export interface ResourceRef {
-  service: string; kind: 'queue'|'bucket'|'table'|'secret'; key: string;
-  access: 'read' | 'write' | 'readwrite' | 'send' | 'consume';
-}
+### 1. Declare the manifest — `<service>/src/CloudManifest.ts`
 
-// apps/core/contact/src/infra.ts
+Export a `ResourceManifest` from a **dedicated entry** (it imports only `@repo/cloud-manifest` — pure
+data, no CDK, no runtime code — so synth pulls just this file). See
+[`apps/core/app/src/CloudManifest.ts`](../apps/core/app/src/CloudManifest.ts) for a real example, or
+[`packages/cloud-manifest/src/sample/widgetManifest.ts`](../packages/cloud-manifest/src/sample/widgetManifest.ts)
+for an annotated reference.
+
+```ts
+import { ResourceManifest, AttrType, BillingMode, AccessIntent, ResourceKind } from "@repo/cloud-manifest";
+
 export const manifest: ResourceManifest = {
-  service: 'contact',
+  service: "myservice",
   owns: {
-    tables:  [{ key: 'contacts', partitionKey: 'accountId', sortKey: 'contactId' }],
-    queues:  [{ key: 'import', dlq: true }],
-    buckets: [{ key: 'imports', lifecycleDays: 30 }],
+    tables: [ { key: "things", partitionKey: { name: "accountId", type: AttrType.STRING }, billingMode: BillingMode.ON_DEMAND } ],
+    queues: [ { key: "work", dlq: true } ],
+    jobs:   [ { key: "worker", handler: "jobs/worker.handler",
+                triggers: [ { source: "queue", ref: { service: "myservice", kind: ResourceKind.QUEUE, key: "work", access: AccessIntent.CONSUME }, batchSize: 10 } ] } ],
+    services: [ { key: "main", containerPort: 8000, healthCheckPath: "/health", environment: { SERVICE_ROLE: "main" } } ],
   },
-  uses: [{ service: 'media', kind: 'bucket', key: 'media', access: 'read' }],
+  uses: [ { service: "media", kind: ResourceKind.BUCKET, key: "media", access: AccessIntent.READ } ],
 };
+export default manifest;
+```
 
-* `Declare access intent`, not just resources. Because the manifest says "I consume this queue" / "read that bucket," the CDK app can derive least-privilege IAM automatically — you never hand-write policies. The declaration drives resource + permission + (below) env injection.
-* `Owner vs reference`. A resource is owned by exactly one service (owns); another service that needs it uses uses (a reference). CDK grants the consumer's role access to the owner's resource. Clear ownership + controlled cross-service access.
+### 2. Expose it as the `./manifest` subpath — `<service>/package.json`
 
-# /cloud consumes manifests → synthesizes stacks
+```jsonc
+"exports": {
+  ".":         "./bin/index.js",
+  "./manifest": "./src/CloudManifest.ts"
+}
+```
+…and make sure the service depends on `@repo/cloud-manifest`.
 
-The CDK app imports every manifest and builds:
+### 3. Register it — `cloud/src/app.ts` (two edits, marked with banner comments)
 
-* A stack per service (independent deploy, isolated blast radius) from its owns.
-* A shared platform stack for foundational/shared things (VPC, the shared event bus, OpenSearch, the dispatch queues) that service stacks reference.
-* Wires the uses refs into IAM grants + env injection.
+First add the service to `cloud/package.json` deps and run `npm install` (so the `myservice/manifest`
+subpath resolves). Then, in [`src/app.ts`](./src/app.ts):
 
-// /cloud/src/app.ts (sketch)
-import { manifest as contact } from '@repo/contact/cloud';
-import { manifest as media }   from '@repo/media/cloud';
-for (const m of [contact, media, ...]) new ServiceStack(app, m, { env });
+```ts
+// STEP 1 of 2 — import the manifest (top of file, by the other manifest imports):
+import { manifest as myservice } from "myservice/manifest";
 
-## The runtime handoff (the part that matters most): IDs back to services
-Don't make services discover resources by querying AWS at runtime. Two complementary mechanisms, both keyed by logical key (`'import'`, `'contacts'`) so the service never hardcodes physical names:
+// STEP 2 of 2 — add it to the `manifests` array:
+const manifests: Array<ResourceManifest> = [
+  appManifest,
+  myservice,        // ← here
+];
+```
+The loop below the array builds one `ServiceStack` per entry. Done — `cdk synth` now produces a
+`myservice-<env>` stack (verify with `npx cdk list -c env=local`).
 
-1. CDK injects identifiers as env vars into the service's compute (the cleanest for your Application/Job base). When CDK creates the resource, it both grants IAM and sets the env var on the Lambda/ECS task:
+> The entry point lives at **`src/app.ts`**, not `bin/` — repo-wide `bin/` is gitignored build output,
+> so the CDK entry would not be tracked there. `cdk.json` runs `npx tsx src/app.ts`.
 
-`queue.grantConsumeMessages(serviceRole);`
-`fn.addEnvironment('QUEUE_IMPORT_URL', queue.queueUrl);   // CDK-injected`
-The service reads it via a typed resolver from cloud-spec:
+---
 
-`Cloud.queueUrl('import')   // → process.env.QUEUE_IMPORT_URL`
-`Cloud.tableName('contacts')`
+## Manifest anatomy
 
-2. `SSM Parameter Store` as the registry for anything not injectable or shared across services: CDK publishes each resource's physical id under a convention path `/{env}/{service}/{kind}/{key};` services resolve logical keys at boot (cached) — fits the config-at-startup pattern in your Application base.
+> **Full field-by-field reference:** [`packages/cloud-manifest/docs/MANIFEST.md`](../packages/cloud-manifest/docs/MANIFEST.md)
+> — every resource kind, the cross-cutting conventions (`ResourceKey`, `PerEnv`, `Sizing`), `uses`/access
+> intent, Kafka bindings, and the runtime handoff, with examples. The summary below is the orientation.
 
-The shared naming/convention helpers live in cloud-spec and are used by both sides — CDK to name/publish, the service to resolve — so they can't drift:
+| Section | What it declares |
+|---|---|
+| **`owns`** | resources this service creates — `services` (ECS), `jobs` (Lambda workers), `queues`, `tables`, `buckets`, `keys` (KMS), `appConfig`, `api`, `rum`, `caches`, `secrets`, `topics`, … (see [`Resources.ts`](../packages/cloud-manifest/src/Resources.ts)) |
+| **`uses`** | resources **owned by another service** + an **access intent** (`read`/`write`/`consume`/`publish`/…). The CDK grants exactly that — **least-privilege IAM, derived, never hand-written** |
+| **`publishes` / `subscribes`** | Kafka bindings against the shared cluster |
+| **`tracing`** | enable X-Ray across the service's compute |
 
-// packages/cloud-spec
-export const physicalName = (env, svc, kind, key) => `${env}-${svc}-${kind}-${key}`;
-export const ssmPath      = (env, svc, kind, key) => `/${env}/${svc}/${kind}/${key}`;
+**Owner vs reference:** a resource is `owns`'d by exactly one service; anyone else `uses` it (a
+`ResourceRef`). The CDK grants the consumer's role access to the owner's resource.
 
-(For maximum simplicity you can even skip SSM and rely purely on deterministic convention naming — both CDK and the service compute the same physical name from physicalName(...). Env injection is still nicer for Lambda; convention is the zero-plumbing fallback.)
+**Sizing is a 1..10 scale** (`sizing: { default: { cpu: 2, memory: 3 }, production: { cpu: 5, memory: 6 } }`)
+— no instance types named anywhere. `PerEnv<T>` (`{ default, production, … }`) tunes per environment.
 
-# Don't over-abstract — give it an escape hatch
-The manifest DSL will cover the common 90% (tables/queues/buckets/secrets/keys). It will never cover 100% of CDK, and you shouldn't try — that way lies reinventing CDK. So let a service also export raw CDK construct functions for bespoke needs (`src/infra.cdk.ts`) that `/cloud` composes alongside the manifest. Manifest for the routine, raw CDK for the exotic.
+---
 
+## The runtime handoff (don't discover resources at runtime)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Building & deploying (runbook)
-# ──────────────────────────────────────────────────────────────────────────────
+The CDK injects each resource's physical id into the service's compute as an env var named by
+`envVarName(kind, key)` (e.g. `QUEUE_WORK`, `TABLE_THINGS`), and publishes the same under
+`/{env}/{service}/{kind}/{key}` in SSM. The service resolves **logical keys** at boot via the
+`CloudResolver` from `@repo/cloud-manifest` — it never hardcodes a physical name:
 
-The operational guide: build, then deploy to a real AWS environment (dev/staging/prod)
-or to **LocalStack** for local development. All commands run from `/cloud` unless noted.
+```ts
+const queueUrl = resolver.require(ResourceKind.QUEUE, "work");
+```
 
-## Environments
+So the same code runs locally, in LocalStack, and in real AWS — only the injected values differ.
 
-The target is chosen with **CDK context**, `-c env=<name>` (default `dev`). It drives
-resource naming, the 1–10 sizing, and per-environment config.
+---
 
-| env          | `-c env=`    | name prefix   | target                 |
-|--------------|--------------|---------------|------------------------|
-| `local`      | `local`      | `local-`      | LocalStack (Docker)    |
-| `dev`        | `dev`        | `dev-`        | AWS dev account        |
-| `staging`    | `staging`    | `staging-`    | AWS staging account    |
-| `production` | `production` | `production-` | AWS production account |
+## Run it — LocalStack (local "cloud")
 
-## Prerequisites
-
-- **Node** — `npm install` at the repo root (installs the CDK app's deps too).
-- **AWS CLI v2** + configured profiles for real deploys (see *.aws config* below).
-- **Docker** — for local development (LocalStack + dependent containers).
-- **cdklocal** (`aws-cdk-local`) — installed as a dev dependency; used by the `local:*` scripts.
-
-## Build
+LocalStack emulates AWS; `cdklocal` deploys to it. Env is **`local`** (account-agnostic, so synth
+needs no credentials). See [`local/README.md`](./local/README.md).
 
 ```bash
-npm install            # repo root — once
-cd cloud
-npm run build          # tsc typecheck of the CDK app
-npm run synth:dev      # synthesize CloudFormation only (no deploy)
+npm run local:up          # start LocalStack + Kafka (Redpanda) — local/docker-compose.yml
+npm run local:bootstrap   # cdklocal bootstrap -c env=local
+npm run local:deploy      # cdklocal deploy  -c env=local   (or one stack: npx cdklocal deploy app-local -c env=local)
+npm run local:down        # tear down (-v drops volumes)
 ```
 
-### Service runtimes — compiled, run on `node`
+A service's ECS task runs the **same image** you build locally (the root `Dockerfile`,
+`--build-arg APP_NAME=<svc>`), selected by `SERVICE_ROLE` + `PORT` env.
 
-Node services are **esbuild-bundled** (not run via `tsx`) so production runs plain `node`:
-
-| Target | Entry | Build | Artifact | Runtime |
-|--------|-------|-------|----------|---------|
-| **ECS / Fargate** | `src/index.ts` (Fastify server) | `npm run build` | `bin/index.js` | `node bin/index.js` (the Dockerfile CMD) |
-| **Lambda** | `src/lambda.ts` (exports `handler`) | `npm run build:lambda` | `bin/lambda.js` | Lambda invokes `lambda.handler` |
-
-For a Lambda service, set the `LambdaSpec.handler` to `"lambda.handler"`; the CDK asset is
-`apps/<domain>/<service>/bin` (resolved by `ServiceStack.functionCode()`). Bundles inline the
-`@repo/*` workspace packages; `ajv`/`ajv-formats` stay **external** and resolve from
-`node_modules` at runtime — used normally for endpoint + webhook JSON validation. They ship
-in the ECS image; for a Lambda, include them in the function package (or a layer).
-
-## Deploy to an AWS environment
-
-Deploys target whatever AWS account your **active credentials/profile** resolve to —
-select the account with a per-environment profile. Bootstrap once per account+region.
+## Deploy — real AWS
 
 ```bash
-# one-time per account/region:
-AWS_PROFILE=rup-dev      npm run bootstrap:dev
-
-AWS_PROFILE=rup-dev      npm run diff:dev        # preview the change set
-AWS_PROFILE=rup-dev      npm run deploy:dev
-AWS_PROFILE=rup-staging  npm run deploy:staging
-AWS_PROFILE=rup-prod     npm run deploy:prod     # prompts for approval (dev/staging auto-approve)
+npm run synth:dev         # cdk synth -c env=dev   (inspect the template)
+npm run diff:dev          # what changes
+npm run deploy:dev        # cdk deploy --all -c env=dev
+# staging / prod variants exist; prod requires approval
 ```
+Account/region come from your AWS credentials/`CDK_DEFAULT_*`; the env is the CDK context `-c env=…`.
 
-The CDK app reads the account/region from `CDK_DEFAULT_ACCOUNT` / `CDK_DEFAULT_REGION`,
-which the CDK CLI populates from the active profile (region defaults to `us-east-1`).
+---
 
-## Local development (LocalStack)
+## Commands cheat-sheet
 
-Full guide: [`./local/README.md`](./local/README.md). Quick version:
+| Command | Does |
+|---|---|
+| `npx cdk list -c env=local` | list the stacks the app synthesizes |
+| `npx cdk synth <stack> -c env=local` | emit one stack's template |
+| `npm run local:up` / `local:down` | LocalStack + Kafka up / down |
+| `npm run local:bootstrap` / `local:deploy` | bootstrap / deploy to LocalStack |
+| `npm run deploy:dev` / `:staging` / `:prod` | deploy to real AWS |
 
-```bash
-export LOCALSTACK_AUTH_TOKEN=...     # LocalStack Pro token
-npm run local:up                     # LocalStack + dependent containers
-npm run local:bootstrap              # once per fresh container
-npm run local:deploy                 # cdklocal deploy -c env=local
-# ...
-npm run local:destroy                # tear down stacks
-npm run local:down                   # stop containers + wipe the volume
-```
+---
 
-LocalStack needs **no real AWS credentials** — `cdklocal` uses dummy `test`/`test`.
+## Gotchas
 
-## Dependent services for local
-
-Some managed services aren't emulated by LocalStack and run as **side containers** (in
-[`local/docker-compose.yml`](./local/docker-compose.yml), started by `npm run local:up`).
-The CDK skips the managed versions under `env=local` and logs each skip at synth time.
-
-| Managed (cloud)              | Local stand-in              | Why                          |
-|------------------------------|-----------------------------|------------------------------|
-| **MSK (Kafka)**              | Redpanda container `:9092`  | LocalStack MSK is unreliable |
-| MediaConvert / RUM / Amplify | — (skipped)                 | no LocalStack support        |
-
-Everything else (S3, SQS, SNS, DynamoDB, Lambda, API Gateway, KMS, Secrets, RDS,
-ElastiCache, OpenSearch, Cognito, CloudFront, EventBridge, ECS, Batch, …) is emulated
-inside **LocalStack Pro**.
-
-## Environment variables
-
-| Variable | Used by | Purpose |
-|----------|---------|---------|
-| `AWS_PROFILE` | deploy tooling | selects the AWS account/credentials (one profile per env) |
-| `CDK_DEFAULT_ACCOUNT` / `CDK_DEFAULT_REGION` | CDK CLI | target account/region (CLI sets from the profile; region falls back to `us-east-1`) |
-| `AWS_REGION` | CLI / SDK | region for the AWS CLI and service SDK clients |
-| `LOCALSTACK_AUTH_TOKEN` | local | LocalStack **Pro** token (for RDS/OpenSearch/Cognito/… emulation) |
-| `AWS_ENDPOINT_URL` | local **runtime** | points a service's AWS SDK clients at LocalStack (`http://localhost:4566`) — read by `sdkConfig()` in `@repo/services` |
-| `KAFKA_BROKERS` | local **runtime** | the Kafka side-container (`localhost:9092`), MSK's local stand-in |
-| `ENVIRONMENT` | runtime (CDK-injected) | the env a service is running as; consumed by `CloudResolver` |
-
-Deploy-time vars (`AWS_PROFILE`, `CDK_DEFAULT_*`) are for *you/CI* running CDK. Runtime
-vars (`AWS_ENDPOINT_URL`, `KAFKA_BROKERS`, `ENVIRONMENT`) are what *services* read — the
-CDK injects the resource identifiers; you set the local ones in your shell/compose.
-
-## .aws config
-
-Real deploys use standard AWS CLI profiles — one per environment/account. Prefer **IAM
-Identity Center (SSO)**:
-
-```ini
-# ~/.aws/config
-[profile rup-dev]
-sso_session = rumbleup
-sso_account_id = 111111111111
-sso_role_name = AdministratorAccess
-region = us-east-1
-
-[profile rup-staging]
-sso_session = rumbleup
-sso_account_id = 222222222222
-sso_role_name = AdministratorAccess
-region = us-east-1
-
-[profile rup-prod]
-sso_session = rumbleup
-sso_account_id = 333333333333
-sso_role_name = AdministratorAccess
-region = us-east-1
-
-[sso-session rumbleup]
-sso_start_url = https://rumbleup.awsapps.com/start
-sso_region = us-east-1
-```
-
-**The account IDs are the critical wiring.** Each profile's `sso_account_id` is the
-12-digit AWS account number for that environment — it's what binds `rup-dev` to your dev
-account, `rup-prod` to prod, and so on. CDK reads it back as `CDK_DEFAULT_ACCOUNT` at
-deploy time, so the stack lands in the correct account. Get them wrong and you deploy to
-the wrong place.
-
-| Field | Where it goes | What to set it to |
-|-------|---------------|-------------------|
-| `sso_account_id` | each `[profile …]` in `~/.aws/config` | the **12-digit account id** for that env (a *different* id for dev / staging / prod) |
-| `sso_role_name`  | each `[profile …]` | the Identity Center permission set you assume in that account (e.g. `AdministratorAccess`) |
-| `region`         | each `[profile …]` | the deploy region for that env |
-| `sso_start_url`  | the `[sso-session …]` block | your org's Identity Center portal URL |
-| `sso_region`     | the `[sso-session …]` block | the region Identity Center is hosted in |
-
-**Where to find the account IDs:** the **IAM Identity Center** access portal (the start
-URL lists every account with its id), **AWS Organizations**, or after login via
-`aws sts get-caller-identity --profile rup-dev` (the `Account` field). Replace the
-placeholder ids above (`111111111111`, `222222222222`, `333333333333`) with your real
-per-environment account ids — and never point two environments at the same account.
-
-```bash
-aws sso login --profile rup-dev      # then: AWS_PROFILE=rup-dev npm run deploy:dev
-```
-
-Static keys (if not using SSO) go in `~/.aws/credentials` under matching `[rup-dev]` etc.
-**LocalStack uses no real profile** — leave it out of the `local:*` flow entirely.
-
+* **ECS image + Lambda code are placeholders at *synth*.** `ServiceStack` synths ECS with a registry
+  placeholder image and missing Lambda handlers as an inline stub — so `cdk synth` needs **no Docker
+  build**. The real image (root `Dockerfile`) and `jobs/*` bundles resolve at **deploy**.
+* **SQS → Lambda `batchSize` ≤ 10** without a batching window (synth will reject larger).
+* **`jobs` not `functions`.** A service's Lambda workers are declared under `owns.jobs` (the platform
+  `Job` model); `services` is for long-running ECS.
+* **No magic topic/action strings.** In `publishes`/`subscribes`, name topics with **`Topics.X`**
+  (`@repo/cloud-manifest`) — never a literal; events are typed by **`Events.Action`** (`@repo/endpoint`),
+  carried in an **`Events.Envelope`** body. Topic names live only in `Topics`, action types only in
+  `Events`, so publisher and subscriber can't drift. (See SPECS.md → *Publishers & subscribers*.)
+* **Escape hatch.** The manifest covers the routine ~90%. For the exotic, a service may also export raw
+  CDK from `src/CloudManifest.cdk.ts` that `/cloud` composes alongside — manifest for routine, raw CDK
+  for the rest. (See SPECS.md.)
+* **One API / one WebSocket per service**; gateway routes are generated from the service's public
+  `RestfulEndpoint` defs (see `lib/endpoints.ts`).

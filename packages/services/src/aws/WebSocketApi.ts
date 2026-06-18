@@ -1,9 +1,9 @@
 //
 // WebSocket facade — push to connected clients via the API Gateway Management API, keyed by a
-// cloud-spec LOGICAL websocket key.
+// cloud-manifest LOGICAL websocket key.
 //
 import { ApiGatewayManagementApiClient, PostToConnectionCommand, DeleteConnectionCommand } from "@aws-sdk/client-apigatewaymanagementapi";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
@@ -11,7 +11,7 @@ import { ClientUtils } from "./ClientUtils";
 /**
  * WebSocket facade — **server → client** push over the API Gateway Management API
  * (`@aws-sdk/client-apigatewaymanagementapi`), against the management endpoint resolved from a
- * cloud-spec LOGICAL websocket key (default `"live"`).
+ * cloud-manifest LOGICAL websocket key (default `"live"`).
  *
  * Connections are identified by the `connectionId` API Gateway supplies on `$connect` (store
  * it, keyed by user/session, so you can {@link post} to it later). Use for live inboxes,

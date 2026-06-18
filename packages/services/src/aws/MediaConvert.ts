@@ -1,5 +1,5 @@
 //
-// MediaConvert facade — submit transcode jobs, keyed by cloud-spec LOGICAL mediaConvert keys.
+// MediaConvert facade — submit transcode jobs, keyed by cloud-manifest LOGICAL mediaConvert keys.
 //
 import {
     MediaConvertClient, DescribeEndpointsCommand, CreateJobCommand, GetJobCommand, ListPresetsCommand,
@@ -9,7 +9,7 @@ import type {
     CreateJobCommandInput, DescribeEndpointsCommandOutput, CreateJobCommandOutput,
     GetJobCommandOutput, ListPresetsCommandOutput, Job, Output, Preset,
 } from "@aws-sdk/client-mediaconvert";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
@@ -32,7 +32,7 @@ interface VideoRateSettings
 
 /**
  * MediaConvert facade — submit video transcode jobs over `@aws-sdk/client-mediaconvert`,
- * addressed by cloud-spec LOGICAL mediaConvert keys (e.g. `"transcode"`).
+ * addressed by cloud-manifest LOGICAL mediaConvert keys (e.g. `"transcode"`).
  *
  * Quirk: MediaConvert uses an **account-specific endpoint** that must be discovered once
  * (`DescribeEndpoints`) — so unlike the other facades the client is obtained **asynchronously**
@@ -103,7 +103,7 @@ export class MediaConvert
     constructor( private readonly cloud : CloudResolver ) {}
 
     ////////////////////////////////////////////////////////////////////////////////////////
-    /** Resolve a cloud-spec logical mediaConvert key (e.g. `"transcode"`) to its job-queue ARN. */
+    /** Resolve a cloud-manifest logical mediaConvert key (e.g. `"transcode"`) to its job-queue ARN. */
     queue( key : ResourceKey ) : string { return this.cloud.mediaConvertQueue( key ); }
 
     ////////////////////////////////////////////////////////////////////////////////////////

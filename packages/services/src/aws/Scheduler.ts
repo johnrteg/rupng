@@ -11,7 +11,7 @@ import type {
     GetScheduleCommandOutput, ListSchedulesCommandOutput, ScheduleSummary,
     Target as SchedulerTarget, FlexibleTimeWindow,
 } from "@aws-sdk/client-scheduler";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
@@ -28,7 +28,7 @@ import { ClientUtils } from "./ClientUtils";
  * Requires the owning service to declare `owns.scheduler` in its manifest — the /cloud build
  * then provisions a per-service **schedule group** + an **execution role** Scheduler assumes to
  * deliver, and injects `SCHEDULER_GROUP` / `SCHEDULER_ROLE_ARN`. Targets are addressed by their
- * cloud-spec LOGICAL keys ({@link Scheduler.Target}); reach `.client` for the raw SDK.
+ * cloud-manifest LOGICAL keys ({@link Scheduler.Target}); reach `.client` for the raw SDK.
  */
 export class Scheduler
 {
@@ -205,7 +205,7 @@ export class Scheduler
 
 export namespace Scheduler
 {
-    /** Where a schedule delivers — exactly one of `queueKey` / `functionKey`, by cloud-spec logical key. */
+    /** Where a schedule delivers — exactly one of `queueKey` / `functionKey`, by cloud-manifest logical key. */
     export interface Target
     {
         queueKey?    : ResourceKey;     // deliver to an owned SQS queue

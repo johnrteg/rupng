@@ -33,32 +33,23 @@ decomposed/renamed (see below) so every utility has an obvious, domain-named hom
 
 ---
 
-# The event envelope — `Type.MessageEnvelope`
+# The event envelope — moved to `@repo/events`
 
-The platform's **one event body**, carried unreshaped by every transport: Kafka (service ↔ service),
-the WebSocket push frame (server → client), and the client pub/sub bus (component ↔ component). It lives
-here, in `@repo/common`, because it's the only package all three share **and** it's dependency-free — so
-defining it here keeps AWS/server types out of the web bundle.
+The platform's **one universal event body** is **`Events.Envelope`** — and it lives in
+[`@repo/events`](../../events/README.md), **not here**. It moved because it's typed by `Events.Object` /
+`Events.Verb` (the event vocabulary), which `@repo/common` can't depend on without a cycle. `@repo/events` is
+itself pure types/enums (no AWS), so it's just as safe for the web bundle. The earlier dependency-free
+`Type.MessageEnvelope` (`{ type, data }`) is **superseded** by it.
 
-```ts
-interface MessageEnvelope<T = Json> {
-    type : string;   // the verb to switch on — "contact.updated", "theme"
-    data : T;        // the typed payload
-    // optional metadata, filled in by whichever layer has it:
-    key?, id?, time?, source?, transactionId?, version?, seq?, changed?
-}
-```
+The same `Events.Envelope` is carried unreshaped by every transport — Kafka (inter-service), the WebSocket
+push frame (server → client), the client pub/sub bus, and outbound webhooks:
+* **Kafka** — `Kafka.publishEvent`/`subscribeEvents` (`@repo/services`) carry it on `Events.Object` topics.
+* **WebSocket** — `WebSocketService.Message` (web) **is** `Events.Envelope` (type-only import).
+* **Pub/sub bus** — re-publishes the server envelope **whole**, routed by `action`.
 
-Only `type` + `data` are required; the rest is metadata (`key` = ordering/partition key, `id` = dedup,
-`time`/`source`/`transactionId` = provenance, `version`/`seq` = schema/ordering, `changed` = updated
-fields). Named `MessageEnvelope`, **not `Event`**, to avoid colliding with DOM `Event`.
-
-Consumers:
-* **Kafka** — `Kafka.Event` (`@repo/services`) `extends` this, re-requiring `key`.
-* **WebSocket** — `WebSocketService.Message` (web) **is** this (type-only import).
-* **Pub/sub bus** — re-publishes the server envelope **whole**, routed by `type`.
-
-Platform-wide convention + the fat-event / per-entity-topic rules: [root SPECS → Events & messaging](../../../SPECS.md).
+The envelope shape, the `object`+`verb`+`action` model, the 1:1 `PayloadFor<O>` contract, and the
+fat-event / per-entity-topic rules: [`@repo/events`](../../events/README.md) and
+[root SPECS → Events & messaging](../../../docs/SPECS.md).
 
 ---
 
@@ -67,7 +58,7 @@ Platform-wide convention + the fat-event / per-entity-topic rules: [root SPECS �
 The platform's time primitives. The whole model rests on **one distinction**: an *instant* is not the
 same thing as a *wall-clock time in a zone*. Conflating them is the classic scheduling bug — so we type
 them differently. This is the local, code-level companion to the platform-wide convention in the root
-[SPECS.md → Time, scheduling & timezones](../../../SPECS.md).
+[SPECS.md → Time, scheduling & timezones](../../../docs/SPECS.md).
 
 ## Two concepts, two representations
 
@@ -159,7 +150,7 @@ Two local times are pathological at a transition; the resolver's defined behavio
   instant with `toInstant` at fire time, and (per the platform convention) **stamp the resolved instant**.
 * **Always display the zone** — never a bare local time (3 PM Eastern ≠ 3 PM Pacific).
 
-See: root [SPECS.md → Time, scheduling & timezones](../../../SPECS.md) · [report spec → Timezone discipline](../../../apps/core/report/SPECS.md) · [`TimeZoneUtils`](src/utils/TimeZoneUtils.ts).
+See: root [SPECS.md → Time, scheduling & timezones](../../../docs/SPECS.md) · [report spec → Timezone discipline](../../../apps/core/report/SPECS.md) · [`TimeZoneUtils`](src/utils/TimeZoneUtils.ts).
 
 ---
 

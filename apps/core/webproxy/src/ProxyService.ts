@@ -19,7 +19,7 @@ import axios, { AxiosInstance, AxiosResponse } from "axios";
 import WebSocket, { WebSocketServer } from "ws";
 import { FastifyReply, FastifyRequest } from "fastify";
 
-import { Application, Service } from "@repo/services";
+import { Application, Service, Events } from "@repo/services";
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -32,8 +32,8 @@ export class ProxyService extends Service
     ////////////////////////////////////////////////////////////////////////////////////////////////
     constructor()
     {
-        // proxy defaults to 8080 (the dev front door); PORT overrides.
-        super( "proxy", parseInt( process.env.PORT ?? "8080" ) );
+        // proxy defaults to 8080 (the dev front door); PORT overrides. No role — single-instance proxy.
+        super( Events.Service.WEBPROXY, undefined, parseInt( process.env.PORT ?? "8080" ) );
         this.wss = new WebSocketServer( { noServer: true } );
     }
 

@@ -1,14 +1,14 @@
 //
-// SNS facade — publish notifications, keyed by cloud-spec LOGICAL SNS topic keys.
+// SNS facade — publish notifications, keyed by cloud-manifest LOGICAL SNS topic keys.
 //
 import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
- * SNS facade — publish over `@aws-sdk/client-sns`, addressed by cloud-spec LOGICAL topic keys
+ * SNS facade — publish over `@aws-sdk/client-sns`, addressed by cloud-manifest LOGICAL topic keys
  * (e.g. `"alerts"`).
  *
  * **Use SNS for** fan-out notifications — one publish delivered to many subscribers
@@ -29,7 +29,7 @@ export class Sns
     get client() : SNSClient { return this._client ??= ClientUtils.createClient( SNSClient ); }
 
     ///////////////////////////////////////////////////////////////////////////////////////////
-    /** Resolve a cloud-spec logical SNS topic key (e.g. `"alerts"`) to its physical topic ARN.
+    /** Resolve a cloud-manifest logical SNS topic key (e.g. `"alerts"`) to its physical topic ARN.
      *  Internal — {@link publish} resolves the ARN for you; callers pass the logical key. (For raw
      *  `.client` work that needs an ARN, use `cloud.snsTopicArn(key)` directly.) */
     private arn( key : ResourceKey ) : string { return this.cloud.snsTopicArn( key ); }

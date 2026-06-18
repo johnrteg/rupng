@@ -2,8 +2,8 @@
 // Unit tests for the LocalStack capability helpers (pure; the DestroyAll aspect is exercised
 // via synth, not here).
 //
-import { isLocal, supportedLocally, LOCAL_UNSUPPORTED } from '../lib/local';
-import { Environment, ResourceKind } from '@repo/cloud-spec';
+import { isLocal, supportedLocally, LOCAL_UNSUPPORTED } from '../src/lib/local';
+import { Environment, ResourceKind } from '@repo/cloud-manifest';
 
 describe('local helpers', () => {
 

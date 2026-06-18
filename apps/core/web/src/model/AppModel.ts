@@ -42,7 +42,7 @@ export class AppModel
     public auth : AuthService;
     public account : AccountService;
 
-    //public pingTimer            : ReturnType<typeof setTimeout> | null = null;
+    public pingTimer            : ReturnType<typeof setTimeout> | null = null;
 
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -62,13 +62,13 @@ export class AppModel
                                         AppModel.ServerMonitor );
 
         // init
-        this.log                = new LogService();
-        this.cache              = new CacheService();
+        this.log        = new LogService();
+        this.cache      = new CacheService();
         this.storage    = new StorageService();
-        this.ws                 = new WebSocketService( this );
-        this.pubsub             = new PubSubService();
-        this.auth               = new AuthService( this );
-        this.ui                 = new UiService( this );
+        this.ws         = new WebSocketService( this );
+        this.pubsub     = new PubSubService();
+        this.auth       = new AuthService( this );
+        this.ui         = new UiService( this );
         this.account    = new AccountService( this );
     }
 
@@ -136,13 +136,12 @@ export class AppModel
         this.storage.makeEmpty();
         this.cache.makeEmpty();
         this.ws.makeEmpty();
-        //this.ui.makeEmpty();
+        this.ui.makeEmpty();
 
-        
         this.refreshInit();
 
-        //if( this.pingTimer )clearTimeout( this.pingTimer );
-        //this.pingTimer          = null;
+        if( this.pingTimer )clearTimeout( this.pingTimer );
+        this.pingTimer          = null;
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -278,11 +277,13 @@ export class AppModel
         // do any initialization before running the app
         await this.refreshInit();
 
+        console.log('starting');
+
         // start the app
         main();
     }
 
-    //////////////////////////////////////////////////////
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////
     // wrapper function
     public label( id : string, options? : LocaleService.LabelOptions ) : string
     {

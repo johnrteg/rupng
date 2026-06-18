@@ -1,20 +1,20 @@
 //
 // AWS AppConfig facade — runtime config + feature flags via the AppConfig Data API.
-// Keyed by cloud-spec LOGICAL appConfig keys (CloudResolver -> application id). The session
+// Keyed by cloud-manifest LOGICAL appConfig keys (CloudResolver -> application id). The session
 // token + poll token are managed internally; a poll returns "" when nothing changed.
 //
 import { AppConfigDataClient, StartConfigurationSessionCommand, GetLatestConfigurationCommand } from "@aws-sdk/client-appconfigdata";
 import type { StartConfigurationSessionCommandOutput, GetLatestConfigurationCommandOutput } from "@aws-sdk/client-appconfigdata";
 import { AppConfigClient, ListHostedConfigurationVersionsCommand, CreateHostedConfigurationVersionCommand, StartDeploymentCommand, GetDeploymentCommand } from "@aws-sdk/client-appconfig";
 import type { ListHostedConfigurationVersionsCommandOutput, CreateHostedConfigurationVersionCommandOutput, StartDeploymentCommandOutput, GetDeploymentCommandOutput } from "@aws-sdk/client-appconfig";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
  * AWS AppConfig facade — runtime configuration + feature flags via the AppConfig **Data API**
- * (`@aws-sdk/client-appconfigdata`), addressed by cloud-spec LOGICAL appConfig keys.
+ * (`@aws-sdk/client-appconfigdata`), addressed by cloud-manifest LOGICAL appConfig keys.
  *
  * **Use it for** values you want to change *without a redeploy* — feature flags, tunables,
  * kill switches, sampling rates. **Not for** secrets (use Secrets Manager / KMS) or static
@@ -109,7 +109,7 @@ export class AppConfig
     //
     // NOTE: unlike the data-plane methods above (which accept profile / environment NAMES), the
     // control-plane calls below take AppConfig **IDs** — `profileId` (configuration profile id) and
-    // `environmentId` — as AWS requires. `appConfigKey` is still a cloud-spec logical key (-> app id).
+    // `environmentId` — as AWS requires. `appConfigKey` is still a cloud-manifest logical key (-> app id).
     //
 
     ////////////////////////////////////////////////////////////////////////////////

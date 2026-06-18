@@ -1,15 +1,15 @@
 //
-// KMS facade — encrypt/decrypt + envelope data keys, keyed by cloud-spec LOGICAL key keys.
+// KMS facade — encrypt/decrypt + envelope data keys, keyed by cloud-manifest LOGICAL key keys.
 //
 import { KMSClient, EncryptCommand, DecryptCommand, GenerateDataKeyCommand } from "@aws-sdk/client-kms";
 import type { EncryptCommandOutput, DecryptCommandOutput, GenerateDataKeyCommandOutput } from "@aws-sdk/client-kms";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
- * KMS facade — encryption over `@aws-sdk/client-kms`, addressed by cloud-spec LOGICAL key keys
+ * KMS facade — encryption over `@aws-sdk/client-kms`, addressed by cloud-manifest LOGICAL key keys
  * (e.g. `"data"`) rather than key ARNs.
  *
  * **When to use which:**
@@ -34,7 +34,7 @@ export class Kms
     get client() : KMSClient { return this._client ??= ClientUtils.createClient( KMSClient ); }
 
     /////////////////////////////////////////////////////////////////////////////////////////////
-    /** Resolve a cloud-spec logical key key (e.g. `"data"`) to its physical KMS key ARN. */
+    /** Resolve a cloud-manifest logical key key (e.g. `"data"`) to its physical KMS key ARN. */
     keyArn( key : ResourceKey ) : string { return this.cloud.kmsKeyArn( key ); }
 
     /////////////////////////////////////////////////////////////////////////////////////////////

@@ -1,18 +1,18 @@
 //
 // Database facade — PostgreSQL (RDS / Aurora) via `pg`, through the RDS PROXY endpoint, keyed
-// by a cloud-spec LOGICAL database key. Routes by access mode to the writer or reader endpoint.
+// by a cloud-manifest LOGICAL database key. Routes by access mode to the writer or reader endpoint.
 //
 import { Pool } from "pg";
 import type { PoolClient, QueryResult, QueryResultRow } from "pg";
 import { Signer } from "@aws-sdk/rds-signer";
-import { ResourceKind } from "@repo/cloud-spec";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import { ResourceKind } from "@repo/cloud-manifest";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 
 /**
  * PostgreSQL facade (RDS / Aurora) over `pg`, against the **RDS Proxy** endpoint resolved from a
- * cloud-spec LOGICAL database key (default `"main"`).
+ * cloud-manifest LOGICAL database key (default `"main"`).
  *
  * **Default to DynamoDB instead** for most service data — it runs identically local↔cloud with
  * no proxy/pooling/IAM-user setup. Use this facade only for a genuinely **relational** workload

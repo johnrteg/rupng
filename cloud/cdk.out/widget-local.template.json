@@ -1,0 +1,4367 @@
+{
+ "Resources": {
+  "Keydata296605E0": {
+   "Type": "AWS::KMS::Key",
+   "Properties": {
+    "EnableKeyRotation": true,
+    "KeyPolicy": {
+     "Statement": [
+      {
+       "Action": "kms:*",
+       "Effect": "Allow",
+       "Principal": {
+        "AWS": {
+         "Fn::Join": [
+          "",
+          [
+           "arn:",
+           {
+            "Ref": "AWS::Partition"
+           },
+           ":iam::",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":root"
+          ]
+         ]
+        }
+       },
+       "Resource": "*"
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Key-data/Resource"
+   }
+  },
+  "KeydataAliasD06DF903": {
+   "Type": "AWS::KMS::Alias",
+   "Properties": {
+    "AliasName": "alias/widget-data",
+    "TargetKeyId": {
+     "Fn::GetAtt": [
+      "Keydata296605E0",
+      "Arn"
+     ]
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Key-data/Alias/Resource"
+   }
+  },
+  "Bucketfiles76A11024": {
+   "Type": "AWS::S3::Bucket",
+   "Properties": {
+    "BucketEncryption": {
+     "ServerSideEncryptionConfiguration": [
+      {
+       "ServerSideEncryptionByDefault": {
+        "KMSMasterKeyID": {
+         "Fn::GetAtt": [
+          "Keydata296605E0",
+          "Arn"
+         ]
+        },
+        "SSEAlgorithm": "aws:kms"
+       }
+      }
+     ]
+    },
+    "BucketName": "local-widget-bucket-files",
+    "LifecycleConfiguration": {
+     "Rules": [
+      {
+       "ExpirationInDays": 90,
+       "Status": "Enabled"
+      }
+     ]
+    },
+    "PublicAccessBlockConfiguration": {
+     "BlockPublicAcls": true,
+     "BlockPublicPolicy": true,
+     "IgnorePublicAcls": true,
+     "RestrictPublicBuckets": true
+    },
+    "VersioningConfiguration": {
+     "Status": "Enabled"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Bucket-files/Resource"
+   }
+  },
+  "BucketfilesPolicy5489F582": {
+   "Type": "AWS::S3::BucketPolicy",
+   "Properties": {
+    "Bucket": {
+     "Ref": "Bucketfiles76A11024"
+    },
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:*",
+       "Condition": {
+        "Bool": {
+         "aws:SecureTransport": "false"
+        }
+       },
+       "Effect": "Deny",
+       "Principal": {
+        "AWS": "*"
+       },
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "Bucketfiles76A11024",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "Bucketfiles76A11024",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Bucket-files/Policy/Resource"
+   }
+  },
+  "PresignfilesServiceRole0CDE38E9": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Presign-files/ServiceRole/Resource"
+   }
+  },
+  "PresignfilesServiceRoleDefaultPolicyB29BF806": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:Abort*"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          {
+           "Fn::GetAtt": [
+            "Bucketfiles76A11024",
+            "Arn"
+           ]
+          },
+          "/*"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": [
+        "kms:Encrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:Decrypt"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "Keydata296605E0",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "PresignfilesServiceRoleDefaultPolicyB29BF806",
+    "Roles": [
+     {
+      "Ref": "PresignfilesServiceRole0CDE38E9"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Presign-files/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "PresignfilesE244D372": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "ZipFile": "exports.handler = async () => ({});"
+    },
+    "Environment": {
+     "Variables": {
+      "BUCKET_FILES": {
+       "Ref": "Bucketfiles76A11024"
+      },
+      "ENVIRONMENT": "local"
+     }
+    },
+    "FunctionName": "local-widget-function-files-presign",
+    "Handler": "presign.handler",
+    "Role": {
+     "Fn::GetAtt": [
+      "PresignfilesServiceRole0CDE38E9",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs22.x",
+    "Timeout": 10
+   },
+   "DependsOn": [
+    "PresignfilesServiceRoleDefaultPolicyB29BF806",
+    "PresignfilesServiceRole0CDE38E9"
+   ],
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Presign-files/Resource"
+   }
+  },
+  "Bucketassets899AE396": {
+   "Type": "AWS::S3::Bucket",
+   "Properties": {
+    "BucketEncryption": {
+     "ServerSideEncryptionConfiguration": [
+      {
+       "ServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "AES256"
+       }
+      }
+     ]
+    },
+    "BucketName": "local-widget-bucket-assets",
+    "PublicAccessBlockConfiguration": {
+     "BlockPublicAcls": true,
+     "BlockPublicPolicy": true,
+     "IgnorePublicAcls": true,
+     "RestrictPublicBuckets": true
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Bucket-assets/Resource"
+   }
+  },
+  "BucketassetsPolicy15BAA710": {
+   "Type": "AWS::S3::BucketPolicy",
+   "Properties": {
+    "Bucket": {
+     "Ref": "Bucketassets899AE396"
+    },
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:*",
+       "Condition": {
+        "Bool": {
+         "aws:SecureTransport": "false"
+        }
+       },
+       "Effect": "Deny",
+       "Principal": {
+        "AWS": "*"
+       },
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "Bucketassets899AE396",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "Bucketassets899AE396",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": "s3:GetObject",
+       "Condition": {
+        "StringEquals": {
+         "AWS:SourceArn": {
+          "Fn::Join": [
+           "",
+           [
+            "arn:",
+            {
+             "Ref": "AWS::Partition"
+            },
+            ":cloudfront::",
+            {
+             "Ref": "AWS::AccountId"
+            },
+            ":distribution/",
+            {
+             "Ref": "Cdnassets0FE6BD65"
+            }
+           ]
+          ]
+         }
+        }
+       },
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "cloudfront.amazonaws.com"
+       },
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          {
+           "Fn::GetAtt": [
+            "Bucketassets899AE396",
+            "Arn"
+           ]
+          },
+          "/*"
+         ]
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Bucket-assets/Policy/Resource"
+   }
+  },
+  "CdnassetsOrigin1S3OriginAccessControlC7D32BB2": {
+   "Type": "AWS::CloudFront::OriginAccessControl",
+   "Properties": {
+    "OriginAccessControlConfig": {
+     "Name": "widgetlocalCdnassetsOrigin1S3OriginAccessControlD86E8E6B",
+     "OriginAccessControlOriginType": "s3",
+     "SigningBehavior": "always",
+     "SigningProtocol": "sigv4"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Cdn-assets/Origin1/S3OriginAccessControl/Resource"
+   }
+  },
+  "Cdnassets0FE6BD65": {
+   "Type": "AWS::CloudFront::Distribution",
+   "Properties": {
+    "DistributionConfig": {
+     "DefaultCacheBehavior": {
+      "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+      "Compress": true,
+      "TargetOriginId": "widgetlocalCdnassetsOrigin1E07CC3B7",
+      "ViewerProtocolPolicy": "redirect-to-https"
+     },
+     "Enabled": true,
+     "HttpVersion": "http2",
+     "IPV6Enabled": true,
+     "Origins": [
+      {
+       "DomainName": {
+        "Fn::GetAtt": [
+         "Bucketassets899AE396",
+         "RegionalDomainName"
+        ]
+       },
+       "Id": "widgetlocalCdnassetsOrigin1E07CC3B7",
+       "OriginAccessControlId": {
+        "Fn::GetAtt": [
+         "CdnassetsOrigin1S3OriginAccessControlC7D32BB2",
+         "Id"
+        ]
+       },
+       "S3OriginConfig": {
+        "OriginAccessIdentity": ""
+       }
+      }
+     ]
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Cdn-assets/Resource"
+   }
+  },
+  "TablewidgetsD338BE84": {
+   "Type": "AWS::DynamoDB::Table",
+   "Properties": {
+    "AttributeDefinitions": [
+     {
+      "AttributeName": "accountId",
+      "AttributeType": "S"
+     },
+     {
+      "AttributeName": "widgetId",
+      "AttributeType": "S"
+     }
+    ],
+    "BillingMode": "PAY_PER_REQUEST",
+    "KeySchema": [
+     {
+      "AttributeName": "accountId",
+      "KeyType": "HASH"
+     },
+     {
+      "AttributeName": "widgetId",
+      "KeyType": "RANGE"
+     }
+    ],
+    "SSESpecification": {
+     "KMSMasterKeyId": {
+      "Fn::GetAtt": [
+       "Keydata296605E0",
+       "Arn"
+      ]
+     },
+     "SSEEnabled": true,
+     "SSEType": "KMS"
+    },
+    "TableName": "local-widget-table-widgets",
+    "TimeToLiveSpecification": {
+     "AttributeName": "expiresAt",
+     "Enabled": true
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Table-widgets/Resource"
+   }
+  },
+  "QueueprocessdlqAFDFA7B2": {
+   "Type": "AWS::SQS::Queue",
+   "Properties": {
+    "QueueName": "local-widget-queue-process-dlq"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Queue-process-dlq/Resource"
+   }
+  },
+  "QueueprocessB08BE525": {
+   "Type": "AWS::SQS::Queue",
+   "Properties": {
+    "QueueName": "local-widget-queue-process",
+    "RedrivePolicy": {
+     "deadLetterTargetArn": {
+      "Fn::GetAtt": [
+       "QueueprocessdlqAFDFA7B2",
+       "Arn"
+      ]
+     },
+     "maxReceiveCount": 5
+    },
+    "VisibilityTimeout": 60
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Queue-process/Resource"
+   }
+  },
+  "QueueprocessPolicy099EC9B0": {
+   "Type": "AWS::SQS::QueuePolicy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "sqs:SendMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+       ],
+       "Condition": {
+        "ArnEquals": {
+         "aws:SourceArn": {
+          "Fn::GetAtt": [
+           "Rulebusnightly2EF45F64",
+           "Arn"
+          ]
+         }
+        }
+       },
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "events.amazonaws.com"
+       },
+       "Resource": {
+        "Fn::GetAtt": [
+         "QueueprocessB08BE525",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Queues": [
+     {
+      "Ref": "QueueprocessB08BE525"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Queue-process/Policy/Resource"
+   }
+  },
+  "SnsalertsC9F2A765": {
+   "Type": "AWS::SNS::Topic",
+   "Properties": {
+    "TopicName": "local-widget-snstopic-alerts"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Sns-alerts/Resource"
+   }
+  },
+  "AppConfigconfig": {
+   "Type": "AWS::AppConfig::Application",
+   "Properties": {
+    "Name": "widget"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/AppConfig-config"
+   }
+  },
+  "AppConfigEnvconfigdefault": {
+   "Type": "AWS::AppConfig::Environment",
+   "Properties": {
+    "ApplicationId": {
+     "Ref": "AppConfigconfig"
+    },
+    "Name": "default"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/AppConfigEnv-config-default"
+   }
+  },
+  "AppConfigProfileconfigsettings": {
+   "Type": "AWS::AppConfig::ConfigurationProfile",
+   "Properties": {
+    "ApplicationId": {
+     "Ref": "AppConfigconfig"
+    },
+    "LocationUri": "hosted",
+    "Name": "settings",
+    "Type": "AWS.Freeform"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/AppConfigProfile-config-settings"
+   }
+  },
+  "AppConfigProfileconfigflags": {
+   "Type": "AWS::AppConfig::ConfigurationProfile",
+   "Properties": {
+    "ApplicationId": {
+     "Ref": "AppConfigconfig"
+    },
+    "LocationUri": "hosted",
+    "Name": "flags",
+    "Type": "AWS.AppConfig.FeatureFlags"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/AppConfigProfile-config-flags"
+   }
+  },
+  "DbSgmain62A391A5": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "db main",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "platform-local:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/DbSg-main/Resource"
+   }
+  },
+  "DbSgmainfromwidgetlocalComputeSg333219FF543221199AEC": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "compute -> proxy",
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "DbSgmain62A391A5",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "ComputeSg63149A20",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/DbSg-main/from widgetlocalComputeSg333219FF:5432"
+   }
+  },
+  "DbSgmainfromwidgetlocalDbSgmain5D2B2CE85432DC6C4F81": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "proxy -> db (self)",
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "DbSgmain62A391A5",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "DbSgmain62A391A5",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/DbSg-main/from widgetlocalDbSgmain5D2B2CE8:5432"
+   }
+  },
+  "DbSgmainfromwidgetlocalDbSgmain5D2B2CE8IndirectPort3C6FAD6D": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "Allow connections to the database Cluster from the Proxy",
+    "FromPort": {
+     "Fn::GetAtt": [
+      "DbmainF169F141",
+      "Endpoint.Port"
+     ]
+    },
+    "GroupId": {
+     "Fn::GetAtt": [
+      "DbSgmain62A391A5",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "DbSgmain62A391A5",
+      "GroupId"
+     ]
+    },
+    "ToPort": {
+     "Fn::GetAtt": [
+      "DbmainF169F141",
+      "Endpoint.Port"
+     ]
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/DbSg-main/from widgetlocalDbSgmain5D2B2CE8:{IndirectPort}"
+   }
+  },
+  "ComputeSg63149A20": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "service compute",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "platform-local:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/ComputeSg/Resource"
+   }
+  },
+  "ComputeSgfromwidgetlocalSvcapiLBSecurityGroupABA388FD8000AF66CE17": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "Load balancer to target",
+    "FromPort": 8000,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "ComputeSg63149A20",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "SvcapiLBSecurityGroup2798DBED",
+      "GroupId"
+     ]
+    },
+    "ToPort": 8000
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/ComputeSg/from widgetlocalSvcapiLBSecurityGroupABA388FD:8000"
+   }
+  },
+  "DbmainSubnets524CB060": {
+   "Type": "AWS::RDS::DBSubnetGroup",
+   "Properties": {
+    "DBSubnetGroupDescription": "Subnets for Db-main database",
+    "SubnetIds": [
+     {
+      "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+     },
+     {
+      "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Db-main/Subnets/Default"
+   }
+  },
+  "widgetlocalDbmainSecretC3D590CE3fdaad7efa858a3daf9490cf0a702aeb": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": {
+     "Fn::Join": [
+      "",
+      [
+       "Generated by the CDK for stack: ",
+       {
+        "Ref": "AWS::StackName"
+       }
+      ]
+     ]
+    },
+    "GenerateSecretString": {
+     "ExcludeCharacters": " %+~`#$&*()|[]{}:;<>?!'/@\"\\",
+     "GenerateStringKey": "password",
+     "PasswordLength": 30,
+     "SecretStringTemplate": "{\"username\":\"dbadmin\"}"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Db-main/Secret/Resource"
+   }
+  },
+  "DbmainSecretAttachmentFC57BC14": {
+   "Type": "AWS::SecretsManager::SecretTargetAttachment",
+   "Properties": {
+    "SecretId": {
+     "Ref": "widgetlocalDbmainSecretC3D590CE3fdaad7efa858a3daf9490cf0a702aeb"
+    },
+    "TargetId": {
+     "Ref": "DbmainF169F141"
+    },
+    "TargetType": "AWS::RDS::DBCluster"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Db-main/Secret/Attachment/Resource"
+   }
+  },
+  "DbmainF169F141": {
+   "Type": "AWS::RDS::DBCluster",
+   "Properties": {
+    "CopyTagsToSnapshot": true,
+    "DBClusterParameterGroupName": "default.aurora-postgresql16",
+    "DBSubnetGroupName": {
+     "Ref": "DbmainSubnets524CB060"
+    },
+    "DatabaseName": "widget",
+    "Engine": "aurora-postgresql",
+    "EngineVersion": "16.8",
+    "MasterUserPassword": {
+     "Fn::Join": [
+      "",
+      [
+       "{{resolve:secretsmanager:",
+       {
+        "Ref": "widgetlocalDbmainSecretC3D590CE3fdaad7efa858a3daf9490cf0a702aeb"
+       },
+       ":SecretString:password::}}"
+      ]
+     ]
+    },
+    "MasterUsername": "dbadmin",
+    "Port": 5432,
+    "ServerlessV2ScalingConfiguration": {
+     "MaxCapacity": 2,
+     "MinCapacity": 0.5
+    },
+    "VpcSecurityGroupIds": [
+     {
+      "Fn::GetAtt": [
+       "DbSgmain62A391A5",
+       "GroupId"
+      ]
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Db-main/Resource"
+   }
+  },
+  "Dbmainwriter8005D2F9": {
+   "Type": "AWS::RDS::DBInstance",
+   "Properties": {
+    "DBClusterIdentifier": {
+     "Ref": "DbmainF169F141"
+    },
+    "DBInstanceClass": "db.serverless",
+    "Engine": "aurora-postgresql",
+    "PromotionTier": 0
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Db-main/writer/Resource"
+   }
+  },
+  "DbProxymainIAMRole3823F4DA": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "rds.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/DbProxy-main/IAMRole/Resource"
+   }
+  },
+  "DbProxymainIAMRoleDefaultPolicyC1D7FFD1": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Ref": "DbmainSecretAttachmentFC57BC14"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "DbProxymainIAMRoleDefaultPolicyC1D7FFD1",
+    "Roles": [
+     {
+      "Ref": "DbProxymainIAMRole3823F4DA"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/DbProxy-main/IAMRole/DefaultPolicy/Resource"
+   }
+  },
+  "DbProxymain45D214E4": {
+   "Type": "AWS::RDS::DBProxy",
+   "Properties": {
+    "Auth": [
+     {
+      "AuthScheme": "SECRETS",
+      "IAMAuth": "REQUIRED",
+      "SecretArn": {
+       "Ref": "DbmainSecretAttachmentFC57BC14"
+      }
+     }
+    ],
+    "DBProxyName": "DbProxy-main",
+    "EngineFamily": "POSTGRESQL",
+    "RequireTLS": true,
+    "RoleArn": {
+     "Fn::GetAtt": [
+      "DbProxymainIAMRole3823F4DA",
+      "Arn"
+     ]
+    },
+    "VpcSecurityGroupIds": [
+     {
+      "Fn::GetAtt": [
+       "DbSgmain62A391A5",
+       "GroupId"
+      ]
+     }
+    ],
+    "VpcSubnetIds": [
+     {
+      "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+     },
+     {
+      "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/DbProxy-main/Resource"
+   }
+  },
+  "DbProxymainProxyTargetGroup73135901": {
+   "Type": "AWS::RDS::DBProxyTargetGroup",
+   "Properties": {
+    "ConnectionPoolConfigurationInfo": {},
+    "DBClusterIdentifiers": [
+     {
+      "Ref": "DbmainF169F141"
+     }
+    ],
+    "DBProxyName": {
+     "Ref": "DbProxymain45D214E4"
+    },
+    "TargetGroupName": "default"
+   },
+   "DependsOn": [
+    "DbmainF169F141",
+    "Dbmainwriter8005D2F9"
+   ],
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/DbProxy-main/ProxyTargetGroup"
+   }
+  },
+  "DbProxyRomain": {
+   "Type": "AWS::RDS::DBProxyEndpoint",
+   "Properties": {
+    "DBProxyEndpointName": "local-widget-main-ro",
+    "DBProxyName": {
+     "Ref": "DbProxymain45D214E4"
+    },
+    "TargetRole": "READ_ONLY",
+    "VpcSecurityGroupIds": [
+     {
+      "Fn::GetAtt": [
+       "DbSgmain62A391A5",
+       "GroupId"
+      ]
+     }
+    ],
+    "VpcSubnetIds": [
+     {
+      "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+     },
+     {
+      "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/DbProxyRo-main"
+   }
+  },
+  "CacheSgsessionsFCCC4D61": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "cache sessions",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "platform-local:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/CacheSg-sessions/Resource"
+   }
+  },
+  "CacheSgsessionsfromwidgetlocalComputeSg333219FF6379E94C01A8": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "compute -> redis",
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "CacheSgsessionsFCCC4D61",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "ComputeSg63149A20",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/CacheSg-sessions/from widgetlocalComputeSg333219FF:6379"
+   }
+  },
+  "Cachesessions": {
+   "Type": "AWS::ElastiCache::ServerlessCache",
+   "Properties": {
+    "CacheUsageLimits": {
+     "DataStorage": {
+      "Maximum": 2,
+      "Unit": "GB"
+     },
+     "ECPUPerSecond": {
+      "Maximum": 2000
+     }
+    },
+    "Engine": "redis",
+    "SecurityGroupIds": [
+     {
+      "Fn::GetAtt": [
+       "CacheSgsessionsFCCC4D61",
+       "GroupId"
+      ]
+     }
+    ],
+    "ServerlessCacheName": "local-widget-cache-sessions",
+    "SubnetIds": [
+     {
+      "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+     },
+     {
+      "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Cache-sessions"
+   }
+  },
+  "SesmailB3AE3639": {
+   "Type": "AWS::SES::EmailIdentity",
+   "Properties": {
+    "EmailIdentity": "mail.widget.example.com"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Ses-mail/Resource"
+   }
+  },
+  "SesCfgmail7BDF8D02": {
+   "Type": "AWS::SES::ConfigurationSet",
+   "Properties": {
+    "Name": "local-widget-ses-mail"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/SesCfg-mail/Resource"
+   }
+  },
+  "ScheduleGroup": {
+   "Type": "AWS::Scheduler::ScheduleGroup",
+   "Properties": {
+    "Name": "local-widget"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/ScheduleGroup"
+   }
+  },
+  "SchedulerRole59E73443": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "scheduler.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Description": "EventBridge Scheduler delivery role for widget"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/SchedulerRole/Resource"
+   }
+  },
+  "SchedulerRoleDefaultPolicy66F774B8": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "sqs:SendMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "QueueprocessB08BE525",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": "lambda:InvokeFunction",
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "Fnprocessor3A0D96CC",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "Fnprocessor3A0D96CC",
+             "Arn"
+            ]
+           },
+           ":*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": "lambda:InvokeFunction",
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "FnwsB57A07A9",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "FnwsB57A07A9",
+             "Arn"
+            ]
+           },
+           ":*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": "lambda:InvokeFunction",
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "FnpreToken8AFE7AEF",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "FnpreToken8AFE7AEF",
+             "Arn"
+            ]
+           },
+           ":*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "SchedulerRoleDefaultPolicy66F774B8",
+    "Roles": [
+     {
+      "Ref": "SchedulerRole59E73443"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/SchedulerRole/DefaultPolicy/Resource"
+   }
+  },
+  "FnprocessorServiceRole1BAC1877": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Fn-processor/ServiceRole/Resource"
+   }
+  },
+  "FnprocessorServiceRoleDefaultPolicy6AE47536": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "xray:PutTraceSegments",
+        "xray:PutTelemetryRecords"
+       ],
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query",
+        "dynamodb:GetItem",
+        "dynamodb:Scan",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DescribeTable"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "TablewidgetsD338BE84",
+          "Arn"
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "kms:Encrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "Keydata296605E0",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "TablewidgetsD338BE84",
+          "Arn"
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:DeleteObject*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:Abort*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "Bucketfiles76A11024",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "Bucketfiles76A11024",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:DeleteObject*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:Abort*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "Bucketassets899AE396",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "Bucketassets899AE396",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:ChangeMessageVisibility",
+        "sqs:GetQueueUrl",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "QueueprocessB08BE525",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "sqs:SendMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "QueueprocessB08BE525",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "kms:Decrypt",
+        "kms:Encrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "Keydata296605E0",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": "sns:Publish",
+       "Effect": "Allow",
+       "Resource": {
+        "Ref": "SnsalertsC9F2A765"
+       }
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:",
+           {
+            "Ref": "AWS::Partition"
+           },
+           ":s3:::local-media-bucket-media"
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:",
+           {
+            "Ref": "AWS::Partition"
+           },
+           ":s3:::local-media-bucket-media/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": "rds-db:connect",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:",
+          {
+           "Ref": "AWS::Partition"
+          },
+          ":rds-db:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":dbuser:",
+          {
+           "Fn::Select": [
+            6,
+            {
+             "Fn::Split": [
+              ":",
+              {
+               "Fn::GetAtt": [
+                "DbProxymain45D214E4",
+                "DBProxyArn"
+               ]
+              }
+             ]
+            }
+           ]
+          },
+          "/dbadmin"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": [
+        "scheduler:CreateSchedule",
+        "scheduler:UpdateSchedule",
+        "scheduler:DeleteSchedule",
+        "scheduler:GetSchedule",
+        "scheduler:ListSchedules"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:",
+          {
+           "Ref": "AWS::Partition"
+          },
+          ":scheduler:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":schedule/local-widget/*"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": "iam:PassRole",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "SchedulerRole59E73443",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "FnprocessorServiceRoleDefaultPolicy6AE47536",
+    "Roles": [
+     {
+      "Ref": "FnprocessorServiceRole1BAC1877"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Fn-processor/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "Fnprocessor3A0D96CC": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "ZipFile": "exports.handler = async () => ({});"
+    },
+    "Environment": {
+     "Variables": {
+      "KMS_DATA": {
+       "Fn::GetAtt": [
+        "Keydata296605E0",
+        "Arn"
+       ]
+      },
+      "BUCKET_FILES": {
+       "Ref": "Bucketfiles76A11024"
+      },
+      "BUCKET_ASSETS": {
+       "Ref": "Bucketassets899AE396"
+      },
+      "CDN_ASSETS": {
+       "Fn::GetAtt": [
+        "Cdnassets0FE6BD65",
+        "DomainName"
+       ]
+      },
+      "TABLE_WIDGETS": {
+       "Ref": "TablewidgetsD338BE84"
+      },
+      "QUEUE_PROCESS": {
+       "Ref": "QueueprocessB08BE525"
+      },
+      "SNSTOPIC_ALERTS": {
+       "Ref": "SnsalertsC9F2A765"
+      },
+      "APPCONFIG_CONFIG": {
+       "Ref": "AppConfigconfig"
+      },
+      "DATABASE_MAIN": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::GetAtt": [
+           "DbProxymain45D214E4",
+           "Endpoint"
+          ]
+         },
+         ":5432"
+        ]
+       ]
+      },
+      "DB_USER": "dbadmin",
+      "DB_NAME": "widget",
+      "DATABASE_MAIN_READER": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::GetAtt": [
+           "DbProxyRomain",
+           "Endpoint"
+          ]
+         },
+         ":5432"
+        ]
+       ]
+      },
+      "CACHE_SESSIONS": {
+       "Fn::GetAtt": [
+        "Cachesessions",
+        "Endpoint.Address"
+       ]
+      },
+      "TOPIC_EVENTS": "widget.events",
+      "TOPIC_EVENTS_CONFIG": "{\"topic\":\"widget.events\",\"partitions\":3,\"replicationFactor\":3}",
+      "SES_MAIL": "mail.widget.example.com",
+      "ENVIRONMENT": "local",
+      "SCHEDULER_ROLE_ARN": {
+       "Fn::GetAtt": [
+        "SchedulerRole59E73443",
+        "Arn"
+       ]
+      },
+      "SCHEDULER_GROUP": "local-widget"
+     }
+    },
+    "FunctionName": "local-widget-function-processor",
+    "Handler": "processor.handler",
+    "MemorySize": 256,
+    "Role": {
+     "Fn::GetAtt": [
+      "FnprocessorServiceRole1BAC1877",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs22.x",
+    "Timeout": 30,
+    "TracingConfig": {
+     "Mode": "Active"
+    }
+   },
+   "DependsOn": [
+    "FnprocessorServiceRoleDefaultPolicy6AE47536",
+    "FnprocessorServiceRole1BAC1877"
+   ],
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Fn-processor/Resource"
+   }
+  },
+  "FnprocessorSqsEventSourcewidgetlocalQueueprocess2F4E2014540DB0C6": {
+   "Type": "AWS::Lambda::EventSourceMapping",
+   "Properties": {
+    "BatchSize": 10,
+    "EventSourceArn": {
+     "Fn::GetAtt": [
+      "QueueprocessB08BE525",
+      "Arn"
+     ]
+    },
+    "FunctionName": {
+     "Ref": "Fnprocessor3A0D96CC"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Fn-processor/SqsEventSource:widgetlocalQueueprocess2F4E2014/Resource"
+   }
+  },
+  "FnwsServiceRoleAD89541C": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Fn-ws/ServiceRole/Resource"
+   }
+  },
+  "FnwsServiceRoleDefaultPolicy904CC49F": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "xray:PutTraceSegments",
+        "xray:PutTelemetryRecords"
+       ],
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query",
+        "dynamodb:GetItem",
+        "dynamodb:Scan",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DescribeTable"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "TablewidgetsD338BE84",
+          "Arn"
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "kms:Encrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "Keydata296605E0",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "TablewidgetsD338BE84",
+          "Arn"
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:DeleteObject*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:Abort*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "Bucketfiles76A11024",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "Bucketfiles76A11024",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:DeleteObject*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:Abort*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "Bucketassets899AE396",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "Bucketassets899AE396",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:ChangeMessageVisibility",
+        "sqs:GetQueueUrl",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "QueueprocessB08BE525",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "sqs:SendMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "QueueprocessB08BE525",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "kms:Decrypt",
+        "kms:Encrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "Keydata296605E0",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": "sns:Publish",
+       "Effect": "Allow",
+       "Resource": {
+        "Ref": "SnsalertsC9F2A765"
+       }
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:",
+           {
+            "Ref": "AWS::Partition"
+           },
+           ":s3:::local-media-bucket-media"
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:",
+           {
+            "Ref": "AWS::Partition"
+           },
+           ":s3:::local-media-bucket-media/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": "rds-db:connect",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:",
+          {
+           "Ref": "AWS::Partition"
+          },
+          ":rds-db:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":dbuser:",
+          {
+           "Fn::Select": [
+            6,
+            {
+             "Fn::Split": [
+              ":",
+              {
+               "Fn::GetAtt": [
+                "DbProxymain45D214E4",
+                "DBProxyArn"
+               ]
+              }
+             ]
+            }
+           ]
+          },
+          "/dbadmin"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": [
+        "scheduler:CreateSchedule",
+        "scheduler:UpdateSchedule",
+        "scheduler:DeleteSchedule",
+        "scheduler:GetSchedule",
+        "scheduler:ListSchedules"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:",
+          {
+           "Ref": "AWS::Partition"
+          },
+          ":scheduler:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":schedule/local-widget/*"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": "iam:PassRole",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "SchedulerRole59E73443",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "FnwsServiceRoleDefaultPolicy904CC49F",
+    "Roles": [
+     {
+      "Ref": "FnwsServiceRoleAD89541C"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Fn-ws/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "FnwsB57A07A9": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "ZipFile": "exports.handler = async () => ({});"
+    },
+    "Environment": {
+     "Variables": {
+      "KMS_DATA": {
+       "Fn::GetAtt": [
+        "Keydata296605E0",
+        "Arn"
+       ]
+      },
+      "BUCKET_FILES": {
+       "Ref": "Bucketfiles76A11024"
+      },
+      "BUCKET_ASSETS": {
+       "Ref": "Bucketassets899AE396"
+      },
+      "CDN_ASSETS": {
+       "Fn::GetAtt": [
+        "Cdnassets0FE6BD65",
+        "DomainName"
+       ]
+      },
+      "TABLE_WIDGETS": {
+       "Ref": "TablewidgetsD338BE84"
+      },
+      "QUEUE_PROCESS": {
+       "Ref": "QueueprocessB08BE525"
+      },
+      "SNSTOPIC_ALERTS": {
+       "Ref": "SnsalertsC9F2A765"
+      },
+      "APPCONFIG_CONFIG": {
+       "Ref": "AppConfigconfig"
+      },
+      "DATABASE_MAIN": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::GetAtt": [
+           "DbProxymain45D214E4",
+           "Endpoint"
+          ]
+         },
+         ":5432"
+        ]
+       ]
+      },
+      "DB_USER": "dbadmin",
+      "DB_NAME": "widget",
+      "DATABASE_MAIN_READER": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::GetAtt": [
+           "DbProxyRomain",
+           "Endpoint"
+          ]
+         },
+         ":5432"
+        ]
+       ]
+      },
+      "CACHE_SESSIONS": {
+       "Fn::GetAtt": [
+        "Cachesessions",
+        "Endpoint.Address"
+       ]
+      },
+      "TOPIC_EVENTS": "widget.events",
+      "TOPIC_EVENTS_CONFIG": "{\"topic\":\"widget.events\",\"partitions\":3,\"replicationFactor\":3}",
+      "SES_MAIL": "mail.widget.example.com",
+      "ENVIRONMENT": "local",
+      "SCHEDULER_ROLE_ARN": {
+       "Fn::GetAtt": [
+        "SchedulerRole59E73443",
+        "Arn"
+       ]
+      },
+      "SCHEDULER_GROUP": "local-widget"
+     }
+    },
+    "FunctionName": "local-widget-function-ws",
+    "Handler": "ws.handler",
+    "MemorySize": 256,
+    "Role": {
+     "Fn::GetAtt": [
+      "FnwsServiceRoleAD89541C",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs22.x",
+    "Timeout": 30,
+    "TracingConfig": {
+     "Mode": "Active"
+    }
+   },
+   "DependsOn": [
+    "FnwsServiceRoleDefaultPolicy904CC49F",
+    "FnwsServiceRoleAD89541C"
+   ],
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Fn-ws/Resource"
+   }
+  },
+  "FnpreTokenServiceRole86B54B08": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Fn-preToken/ServiceRole/Resource"
+   }
+  },
+  "FnpreTokenServiceRoleDefaultPolicyAF7E1606": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "xray:PutTraceSegments",
+        "xray:PutTelemetryRecords"
+       ],
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query",
+        "dynamodb:GetItem",
+        "dynamodb:Scan",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DescribeTable"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "TablewidgetsD338BE84",
+          "Arn"
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "kms:Encrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "Keydata296605E0",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "TablewidgetsD338BE84",
+          "Arn"
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:DeleteObject*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:Abort*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "Bucketfiles76A11024",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "Bucketfiles76A11024",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:DeleteObject*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:Abort*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "Bucketassets899AE396",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "Bucketassets899AE396",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:ChangeMessageVisibility",
+        "sqs:GetQueueUrl",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "QueueprocessB08BE525",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "sqs:SendMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "QueueprocessB08BE525",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "kms:Decrypt",
+        "kms:Encrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "Keydata296605E0",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": "sns:Publish",
+       "Effect": "Allow",
+       "Resource": {
+        "Ref": "SnsalertsC9F2A765"
+       }
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:",
+           {
+            "Ref": "AWS::Partition"
+           },
+           ":s3:::local-media-bucket-media"
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:",
+           {
+            "Ref": "AWS::Partition"
+           },
+           ":s3:::local-media-bucket-media/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": "rds-db:connect",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:",
+          {
+           "Ref": "AWS::Partition"
+          },
+          ":rds-db:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":dbuser:",
+          {
+           "Fn::Select": [
+            6,
+            {
+             "Fn::Split": [
+              ":",
+              {
+               "Fn::GetAtt": [
+                "DbProxymain45D214E4",
+                "DBProxyArn"
+               ]
+              }
+             ]
+            }
+           ]
+          },
+          "/dbadmin"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": [
+        "scheduler:CreateSchedule",
+        "scheduler:UpdateSchedule",
+        "scheduler:DeleteSchedule",
+        "scheduler:GetSchedule",
+        "scheduler:ListSchedules"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:",
+          {
+           "Ref": "AWS::Partition"
+          },
+          ":scheduler:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":schedule/local-widget/*"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": "iam:PassRole",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "SchedulerRole59E73443",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "FnpreTokenServiceRoleDefaultPolicyAF7E1606",
+    "Roles": [
+     {
+      "Ref": "FnpreTokenServiceRole86B54B08"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Fn-preToken/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "FnpreToken8AFE7AEF": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "ZipFile": "exports.handler = async () => ({});"
+    },
+    "Environment": {
+     "Variables": {
+      "KMS_DATA": {
+       "Fn::GetAtt": [
+        "Keydata296605E0",
+        "Arn"
+       ]
+      },
+      "BUCKET_FILES": {
+       "Ref": "Bucketfiles76A11024"
+      },
+      "BUCKET_ASSETS": {
+       "Ref": "Bucketassets899AE396"
+      },
+      "CDN_ASSETS": {
+       "Fn::GetAtt": [
+        "Cdnassets0FE6BD65",
+        "DomainName"
+       ]
+      },
+      "TABLE_WIDGETS": {
+       "Ref": "TablewidgetsD338BE84"
+      },
+      "QUEUE_PROCESS": {
+       "Ref": "QueueprocessB08BE525"
+      },
+      "SNSTOPIC_ALERTS": {
+       "Ref": "SnsalertsC9F2A765"
+      },
+      "APPCONFIG_CONFIG": {
+       "Ref": "AppConfigconfig"
+      },
+      "DATABASE_MAIN": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::GetAtt": [
+           "DbProxymain45D214E4",
+           "Endpoint"
+          ]
+         },
+         ":5432"
+        ]
+       ]
+      },
+      "DB_USER": "dbadmin",
+      "DB_NAME": "widget",
+      "DATABASE_MAIN_READER": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::GetAtt": [
+           "DbProxyRomain",
+           "Endpoint"
+          ]
+         },
+         ":5432"
+        ]
+       ]
+      },
+      "CACHE_SESSIONS": {
+       "Fn::GetAtt": [
+        "Cachesessions",
+        "Endpoint.Address"
+       ]
+      },
+      "TOPIC_EVENTS": "widget.events",
+      "TOPIC_EVENTS_CONFIG": "{\"topic\":\"widget.events\",\"partitions\":3,\"replicationFactor\":3}",
+      "SES_MAIL": "mail.widget.example.com",
+      "ENVIRONMENT": "local",
+      "SCHEDULER_ROLE_ARN": {
+       "Fn::GetAtt": [
+        "SchedulerRole59E73443",
+        "Arn"
+       ]
+      },
+      "SCHEDULER_GROUP": "local-widget"
+     }
+    },
+    "FunctionName": "local-widget-function-preToken",
+    "Handler": "preToken.handler",
+    "MemorySize": 256,
+    "Role": {
+     "Fn::GetAtt": [
+      "FnpreTokenServiceRole86B54B08",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs22.x",
+    "Timeout": 30,
+    "TracingConfig": {
+     "Mode": "Active"
+    }
+   },
+   "DependsOn": [
+    "FnpreTokenServiceRoleDefaultPolicyAF7E1606",
+    "FnpreTokenServiceRole86B54B08"
+   ],
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Fn-preToken/Resource"
+   }
+  },
+  "EcsCluster97242B84": {
+   "Type": "AWS::ECS::Cluster",
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/EcsCluster/Resource"
+   }
+  },
+  "SvcapiLB031F92EF": {
+   "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+   "Properties": {
+    "LoadBalancerAttributes": [
+     {
+      "Key": "deletion_protection.enabled",
+      "Value": "false"
+     }
+    ],
+    "Scheme": "internal",
+    "SecurityGroups": [
+     {
+      "Fn::GetAtt": [
+       "SvcapiLBSecurityGroup2798DBED",
+       "GroupId"
+      ]
+     }
+    ],
+    "Subnets": [
+     {
+      "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+     },
+     {
+      "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+     }
+    ],
+    "Type": "application"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Svc-api/LB/Resource"
+   }
+  },
+  "SvcapiLBSecurityGroup2798DBED": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Automatically created Security Group for ELB widgetlocalSvcapiLB3307B2BF",
+    "SecurityGroupIngress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow from anyone on port 80",
+      "FromPort": 80,
+      "IpProtocol": "tcp",
+      "ToPort": 80
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "platform-local:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Svc-api/LB/SecurityGroup/Resource"
+   }
+  },
+  "SvcapiLBSecurityGrouptowidgetlocalComputeSg333219FF800062FEFA45": {
+   "Type": "AWS::EC2::SecurityGroupEgress",
+   "Properties": {
+    "Description": "Load balancer to target",
+    "DestinationSecurityGroupId": {
+     "Fn::GetAtt": [
+      "ComputeSg63149A20",
+      "GroupId"
+     ]
+    },
+    "FromPort": 8000,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "SvcapiLBSecurityGroup2798DBED",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "ToPort": 8000
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Svc-api/LB/SecurityGroup/to widgetlocalComputeSg333219FF:8000"
+   }
+  },
+  "SvcapiLBPublicListener2CD78949": {
+   "Type": "AWS::ElasticLoadBalancingV2::Listener",
+   "Properties": {
+    "DefaultActions": [
+     {
+      "TargetGroupArn": {
+       "Ref": "SvcapiLBPublicListenerECSGroup9E2BDA99"
+      },
+      "Type": "forward"
+     }
+    ],
+    "LoadBalancerArn": {
+     "Ref": "SvcapiLB031F92EF"
+    },
+    "Port": 80,
+    "Protocol": "HTTP"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Svc-api/LB/PublicListener/Resource"
+   }
+  },
+  "SvcapiLBPublicListenerECSGroup9E2BDA99": {
+   "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+   "Properties": {
+    "HealthCheckPath": "/health",
+    "Port": 80,
+    "Protocol": "HTTP",
+    "TargetGroupAttributes": [
+     {
+      "Key": "stickiness.enabled",
+      "Value": "false"
+     }
+    ],
+    "TargetType": "ip",
+    "VpcId": {
+     "Fn::ImportValue": "platform-local:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Svc-api/LB/PublicListener/ECSGroup/Resource"
+   }
+  },
+  "SvcapiTaskDefTaskRoleAF980E5D": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/AWSXRayDaemonWriteAccess"
+       ]
+      ]
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Svc-api/TaskDef/TaskRole/Resource"
+   }
+  },
+  "SvcapiTaskDefTaskRoleDefaultPolicy05F9791F": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query",
+        "dynamodb:GetItem",
+        "dynamodb:Scan",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DescribeTable"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "TablewidgetsD338BE84",
+          "Arn"
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "kms:Encrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "Keydata296605E0",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "TablewidgetsD338BE84",
+          "Arn"
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:DeleteObject*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:Abort*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "Bucketfiles76A11024",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "Bucketfiles76A11024",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:DeleteObject*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging",
+        "s3:Abort*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "Bucketassets899AE396",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "Bucketassets899AE396",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:ChangeMessageVisibility",
+        "sqs:GetQueueUrl",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "QueueprocessB08BE525",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "sqs:SendMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "QueueprocessB08BE525",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "kms:Decrypt",
+        "kms:Encrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "Keydata296605E0",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": "sns:Publish",
+       "Effect": "Allow",
+       "Resource": {
+        "Ref": "SnsalertsC9F2A765"
+       }
+      },
+      {
+       "Action": [
+        "s3:GetObject*",
+        "s3:GetBucket*",
+        "s3:List*"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:",
+           {
+            "Ref": "AWS::Partition"
+           },
+           ":s3:::local-media-bucket-media"
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:",
+           {
+            "Ref": "AWS::Partition"
+           },
+           ":s3:::local-media-bucket-media/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": "rds-db:connect",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:",
+          {
+           "Ref": "AWS::Partition"
+          },
+          ":rds-db:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":dbuser:",
+          {
+           "Fn::Select": [
+            6,
+            {
+             "Fn::Split": [
+              ":",
+              {
+               "Fn::GetAtt": [
+                "DbProxymain45D214E4",
+                "DBProxyArn"
+               ]
+              }
+             ]
+            }
+           ]
+          },
+          "/dbadmin"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": [
+        "scheduler:CreateSchedule",
+        "scheduler:UpdateSchedule",
+        "scheduler:DeleteSchedule",
+        "scheduler:GetSchedule",
+        "scheduler:ListSchedules"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:",
+          {
+           "Ref": "AWS::Partition"
+          },
+          ":scheduler:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":schedule/local-widget/*"
+         ]
+        ]
+       }
+      },
+      {
+       "Action": "iam:PassRole",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "SchedulerRole59E73443",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "SvcapiTaskDefTaskRoleDefaultPolicy05F9791F",
+    "Roles": [
+     {
+      "Ref": "SvcapiTaskDefTaskRoleAF980E5D"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Svc-api/TaskDef/TaskRole/DefaultPolicy/Resource"
+   }
+  },
+  "SvcapiTaskDefC2B614D0": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Environment": [
+       {
+        "Name": "KMS_DATA",
+        "Value": {
+         "Fn::GetAtt": [
+          "Keydata296605E0",
+          "Arn"
+         ]
+        }
+       },
+       {
+        "Name": "BUCKET_FILES",
+        "Value": {
+         "Ref": "Bucketfiles76A11024"
+        }
+       },
+       {
+        "Name": "BUCKET_ASSETS",
+        "Value": {
+         "Ref": "Bucketassets899AE396"
+        }
+       },
+       {
+        "Name": "CDN_ASSETS",
+        "Value": {
+         "Fn::GetAtt": [
+          "Cdnassets0FE6BD65",
+          "DomainName"
+         ]
+        }
+       },
+       {
+        "Name": "TABLE_WIDGETS",
+        "Value": {
+         "Ref": "TablewidgetsD338BE84"
+        }
+       },
+       {
+        "Name": "QUEUE_PROCESS",
+        "Value": {
+         "Ref": "QueueprocessB08BE525"
+        }
+       },
+       {
+        "Name": "SNSTOPIC_ALERTS",
+        "Value": {
+         "Ref": "SnsalertsC9F2A765"
+        }
+       },
+       {
+        "Name": "APPCONFIG_CONFIG",
+        "Value": {
+         "Ref": "AppConfigconfig"
+        }
+       },
+       {
+        "Name": "DATABASE_MAIN",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "DbProxymain45D214E4",
+             "Endpoint"
+            ]
+           },
+           ":5432"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "DB_USER",
+        "Value": "dbadmin"
+       },
+       {
+        "Name": "DB_NAME",
+        "Value": "widget"
+       },
+       {
+        "Name": "DATABASE_MAIN_READER",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "DbProxyRomain",
+             "Endpoint"
+            ]
+           },
+           ":5432"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "CACHE_SESSIONS",
+        "Value": {
+         "Fn::GetAtt": [
+          "Cachesessions",
+          "Endpoint.Address"
+         ]
+        }
+       },
+       {
+        "Name": "TOPIC_EVENTS",
+        "Value": "widget.events"
+       },
+       {
+        "Name": "TOPIC_EVENTS_CONFIG",
+        "Value": "{\"topic\":\"widget.events\",\"partitions\":3,\"replicationFactor\":3}"
+       },
+       {
+        "Name": "SES_MAIL",
+        "Value": "mail.widget.example.com"
+       },
+       {
+        "Name": "ENVIRONMENT",
+        "Value": "local"
+       },
+       {
+        "Name": "SCHEDULER_ROLE_ARN",
+        "Value": {
+         "Fn::GetAtt": [
+          "SchedulerRole59E73443",
+          "Arn"
+         ]
+        }
+       },
+       {
+        "Name": "SCHEDULER_GROUP",
+        "Value": "local-widget"
+       }
+      ],
+      "Essential": true,
+      "Image": "public.ecr.aws/docker/library/nginx:latest",
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "SvcapiTaskDefwebLogGroupF03F492F"
+        },
+        "awslogs-stream-prefix": "Svc-api",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "web",
+      "PortMappings": [
+       {
+        "ContainerPort": 8000,
+        "Protocol": "tcp"
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "SvcapiTaskDefExecutionRole70C8CC35",
+      "Arn"
+     ]
+    },
+    "Family": "widgetlocalSvcapiTaskDefCBDACB1B",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "SvcapiTaskDefTaskRoleAF980E5D",
+      "Arn"
+     ]
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Svc-api/TaskDef/Resource"
+   }
+  },
+  "SvcapiTaskDefwebLogGroupF03F492F": {
+   "Type": "AWS::Logs::LogGroup",
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Svc-api/TaskDef/web/LogGroup/Resource"
+   }
+  },
+  "SvcapiTaskDefExecutionRole70C8CC35": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Svc-api/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "SvcapiTaskDefExecutionRoleDefaultPolicy462F5D17": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "SvcapiTaskDefwebLogGroupF03F492F",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "SvcapiTaskDefExecutionRoleDefaultPolicy462F5D17",
+    "Roles": [
+     {
+      "Ref": "SvcapiTaskDefExecutionRole70C8CC35"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Svc-api/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "SvcapiService95596208": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Ref": "EcsCluster97242B84"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": true
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 100
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "HealthCheckGracePeriodSeconds": 60,
+    "LaunchType": "FARGATE",
+    "LoadBalancers": [
+     {
+      "ContainerName": "web",
+      "ContainerPort": 8000,
+      "TargetGroupArn": {
+       "Ref": "SvcapiLBPublicListenerECSGroup9E2BDA99"
+      }
+     }
+    ],
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "ComputeSg63149A20",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "TaskDefinition": {
+     "Ref": "SvcapiTaskDefC2B614D0"
+    }
+   },
+   "DependsOn": [
+    "SvcapiLBPublicListenerECSGroup9E2BDA99",
+    "SvcapiLBPublicListener2CD78949",
+    "SvcapiTaskDefTaskRoleDefaultPolicy05F9791F",
+    "SvcapiTaskDefTaskRoleAF980E5D"
+   ],
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Svc-api/Service/Service"
+   }
+  },
+  "BatchCereportCC873E8E": {
+   "Type": "AWS::Batch::ComputeEnvironment",
+   "Properties": {
+    "ComputeResources": {
+     "MaxvCpus": 256,
+     "SecurityGroupIds": [
+      {
+       "Fn::GetAtt": [
+        "ComputeSg63149A20",
+        "GroupId"
+       ]
+      }
+     ],
+     "Subnets": [
+      {
+       "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+      },
+      {
+       "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+      }
+     ],
+     "Type": "FARGATE"
+    },
+    "ReplaceComputeEnvironment": false,
+    "State": "ENABLED",
+    "Type": "managed",
+    "UpdatePolicy": {}
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/BatchCe-report/Resource"
+   }
+  },
+  "BatchQreport9B07D977": {
+   "Type": "AWS::Batch::JobQueue",
+   "Properties": {
+    "ComputeEnvironmentOrder": [
+     {
+      "ComputeEnvironment": {
+       "Fn::GetAtt": [
+        "BatchCereportCC873E8E",
+        "ComputeEnvironmentArn"
+       ]
+      },
+      "Order": 1
+     }
+    ],
+    "Priority": 1,
+    "State": "ENABLED"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/BatchQ-report/Resource"
+   }
+  },
+  "BatchCreportExecutionRoleD34F3520": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/BatchC-report/ExecutionRole/Resource"
+   }
+  },
+  "BatchCreportExecutionRoleDefaultPolicy77161228": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:",
+          {
+           "Ref": "AWS::Partition"
+          },
+          ":logs:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":log-group:/aws/batch/job:*"
+         ]
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "BatchCreportExecutionRoleDefaultPolicy77161228",
+    "Roles": [
+     {
+      "Ref": "BatchCreportExecutionRoleD34F3520"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/BatchC-report/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "BatchJobreportBFDA1A6F": {
+   "Type": "AWS::Batch::JobDefinition",
+   "Properties": {
+    "ContainerProperties": {
+     "Environment": [],
+     "ExecutionRoleArn": {
+      "Fn::GetAtt": [
+       "BatchCreportExecutionRoleD34F3520",
+       "Arn"
+      ]
+     },
+     "FargatePlatformConfiguration": {},
+     "Image": "public.ecr.aws/docker/library/alpine:latest",
+     "NetworkConfiguration": {
+      "AssignPublicIp": "DISABLED"
+     },
+     "ReadonlyRootFilesystem": false,
+     "ResourceRequirements": [
+      {
+       "Type": "MEMORY",
+       "Value": "4096"
+      },
+      {
+       "Type": "VCPU",
+       "Value": "2"
+      }
+     ],
+     "RuntimePlatform": {}
+    },
+    "PlatformCapabilities": [
+     "FARGATE"
+    ],
+    "RetryStrategy": {
+     "Attempts": 2
+    },
+    "Timeout": {
+     "AttemptDurationSeconds": 900
+    },
+    "Type": "container"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/BatchJob-report/Resource"
+   }
+  },
+  "PooluserssmsRoleF8D6A119": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Condition": {
+        "StringEquals": {
+         "sts:ExternalId": "widgetlocalPoolusers05BCC7B6"
+        }
+       },
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "cognito-idp.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Policies": [
+     {
+      "PolicyDocument": {
+       "Statement": [
+        {
+         "Action": "sns:Publish",
+         "Effect": "Allow",
+         "Resource": "*"
+        }
+       ],
+       "Version": "2012-10-17"
+      },
+      "PolicyName": "sns-publish"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Pool-users/smsRole/Resource"
+   }
+  },
+  "Poolusers089A2AA0": {
+   "Type": "AWS::Cognito::UserPool",
+   "Properties": {
+    "AccountRecoverySetting": {
+     "RecoveryMechanisms": [
+      {
+       "Name": "verified_phone_number",
+       "Priority": 1
+      },
+      {
+       "Name": "verified_email",
+       "Priority": 2
+      }
+     ]
+    },
+    "AdminCreateUserConfig": {
+     "AllowAdminCreateUserOnly": false
+    },
+    "AutoVerifiedAttributes": [
+     "email"
+    ],
+    "EmailVerificationMessage": "The verification code to your new account is {####}",
+    "EmailVerificationSubject": "Verify your new account",
+    "EnabledMfas": [
+     "SMS_MFA"
+    ],
+    "MfaConfiguration": "OPTIONAL",
+    "Policies": {
+     "PasswordPolicy": {
+      "MinimumLength": 12
+     }
+    },
+    "SmsConfiguration": {
+     "ExternalId": "widgetlocalPoolusers05BCC7B6",
+     "SnsCallerArn": {
+      "Fn::GetAtt": [
+       "PooluserssmsRoleF8D6A119",
+       "Arn"
+      ]
+     }
+    },
+    "SmsVerificationMessage": "The verification code to your new account is {####}",
+    "UserPoolName": "local-widget-userpool-users",
+    "UsernameAttributes": [
+     "email"
+    ],
+    "VerificationMessageTemplate": {
+     "DefaultEmailOption": "CONFIRM_WITH_CODE",
+     "EmailMessage": "The verification code to your new account is {####}",
+     "EmailSubject": "Verify your new account",
+     "SmsMessage": "The verification code to your new account is {####}"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Pool-users/Resource"
+   }
+  },
+  "PoolusersClientweb4EE68599": {
+   "Type": "AWS::Cognito::UserPoolClient",
+   "Properties": {
+    "AllowedOAuthFlows": [
+     "implicit",
+     "code"
+    ],
+    "AllowedOAuthFlowsUserPoolClient": true,
+    "AllowedOAuthScopes": [
+     "profile",
+     "phone",
+     "email",
+     "openid",
+     "aws.cognito.signin.user.admin"
+    ],
+    "CallbackURLs": [
+     "https://widget.example.com/callback"
+    ],
+    "SupportedIdentityProviders": [
+     "COGNITO"
+    ],
+    "UserPoolId": {
+     "Ref": "Poolusers089A2AA0"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Pool-users/Client-web/Resource"
+   }
+  },
+  "ApiapiE7E14836": {
+   "Type": "AWS::ApiGatewayV2::Api",
+   "Properties": {
+    "CorsConfiguration": {
+     "AllowMethods": [
+      "*"
+     ],
+     "AllowOrigins": [
+      "*"
+     ]
+    },
+    "Name": "local-widget-api-api",
+    "ProtocolType": "HTTP"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Api-api/Resource"
+   }
+  },
+  "ApiapiDefaultStage400A0D0B": {
+   "Type": "AWS::ApiGatewayV2::Stage",
+   "Properties": {
+    "ApiId": {
+     "Ref": "ApiapiE7E14836"
+    },
+    "AutoDeploy": true,
+    "DefaultRouteSettings": {
+     "ThrottlingBurstLimit": 100,
+     "ThrottlingRateLimit": 50
+    },
+    "StageName": "$default"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Api-api/DefaultStage/Resource"
+   }
+  },
+  "ApiapiGEThealthIntapiGEThealthACF4082B": {
+   "Type": "AWS::ApiGatewayV2::Integration",
+   "Properties": {
+    "ApiId": {
+     "Ref": "ApiapiE7E14836"
+    },
+    "ConnectionId": {
+     "Ref": "VpcLinkapi676777B9"
+    },
+    "ConnectionType": "VPC_LINK",
+    "IntegrationMethod": "ANY",
+    "IntegrationType": "HTTP_PROXY",
+    "IntegrationUri": {
+     "Ref": "SvcapiLBPublicListener2CD78949"
+    },
+    "PayloadFormatVersion": "1.0"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Api-api/GET--health/Int-api-GET---health/Resource"
+   }
+  },
+  "ApiapiGEThealth2E52BB02": {
+   "Type": "AWS::ApiGatewayV2::Route",
+   "Properties": {
+    "ApiId": {
+     "Ref": "ApiapiE7E14836"
+    },
+    "AuthorizationType": "NONE",
+    "RouteKey": "GET /health",
+    "Target": {
+     "Fn::Join": [
+      "",
+      [
+       "integrations/",
+       {
+        "Ref": "ApiapiGEThealthIntapiGEThealthACF4082B"
+       }
+      ]
+     ]
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Api-api/GET--health/Resource"
+   }
+  },
+  "ApiapiPOSTloginIntapiPOSTlogin5738F13C": {
+   "Type": "AWS::ApiGatewayV2::Integration",
+   "Properties": {
+    "ApiId": {
+     "Ref": "ApiapiE7E14836"
+    },
+    "ConnectionId": {
+     "Ref": "VpcLinkapi676777B9"
+    },
+    "ConnectionType": "VPC_LINK",
+    "IntegrationMethod": "ANY",
+    "IntegrationType": "HTTP_PROXY",
+    "IntegrationUri": {
+     "Ref": "SvcapiLBPublicListener2CD78949"
+    },
+    "PayloadFormatVersion": "1.0"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Api-api/POST--login/Int-api-POST---login/Resource"
+   }
+  },
+  "ApiapiPOSTloginB8D96E58": {
+   "Type": "AWS::ApiGatewayV2::Route",
+   "Properties": {
+    "ApiId": {
+     "Ref": "ApiapiE7E14836"
+    },
+    "AuthorizationType": "NONE",
+    "RouteKey": "POST /login",
+    "Target": {
+     "Fn::Join": [
+      "",
+      [
+       "integrations/",
+       {
+        "Ref": "ApiapiPOSTloginIntapiPOSTlogin5738F13C"
+       }
+      ]
+     ]
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Api-api/POST--login/Resource"
+   }
+  },
+  "ApiapiGETwidgetsidIntapiGETwidgetsid215C8873": {
+   "Type": "AWS::ApiGatewayV2::Integration",
+   "Properties": {
+    "ApiId": {
+     "Ref": "ApiapiE7E14836"
+    },
+    "ConnectionId": {
+     "Ref": "VpcLinkapi676777B9"
+    },
+    "ConnectionType": "VPC_LINK",
+    "IntegrationMethod": "ANY",
+    "IntegrationType": "HTTP_PROXY",
+    "IntegrationUri": {
+     "Ref": "SvcapiLBPublicListener2CD78949"
+    },
+    "PayloadFormatVersion": "1.0"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Api-api/GET--widgets--{id}/Int-api-GET---widgets--:id/Resource"
+   }
+  },
+  "ApiapiGETwidgetsidC01AA0A2": {
+   "Type": "AWS::ApiGatewayV2::Route",
+   "Properties": {
+    "ApiId": {
+     "Ref": "ApiapiE7E14836"
+    },
+    "AuthorizationType": "JWT",
+    "AuthorizerId": {
+     "Ref": "ApiapiAuthapi4D951211"
+    },
+    "RouteKey": "GET /widgets/{id}",
+    "Target": {
+     "Fn::Join": [
+      "",
+      [
+       "integrations/",
+       {
+        "Ref": "ApiapiGETwidgetsidIntapiGETwidgetsid215C8873"
+       }
+      ]
+     ]
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Api-api/GET--widgets--{id}/Resource"
+   }
+  },
+  "ApiapiAuthapi4D951211": {
+   "Type": "AWS::ApiGatewayV2::Authorizer",
+   "Properties": {
+    "ApiId": {
+     "Ref": "ApiapiE7E14836"
+    },
+    "AuthorizerType": "JWT",
+    "IdentitySource": [
+     "$request.header.Authorization"
+    ],
+    "JwtConfiguration": {
+     "Audience": [
+      {
+       "Ref": "PoolusersClientweb4EE68599"
+      }
+     ],
+     "Issuer": {
+      "Fn::GetAtt": [
+       "Poolusers089A2AA0",
+       "ProviderURL"
+      ]
+     }
+    },
+    "Name": "Auth-api"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Api-api/Auth-api/Resource"
+   }
+  },
+  "ApiapiPOSTuploadsfilesIntapipresignuploadsfiles7F4DE26F": {
+   "Type": "AWS::ApiGatewayV2::Integration",
+   "Properties": {
+    "ApiId": {
+     "Ref": "ApiapiE7E14836"
+    },
+    "IntegrationType": "AWS_PROXY",
+    "IntegrationUri": {
+     "Fn::GetAtt": [
+      "PresignfilesE244D372",
+      "Arn"
+     ]
+    },
+    "PayloadFormatVersion": "2.0"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Api-api/POST--uploads--files/Int-api-presign---uploads--files/Resource"
+   }
+  },
+  "ApiapiPOSTuploadsfilesIntapipresignuploadsfilesPermissionF727FB04": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "PresignfilesE244D372",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":execute-api:us-east-1:",
+       {
+        "Ref": "AWS::AccountId"
+       },
+       ":",
+       {
+        "Ref": "ApiapiE7E14836"
+       },
+       "/*/*/uploads/files"
+      ]
+     ]
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Api-api/POST--uploads--files/Int-api-presign---uploads--files-Permission"
+   }
+  },
+  "ApiapiPOSTuploadsfiles5F25D737": {
+   "Type": "AWS::ApiGatewayV2::Route",
+   "Properties": {
+    "ApiId": {
+     "Ref": "ApiapiE7E14836"
+    },
+    "AuthorizationType": "JWT",
+    "AuthorizerId": {
+     "Ref": "ApiapiAuthapi4D951211"
+    },
+    "RouteKey": "POST /uploads/files",
+    "Target": {
+     "Fn::Join": [
+      "",
+      [
+       "integrations/",
+       {
+        "Ref": "ApiapiPOSTuploadsfilesIntapipresignuploadsfiles7F4DE26F"
+       }
+      ]
+     ]
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Api-api/POST--uploads--files/Resource"
+   }
+  },
+  "VpcLinkapi676777B9": {
+   "Type": "AWS::ApiGatewayV2::VpcLink",
+   "Properties": {
+    "Name": "widgetlocalVpcLinkapi31440CE7",
+    "SecurityGroupIds": [],
+    "SubnetIds": [
+     {
+      "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+     },
+     {
+      "Fn::ImportValue": "platform-local:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/VpcLink-api/Resource"
+   }
+  },
+  "WsliveF9CA8DF7": {
+   "Type": "AWS::ApiGatewayV2::Api",
+   "Properties": {
+    "Name": "local-widget-websocket-live",
+    "ProtocolType": "WEBSOCKET",
+    "RouteSelectionExpression": "$request.body.action"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Ws-live/Resource"
+   }
+  },
+  "WsStageliveE567DB5A": {
+   "Type": "AWS::ApiGatewayV2::Stage",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WsliveF9CA8DF7"
+    },
+    "AutoDeploy": true,
+    "StageName": "ws"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/WsStage-live/Resource"
+   }
+  },
+  "Busbus9FBCCF1A": {
+   "Type": "AWS::Events::EventBus",
+   "Properties": {
+    "Name": "local-widget-eventbus-bus"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Bus-bus/Resource"
+   }
+  },
+  "Rulebusnightly2EF45F64": {
+   "Type": "AWS::Events::Rule",
+   "Properties": {
+    "Name": "local-widget-eventbus-bus-nightly",
+    "ScheduleExpression": "rate(1 day)",
+    "State": "ENABLED",
+    "Targets": [
+     {
+      "Arn": {
+       "Fn::GetAtt": [
+        "QueueprocessB08BE525",
+        "Arn"
+       ]
+      },
+      "Id": "Target0"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Rule-bus-nightly/Resource"
+   }
+  },
+  "AlarmdlqDepth37867927": {
+   "Type": "AWS::CloudWatch::Alarm",
+   "Properties": {
+    "AlarmActions": [
+     {
+      "Ref": "SnsalertsC9F2A765"
+     }
+    ],
+    "AlarmName": "local-widget-loggroup-dlqDepth",
+    "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+    "EvaluationPeriods": 1,
+    "MetricName": "ApproximateNumberOfMessagesVisible",
+    "Namespace": "AWS/SQS",
+    "Period": 300,
+    "Statistic": "Average",
+    "Threshold": 100,
+    "TreatMissingData": "missing"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Alarm-dlqDepth/Resource"
+   }
+  },
+  "Dnsassets": {
+   "Type": "AWS::Route53::RecordSet",
+   "Properties": {
+    "AliasTarget": {
+     "DNSName": {
+      "Fn::GetAtt": [
+       "Cdnassets0FE6BD65",
+       "DomainName"
+      ]
+     },
+     "HostedZoneId": "Z2FDTNDATAQYW2"
+    },
+    "HostedZoneName": "widget.example.com.",
+    "Name": "assets.widget.example.com",
+    "Type": "A"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "widget-local/Dns-assets"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/31V23LTMBD9Ft5d00mnDK+5FQJlCEmAx44sbxw1smR0SQke/zu7ku04SeHFOnu00l61HqWj+/fp7Rv2Ym94vr+RIkvrtWN8nyD1VO9Lm9af4ZhMt4qWsRTMkhBAk9i7tJ54vgdHZIvistRS8OOJbuUoTJiFJpGszHKW1g9ecSe0IuUezw+g3Fp7w+ELqyqhCtp+nV2CKYW1eKxJBCvTeqUl0EZYT55E1CRcap9vjVYurWfCOiMyH4yu774aUQg15hysnaKC0ZJO/oMeHm6S/KhYqXNM4YZl0YEAME+/MI/fPPhARhC+J98GIuor1N/oSvBwCYEmwXi5VltRpDVVoKpQl3V5m6uDwIBKTA+J06DoTdhfGr0V5AbwEZYXuDfCHT8Y7SvS/T+xUIXBoK/4eaCbxOTo6ow5lmFNp9JbByZZ+0yB6y+cTYZEp4zXmdg4s0l3MAgLZR1THHpNDOD3Me5dwg0zxZmlwM5VXmmhHGYyGLElU6wAEzLX2o1LPD922PO7Lnmv72D6JLMOc853kAY1cwAjqSOIQlOYiXnJhFzkqI+JCoU5J4Z1WcN1rZBDp/G63Ev0l8y0QowROBoZZKuDD+gtc7Bhdj+DrVCia4xLBpuXCQVmwLVnKR7BIWlDQ0gdY58q5tACduSg5R41yydMUpXyi+NtliRqZEEDH+kB++710yGIM3moh88LVKvT4cH+RfEHIg4XXWCmHnXRb3e4STLm+A7nTnR8qsvKO7h6QVfsJ531b7jHc277e65Ti7uoeV6RMwKHkS4Q6rT+bsEsdRwsPe7AVIrWsXOGxoIg6y/sSFn+6Fw1rkSY0biQiPO8iFUNgKiVxtACWigHhenHyIV40ht7t9NG/InFGEg/Kv4o1J7YDv6EbK1pzJMHvRCsY0fRBKeHQuvE236qE175dm57GldhTL/EWo0lM2X88yDAsUOe3d/RA1kB1yYPD2cFNvwbwsj2DgvYJErnkD7bt4fRu/QW/3XPVogb4/E9lpCu4voX32et7wgHAAA="
+   },
+   "Metadata": {
+    "aws:cdk:path": "widget-local/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "SvcapiLoadBalancerDNSEA4FA7A6": {
+   "Value": {
+    "Fn::GetAtt": [
+     "SvcapiLB031F92EF",
+     "DNSName"
+    ]
+   }
+  },
+  "SvcapiServiceURL65CD19A7": {
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "http://",
+      {
+       "Fn::GetAtt": [
+        "SvcapiLB031F92EF",
+        "DNSName"
+       ]
+      }
+     ]
+    ]
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

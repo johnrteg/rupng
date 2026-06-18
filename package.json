@@ -22,12 +22,13 @@
         "dispatch.docker": "docker run -p 3001:3000 rupapp-dispatch",
         "proxy": "npm run dev -- --filter=proxy",
         "proxy.local": "npm run dev -- --filter=proxy -- --config local",
-
-        "web.build" : "npm run build -- --filter=web"
+        "web": "npm run dev -- --filter=web",
+        "web.watch": "npm --workspace web run build -- --watch",
+        "web.build": "npm run build -- --filter=web"
     },
     "devDependencies": {
         "@repo/tsconfig": "*",
-        "turbo": "2.9.16",
+        "turbo": "^2.9.17",
         "typescript": "5.9.3",
         "vitest": "4.1.8"
     },

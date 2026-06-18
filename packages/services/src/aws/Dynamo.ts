@@ -1,11 +1,11 @@
 //
 // DynamoDB facade — item CRUD + query over the ergonomic DocumentClient (plain JS objects,
-// no AttributeValue marshalling), keyed by cloud-spec LOGICAL table keys.
+// no AttributeValue marshalling), keyed by cloud-manifest LOGICAL table keys.
 //
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { QueryCommandInput, GetCommandOutput, QueryCommandOutput } from "@aws-sdk/lib-dynamodb";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
@@ -13,7 +13,7 @@ import { ClientUtils } from "./ClientUtils";
 /**
  * DynamoDB facade — the routine single-table operations over `@aws-sdk/lib-dynamodb`'s
  * **DocumentClient** (work in plain JS objects; no `{ S: "…" }` marshalling), addressed by
- * cloud-spec LOGICAL table keys (e.g. `"contacts"`).
+ * cloud-manifest LOGICAL table keys (e.g. `"contacts"`).
  *
  * This is the canonical "specific service extends the base" facade — wire it on a concrete
  * `Service`/`Job` (it's not on the base `Application`):
@@ -44,7 +44,7 @@ export class Dynamo
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////
-    /** Resolve a cloud-spec logical table key (e.g. `"contacts"`) to its physical table name. */
+    /** Resolve a cloud-manifest logical table key (e.g. `"contacts"`) to its physical table name. */
     table( key : ResourceKey ) : string { return this.cloud.tableName( key ); }
 
     ///////////////////////////////////////////////////////////////////////////////////////////
@@ -110,10 +110,83 @@ export class Dynamo
             return ( result.Items ?? [] ) as Array<T>;
         } );
     }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Query **one page** and surface the paging cursor — the cursor-aware counterpart to {@link query}
+     * (which returns only the first page). Returns `{ items, cursor }`; pass `opts.cursor` back on the next
+     * call to continue (forward cursor paging — DynamoDB has no offset / "jump to page N").
+     *
+     * **Sorting / direction:** results are ordered by the queried key's **sort key** — `opts.forward` picks
+     * the direction (`true` = ascending, default; `false` = descending, e.g. **newest-first**). To sort *by a
+     * field* (typically a `lastModifiedAt` / `createdAt`), query the **GSI** whose sort key is that field via
+     * `input.IndexName`, keeping `accountId` as the GSI partition key so the page stays tenant-scoped.
+     *
+     * **Limit:** `opts.limit` is the page size (items DynamoDB *reads*); a `FilterExpression` is applied
+     * AFTER it, so a filtered page may return fewer than `limit` even when more match — keep selective
+     * conditions in the key / GSI, not a filter.
+     *
+     * @typeParam T the item shape.
+     * @param tableKey logical table key.
+     * @param input    Query params minus `TableName` / `Limit` / `ScanIndexForward` / `ExclusiveStartKey`
+     *                 (those come from `opts`) — typically `IndexName` + `KeyConditionExpression` + values.
+     * @param opts     `{ limit?, cursor?, forward? }`.
+     * @returns `{ items, cursor }` — `cursor` is `undefined` on the last page.
+     */
+    queryPage<T>(
+        tableKey : ResourceKey,
+        input    : Omit<QueryCommandInput, "TableName" | "Limit" | "ScanIndexForward" | "ExclusiveStartKey">,
+        opts     : Dynamo.PageOptions = {},
+    ) : Promise<Type.Result<Dynamo.Page<T>>>
+    {
+        return ResultUtils.from( async () : Promise<Dynamo.Page<T>> =>
+        {
+            const result : QueryCommandOutput = await this.client.send( new QueryCommand( {
+                ...input,
+                TableName         : this.table( tableKey ),
+                Limit             : opts.limit,
+                ScanIndexForward  : opts.forward ?? true,            // true = ascending (default); false = descending
+                ExclusiveStartKey : Dynamo.decodeCursor( opts.cursor ),
+            } ) );
+            return {
+                items  : ( result.Items ?? [] ) as Array<T>,
+                cursor : Dynamo.encodeCursor( result.LastEvaluatedKey ),
+            };
+        } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    /** Encode a `LastEvaluatedKey` (plain key map, DocumentClient) → an opaque base64url cursor string. */
+    private static encodeCursor( key : Record<string, any> | undefined ) : string | undefined
+    {
+        return key ? Buffer.from( JSON.stringify( key ) ).toString( "base64url" ) : undefined;
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    /** Decode an opaque cursor → an `ExclusiveStartKey`; `undefined` (first page) passes through. */
+    private static decodeCursor( cursor : string | undefined ) : Record<string, any> | undefined
+    {
+        return cursor ? JSON.parse( Buffer.from( cursor, "base64url" ).toString() ) : undefined;
+    }
 }
 
 export namespace Dynamo
 {
+    /** Options for {@link Dynamo.queryPage} — page size, continuation cursor, and sort direction. */
+    export interface PageOptions
+    {
+        limit?   : number;     // page size — max items DynamoDB reads (a FilterExpression runs AFTER this)
+        cursor?  : string;     // opaque cursor from a prior page's `Page.cursor` (omit for the first page)
+        forward? : boolean;    // sort direction by sort key: true = ascending (default), false = descending
+    }
+
+    /** One page from {@link Dynamo.queryPage}: the items + an opaque `cursor` for the next page (undefined = last). */
+    export interface Page<T>
+    {
+        items   : Array<T>;
+        cursor? : string;
+    }
+
     /** Read tuning for {@link Dynamo.get}. */
     export interface ReadOptions
     {

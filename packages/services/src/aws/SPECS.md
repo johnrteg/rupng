@@ -7,6 +7,35 @@ Conventions for the AWS/service facades in this directory. Detail per store live
 
 ---
 
+# Region & account topology (data residency)
+
+The deployment boundary is the **AWS account**, and **markets are isolated by account + region** — the
+basis for **data residency** (GDPR Ch. V).
+
+* **Separate AWS account per market.** Each market is its own AWS account. (Consistent with the platform
+  rule **never point two deploy-environments at one AWS account** — see the AppConfig note below.)
+* **EU market = its own AWS account, EU-approved region.** The **EU market runs in a dedicated AWS account
+  with *all* services deployed in an EU-approved (EU) region/data center**, so EU data subjects'
+  identity/PII **stays in-region** and never lands in the US (or any non-EU) account.
+* **No cross-region flows.** Data does **not** cross regions. Specifically **disallowed** for anything
+  carrying market PII:
+  * **DynamoDB Global Tables** / cross-region replicas,
+  * **S3 Cross-Region Replication** and cross-region bucket reads,
+  * **Kafka / MSK** mirroring or consumers in another region,
+  * **cross-region backups / snapshots** (keep backups in-region),
+  * **logs, metrics, analytics, or the event lake** shipped to an out-of-region account.
+
+  Each market account is **self-contained** — its services, stores, queues, backups, and observability all
+  live **in that account's region**. Cross-region is the explicit exception requiring a documented lawful
+  basis, not a default.
+
+> This is the topology behind [auth → data residency](../../../../apps/core/auth/specs/SPECS.md) and the
+> platform [SPECS → Security & compliance](../../../../docs/SPECS.md). Region/account selection is a
+> **cloud-manifest / CDK** concern (the physical-name resolver already picks the account+region); the facades
+> here are region-agnostic and operate within whatever account they're deployed to.
+
+---
+
 # Redis (Cache) key naming standard
 
 Redis itself restricts almost nothing about keys — they're **binary-safe strings up to 512 MB**, with
@@ -185,7 +214,7 @@ factory re-reads and rebuilds, rather than waiting for the next poll.
 * **Application** = service id, **lowercase** (matches `SERVICE_NAME`).
 * **Profile names** lowercase, **kebab-case**, **no slashes / spaces** (AppConfig name constraints) —
   hence `provider-twilio`, not `provider/twilio`.
-* The cloud-spec **logical appConfig key** is typically the service id; the facade resolves it to the
+* The cloud-manifest **logical appConfig key** is typically the service id; the facade resolves it to the
   AppConfig **application id**.
 * **Data-plane vs control-plane identifiers:** the read methods ([`latest`](AppConfig.ts) / `json`) take
   the profile **name** (above); the control-plane methods (`listVersions` / `deploy` / `rollback`) take
@@ -195,16 +224,23 @@ factory re-reads and rebuilds, rather than waiting for the next poll.
 
 # Entity state-change events (Kafka)
 
-When an entity is **created / modified / deleted**, the owning service publishes a state-change event so
-other services (search index, cache, analytics, read models, workflows) can react. One **keyed topic per
-entity** (e.g. `contact`), keyed by the entity id, with a typed [`Kafka.Event`](Kafka.ts) envelope —
-`switch` on `type` in the consumer (never a topic-per-verb; that loses per-entity ordering). Use
-`publishEvent` / `subscribeEvents`.
+> **Canonical model:** an event is an **`Events.Action`** (`service.noun.verb`) carrying a **1:1 typed
+> payload**, wrapped in **`Events.Envelope`** (`@repo/endpoint`), published to a topic named from the
+> **`Topics`** registry, with the binding declared in the service's **manifest** (`publishes`/`subscribes`).
+> See [root SPECS → Events & messaging](../../../../docs/SPECS.md). The **mechanics in this section stay valid**
+> (fat payload, keying/ordering, don't-GET-before-publish, CDC) — only the terminology maps onto it:
+> `type` → **`action`**, `data` → the **typed payload**, `Kafka.Event`/`MessageEnvelope` → **`Events.Envelope`**,
+> and "one topic per entity" → a `Topics` stream **keyed** by entity/account id for ordering (many actions ride
+> one topic). The `Kafka` facade is mid-migration to this (see root SPECS → *Event-bus code follow-ups*).
 
-`Kafka.Event` **is** the platform-wide `Type.MessageEnvelope` (`@repo/common`) — the same body the
-WebSocket push frame and the client pub/sub bus carry — with `key` re-required (Kafka needs it as the
-partition key). Define an event once; it flows service → Kafka → WebSocket → client bus unreshaped. See
-[root SPECS → Events & messaging](../../../../SPECS.md).
+When an entity is **created / modified / deleted**, the owning service publishes a state-change event so
+other services (search index, cache, analytics, read models, workflows) can react. Key the topic by the
+entity id and `switch` on the **action** in the consumer (never a topic-per-verb; that loses per-entity
+ordering). Use `publishEvent` / `subscribeEvents`.
+
+The event body is **`Events.Envelope`** — the same body the WebSocket push frame and the client pub/sub bus
+carry — with `key` re-required (Kafka needs it as the partition key). Define an event once; it flows service →
+Kafka → WebSocket → client bus unreshaped.
 
 ## Envelope (metadata) — required for state-change events
 
@@ -259,7 +295,8 @@ The writer already has the new state — capture it from the **write itself**, n
   retention deliberately, and have analytics consumers strip PII into the opaque-id lake (per the GDPR
   posture). PII-sensitivity is the main reason to consider a thin event for a given topic.
 
-See the [`Kafka`](Kafka.ts) facade (`publishEvent` / `subscribeEvents` / `subscribeObject`, `Kafka.Event`).
+See the [`Kafka`](Kafka.ts) facade: `publishEvent(envelope)` / `subscribeEvents(group, object, …)` carry an
+`Events.Envelope` (`@repo/events`) on `Events.Object` topics; `publishStream`/`subscribeStream` for analytics.
 
 ---
 
@@ -412,7 +449,7 @@ all vary *per bucket*:
 | `documents` | account | account branding/docs; long-lived; versioned |
 
 Keep all buckets **private** — reads go out via presigned GET or CloudFront+OAC, never public ACLs.
-Logical keys are lowercase + purpose-named; cloud-spec/CDK resolves the globally-unique physical name.
+Logical keys are lowercase + purpose-named; cloud-manifest/CDK resolves the globally-unique physical name.
 
 ## Object keys — typed per-usage descriptors, built by the facade
 
@@ -589,10 +626,10 @@ result, **delete the registry row**. Treat any post failure as "maybe gone" and 
 
 ## Message envelope
 
-Push the platform-wide `Type.MessageEnvelope` (`@repo/common`) — the **same body** `Kafka.Event` uses —
-so the client `switch`es on `type`. It's the only package the web bundle shares and it's dependency-free,
-so no AWS types leak client-side. The client re-publishes it **whole** on its pub/sub bus. One envelope,
-all transports — see [root SPECS → Events & messaging](../../../../SPECS.md).
+Push the platform-wide **`Events.Envelope`** (`@repo/events`) — the **same universal body** Kafka and outbound
+webhooks carry — so the client `switch`es on `verb` (or routes by `action`). `@repo/events` is pure types/enums
+(no AWS), so nothing server-side leaks into the web bundle. The client re-publishes it **whole** on its pub/sub
+bus. One envelope, all transports — see [root SPECS → Events & messaging](../../../../docs/SPECS.md).
 
 ## Key naming
 

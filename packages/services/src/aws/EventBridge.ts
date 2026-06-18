@@ -1,8 +1,8 @@
 //
-// EventBridge facade — emit domain events, keyed by cloud-spec LOGICAL event-bus keys.
+// EventBridge facade — emit domain events, keyed by cloud-manifest LOGICAL event-bus keys.
 //
 import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
@@ -20,7 +20,7 @@ export class EventBridge
     get client() : EventBridgeClient { return this._client ??= ClientUtils.createClient( EventBridgeClient ); }
 
     ////////////////////////////////////////////////////////////////////////////////
-    /** Resolve a cloud-spec logical event-bus key (e.g. `"bus"`) to its physical bus name. */
+    /** Resolve a cloud-manifest logical event-bus key (e.g. `"bus"`) to its physical bus name. */
     bus( key : ResourceKey ) : string { return this.cloud.eventBusName( key ); }
 
     ////////////////////////////////////////////////////////////////////////////////

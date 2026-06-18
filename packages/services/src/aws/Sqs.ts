@@ -1,16 +1,16 @@
 //
-// SQS facade — send/receive/delete messages, keyed by cloud-spec LOGICAL queue keys.
+// SQS facade — send/receive/delete messages, keyed by cloud-manifest LOGICAL queue keys.
 //
 import { SQSClient, SendMessageCommand, ReceiveMessageCommand, DeleteMessageCommand } from "@aws-sdk/client-sqs";
 import type { Message, ReceiveMessageCommandOutput } from "@aws-sdk/client-sqs";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
  * SQS facade — the routine message operations over `@aws-sdk/client-sqs`, addressed by
- * cloud-spec LOGICAL queue keys (e.g. `"process"`).
+ * cloud-manifest LOGICAL queue keys (e.g. `"process"`).
  *
  * **Use SQS for** decoupled, durable point-to-point work queues (one consumer group draining
  * a backlog, with retries + a DLQ). For pub/sub fan-out use SNS/EventBridge; for high-volume
@@ -29,7 +29,7 @@ export class Sqs
     get client() : SQSClient { return this._client ??= ClientUtils.createClient( SQSClient ); }
 
     ///////////////////////////////////////////////////////////////////////////////////////////
-    /** Resolve a cloud-spec logical queue key (e.g. `"process"`) to its physical queue URL. */
+    /** Resolve a cloud-manifest logical queue key (e.g. `"process"`) to its physical queue URL. */
     url( key : ResourceKey ) : string { return this.cloud.queueUrl( key ); }
 
     ///////////////////////////////////////////////////////////////////////////////////////////

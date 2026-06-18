@@ -1,16 +1,16 @@
 //
-// Secrets Manager facade — fetch secret values, keyed by cloud-spec LOGICAL secret keys.
+// Secrets Manager facade — fetch secret values, keyed by cloud-manifest LOGICAL secret keys.
 //
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import type { GetSecretValueCommandOutput } from "@aws-sdk/client-secrets-manager";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
  * Secrets Manager facade — read secret values over `@aws-sdk/client-secrets-manager`,
- * addressed by cloud-spec LOGICAL secret keys (e.g. `"db"`).
+ * addressed by cloud-manifest LOGICAL secret keys (e.g. `"db"`).
  *
  * **Use for** credentials and long-lived secrets (DB passwords, third-party API keys) — values
  * that rotate and must never sit in env vars or code. For non-secret, change-without-redeploy
@@ -33,7 +33,7 @@ export class Secrets
     get client() : SecretsManagerClient { return this._client ??= ClientUtils.createClient( SecretsManagerClient ); }
 
     ////////////////////////////////////////////////////////////////////////////////
-    /** Resolve a cloud-spec logical secret key (e.g. `"db"`) to its physical secret ARN. */
+    /** Resolve a cloud-manifest logical secret key (e.g. `"db"`) to its physical secret ARN. */
     arn( key : ResourceKey ) : string { return this.cloud.secretArn( key ); }
 
     ////////////////////////////////////////////////////////////////////////////////

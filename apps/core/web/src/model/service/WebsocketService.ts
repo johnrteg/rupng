@@ -4,7 +4,7 @@
 import ReconnectingWebSocket from "reconnecting-websocket";
 import AppModel from "../AppModel";
 import { NetworkUtils, ObjectUtils } from "@repo/common";
-import type { Type } from "@repo/common";
+import type { Events } from "@repo/events";   // the universal event envelope (same body as Kafka + webhooks)
 
 
 
@@ -160,15 +160,16 @@ export class WebSocketService
         // safe parse — ObjectUtils.parseJSON returns null on bad JSON (no throw → no unhandled rejection
         // on a keepalive/ping or malformed frame).
         const message : WebSocketService.Message | null = ObjectUtils.parseJSON( text );
-        if( message === null || !message.type )
+        if( message === null || !message.action )
         {
-            console.warn( "WebSocketService: dropped non-JSON / typeless message", text );
+            console.warn( "WebSocketService: dropped non-JSON / actionless message", text );
             return;
         }
 
-        // publish the WHOLE envelope to subscribers (routed by `message.type`) — the bus carries the
-        // same body that arrived on the socket, so subscribers see `id`/`time`/`source`, not just `data`.
-        this.appdata.pubsub.publish( message.type, message );
+        // publish the WHOLE envelope to subscribers (routed by `message.action` — `${object}.${verb}`) —
+        // the bus carries the same body that arrived on the socket, so subscribers see the full envelope
+        // (object/verb/eventId/actor/…), not just `data`. (Subscribe by action, or by object for all verbs.)
+        this.appdata.pubsub.publish( message.action, message );
     }
 
 
@@ -179,11 +180,12 @@ export class WebSocketService
 export namespace WebSocketService
 {
     /**
-     * The push frame is the platform's one event envelope, {@link Type.MessageEnvelope} from
-     * `@repo/common` — the **same body** the server publishes on Kafka and we re-publish on the
-     * client pub/sub bus. Imported as a type only, so no server/AWS code reaches the web bundle.
+     * The push frame is the platform's **one universal event envelope**, {@link Events.Envelope} from
+     * `@repo/events` — the **same body** the server publishes on Kafka and sends to outbound webhooks, and
+     * which we re-publish on the client pub/sub bus (routed by `action`). Imported as a type only, so no
+     * server/AWS code reaches the web bundle.
      */
-    export type Message<T = any> = Type.MessageEnvelope<T>;
+    export type Message = Events.Envelope;
 }
 
 export default WebSocketService;

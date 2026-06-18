@@ -1,17 +1,17 @@
 //
-// S3 facade — common object ops + presigned URLs, keyed by cloud-spec LOGICAL bucket keys
+// S3 facade — common object ops + presigned URLs, keyed by cloud-manifest LOGICAL bucket keys
 // (CloudResolver turns them into physical names). Drop to `.client` for anything not wrapped.
 //
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import type { GetObjectCommandOutput, PutObjectCommandInput } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
- * S3 facade — the routine object operations over `@aws-sdk/client-s3`, addressed by cloud-spec
+ * S3 facade — the routine object operations over `@aws-sdk/client-s3`, addressed by cloud-manifest
  * LOGICAL bucket keys (e.g. `"uploads"`) rather than physical names.
  *
  * Use it for get/put/delete and presigned URLs. For anything beyond that — multipart uploads,
@@ -33,7 +33,7 @@ export class S3
      */
     get client() : S3Client { return this._client ??= ClientUtils.createClient( S3Client ); }
 
-    /** Resolve a cloud-spec logical bucket key (e.g. `"uploads"`) to its physical bucket name. */
+    /** Resolve a cloud-manifest logical bucket key (e.g. `"uploads"`) to its physical bucket name. */
     bucket( key : ResourceKey ) : string { return this.cloud.bucketName( key ); }
 
     ////////////////////////////////////////////////////////////////////////////////////////
@@ -159,7 +159,7 @@ export class S3
     ////////////////////////////////////////////////////////////////////////////////////////
     /**
      * A time-limited **upload** URL the client `PUT`s to directly — keeps large/binary uploads
-     * off your service and avoids a public bucket. Pairs with cloud-spec `presignedUpload`
+     * off your service and avoids a public bucket. Pairs with cloud-manifest `presignedUpload`
      * buckets. Use over {@link put} whenever the uploader is a browser/mobile client.
      * @param ttlSec link lifetime in seconds (default 900 = 15 min); keep it short.
      */

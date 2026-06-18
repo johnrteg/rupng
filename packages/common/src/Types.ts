@@ -109,45 +109,8 @@ export namespace Type
         | { ok : true;  data : T }
         | { ok : false; error : string; cause? : unknown };
 
-    /**
-     * The platform's **one event envelope** — the single body shape carried by every transport:
-     * Kafka (service ↔ service), the WebSocket push frame (server → client), and the client-side
-     * pub/sub bus. Define an event once and it flows end-to-end without being reshaped.
-     *
-     * Only `type` + `data` are required; the rest is metadata that the originating layer fills in
-     * as it has it (Kafka sets `key`/`seq`/`transactionId`; a UI-origin signal may set just `type`
-     * + `data`). Named `MessageEnvelope` — not `Event` — to avoid colliding with DOM `Event`.
-     *
-     * @typeParam T - the typed payload in `data`.
-     */
-    export interface MessageEnvelope<T = Json>
-    {
-        /** The verb — what happened. e.g. `"contact.updated"`, `"theme"`. */
-        type            : string;
-        /** The typed payload. */
-        data            : T;
-        /** Entity / ordering key (Kafka partition key). */
-        key?            : string;
-        /** Unique id for this emission — dedup / idempotency. */
-        id?             : string;
-        /** Occurred-at instant (UTC). */
-        time?           : ISODateTime;
-        /** Emitting service / origin. */
-        source?         : string;
-        /** Correlation id linking events from one logical operation. */
-        transactionId?  : string;
-        /** Payload schema version. */
-        version?        : number;
-        /** Entity version / per-key sequence for ordering. */
-        seq?            : number;
-        /** On updates, the names of the fields that changed. */
-        changed?        : Array<string>;
-        /**
-         * Minimum access role required to *receive* this event — an `Access.Role` value (the role's
-         * string, e.g. `"user"`; carried as a string, not the `@repo/endpoint` enum, so `@repo/common`
-         * stays dependency-free). The **publishing service stamps it** (the object's required role); the
-         * **realtime service enforces it** before pushing to a browser. See `apps/core/realtime/SPECS.md`.
-         */
-        minAccess?      : string;
-    }
+    // The platform's universal event envelope MOVED to `@repo/events` as `Events.Envelope` — the one body
+    // carried over Kafka (inter-service), the WebSocket push frame (server → client), and outbound webhooks.
+    // It lives there (not here) because it's typed by `Events.Object` / `Events.Verb`; `@repo/common` stays
+    // dependency-free. (The old PII-light `MessageEnvelope` `{ type, data }` is superseded by it.)
 }

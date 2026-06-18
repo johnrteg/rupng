@@ -61,8 +61,8 @@ export class PubSubService
 export namespace PubSubService
 {
     // The payload carried on the bus. `any` because the bus serves two origins with one API:
-    //   • server signals  — the whole `Type.MessageEnvelope` from @repo/common (pushed by WebSocketService,
-    //                        the SAME body Kafka published), routed by its `type`.
+    //   • server signals  — the whole `Events.Envelope` from @repo/events (pushed by WebSocketService,
+    //                        the SAME universal body Kafka published), routed by its `action`.
     //   • UI signals       — local app events keyed by the `Type` enum below (theme/route/…).
     // Kept untyped here (not imported) so this client bus stays dependency-light; subscribers narrow.
     export type Event = any;

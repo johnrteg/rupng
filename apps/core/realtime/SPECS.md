@@ -30,12 +30,13 @@ Domain services scale on their own concerns; this one scales on connection count
 # Role & boundaries
 
 * **In:** a subset of Kafka entity / state-change events (`Kafka.subscribeEvents`), each a
-  `Type.MessageEnvelope` (see [root SPECS → Events & messaging](../../../SPECS.md)).
+  `Type.MessageEnvelope` (see [root SPECS → Events & messaging](../../../docs/SPECS.md)).
 * **Out:** the **same envelope** posted to 0..N open WebSocket connections via API Gateway
   (`WebSocketApi.post`). The client re-publishes it whole on its pub/sub bus.
-* **Owns:** the read path of the connection registry, the push set, the **per-account outbox log** + the
-  **per-connection drainers/cursors** that pace delivery, per-entry **access-role authorization**, egress
-  fair-share, and stale-connection pruning. (No field-level redaction — see below.)
+* **Owns:** the read path of the connection registry, the push set, **account-wide presence** (who's online —
+  derived from the registry), the **per-account outbox log** + the **per-connection drainers/cursors** that
+  pace delivery, per-entry **access-role authorization**, egress fair-share, and stale-connection pruning.
+  (No field-level redaction — see below.)
 * **Does not own:** the `$connect` / `$disconnect` handlers and registry *writes* — those live with the
   WebSocket API stack ([`@repo/services` aws/SPECS.md → WebSocket](../../../packages/services/src/aws/SPECS.md)).
   This service is a **reader** of that registry. It also does **not** do mobile push (APNS/FCM) — a separate
@@ -53,8 +54,9 @@ at **drain**, per connection — so the cheap append never needs the connection 
 
 1. **Filter — push set.** Only **object-change** event `type`s in the eligible push set proceed; everything
    else is dropped immediately. Browsers see a deliberately small slice of the firehose — never "every
-   Kafka event". *(TBD: the client may further narrow this by **registering** the object types/ids it
-   cares about, so we only push what an open view actually needs.)*
+   Kafka event". The eligible set is **AppConfig-driven** (activate a `type` by adding it — a redeploy is fine);
+   it is **server-decided, not client-registered**. *(Client-side narrowing to an open view's objects is a
+   far-future perf optimization, not planned — see Gaps.)*
 2. **Resolve account.** Every pushable event must carry an **`accountId`** (in the envelope payload /
    headers) and **`minAccess`**. Missing either ⇒ drop + log (it shouldn't have been in the push set).
 3. **Append to the account outbox** — `XADD rt:{acct:<id>}:out` — **iff the account has ≥1 live connection**
@@ -92,11 +94,15 @@ may react to — client-relevant, account-scoped, low-to-moderate volume. Exampl
 
 **Excluded by default:** internal/audit/billing-internal events, **service-config change events** (those go
 to Kafka for services to hot-reconfigure without restart — machine-to-machine, never a browser), and
-high-frequency machine-to-machine chatter. Adding a `type` to the push set is a reviewed change.
+high-frequency machine-to-machine chatter. Adding a `type` to the push set is a reviewed **AppConfig** change,
+**paired with a web-app consumer** for it (typically the same deploy).
 
-**Client-registered interest (TBD).** Beyond this server-side eligibility set, a client may *register*
-the object types (and possibly specific ids) its open views need, so we push only what's actually on
-screen. Shape of that registration (over the socket vs REST, granularity) is undecided — see Open items.
+**Server-decided, config-driven (not client-registered).** Services emit the events meaningful to the web app;
+**activation = a push-set config entry + a web-app handler** that consumes the envelope (the
+[`WebsocketService`](../web/src/model/service/WebsocketService.ts) → `PubSubService` re-publishes it; a view
+subscribes to the `type`). Because the web app needs a code change to consume a new type anyway, the two **ship
+together** — so a **re-deploy is fine**. A client narrowing the set to its open views is a far-future perf
+optimization, **not planned** (see Gaps).
 
 # Authorization (access-role based, non-negotiable)
 
@@ -222,31 +228,242 @@ behind the trim horizon — it **"fell off the log"**. *Only then* do we degrade
 * **Failure isolation:** a bad single connection (410 / throttle) must not stall the batch — push per
   connection, prune/skip on error, continue.
 
-# Open items (backlog)
+# Service & Job topology
 
-* **Client-registered interest** — whether/how a client narrows the push set to the objects its open views
-  need (register over the socket vs REST; type-level vs id-level granularity; how it's revoked on view close).
-* **Cross-region** *(open)* — single-region first; multi-region connection affinity is a later concern.
-* **Push-set source** — static config vs AppConfig profile (so the eligible set can change without a deploy).
+**Convention (platform-wide).** The platform has three execution shapes under `Application` (see
+[`@repo/services` → Class hierarchy](../../../packages/services/README.md)): **`Daemon`** (the long-running base —
+signals + graceful drain) → **`Service`** (request-driven, HTTP) + **`Consumer`** (self-driven, consumes the
+backbone in a run-loop); and **`Job`** (one-shot). **Realtime is the *motivating case* for `Consumer`:** its core
+is **two `Consumer`s** (a continuous *consume → outbox → drain* loop), fronted by a **thin `Service`**. The
+connection lifecycle is a **paired WebSocket API stack** realtime only **reads** from. Realtime-specific shared
+code — **push-set filter** (AppConfig), **outbox** model (Redis Streams), **registry read**, **`Access` authz**,
+**token-bucket pacing**, **presence** — lives in shared modules + a `RealtimeConsumer` domain base.
 
-**Decided (no longer open):**
+```
+Application
+├── Daemon (abstract — long-running: signals · graceful drain · run-forever)
+│     ├── Service
+│     │     └── RealtimeApiService      (thin /realtime/* REST: presence reads · internal connection lookup · config (push set) · health)
+│     └── Consumer
+│           └── RealtimeConsumer        (domain base — outbox (Redis Streams) · registry read · Access authz · token-bucket pacing; not deployed alone)
+│                 ├── RealtimeIngestConsumer  (Phase A — Kafka consumer group, scaled on lag: filter push-set · resolve account · append outbox IFF ≥1 live connection)
+│                 └── RealtimeDrainer          (Phase B — leased per-connection: read outbox @ cursor · authorize PER ENTRY (Access.isAllowed, re-checked) · pace + shape (>128 KB → S3 pointer) · WebSocketApi.post · prune on 410)
+└── (no Job — realtime has no one-shot work)
+   shared modules: push-set filter (AppConfig) · presence  ·  paired infra: WebSocket API stack (below)
+```
 
-* **`minAccess` on events** — the publishing service stamps the object's required `Access.Role` on each
-  pushable event; this service enforces it generically (see Authorization). Adds a `minAccess?` field to the
-  shared envelope ([`@repo/common`](../../../packages/common/src/SPECS.md)).
-* **Presence ("who's online") — yes, owned by [auth](../auth/SPECS.md).** The connection registry already
-  knows who's connected; auth surfaces that as presence. Presence in turn unlocks **internal user-to-user
-  messaging** (a later capability) — once we know a user is online we can route a direct message to their
-  socket. This service is the push path; auth owns presence state + the messaging policy.
+**Service (HTTP, ECS Fargate)**
 
-# Dependencies
+| Class | Extends | Role |
+|---|---|---|
+| **`RealtimeApiService`** | `Service` | The **thin `/realtime/*` REST** — **presence** reads, internal connection lookup (S2S), **config** (the push-set AppConfig profile), health. (Push is the socket, not REST; the socket is **receive-only**.) |
 
-* `@repo/services` — `Kafka` (`subscribeEvents`), `WebSocketApi` (`post` / `disconnect`), the connection
-  registry table (`Dynamo`), `S3.presignGet` (large-payload pointers), `Cache` for the **per-account outbox
-  (Redis Streams)** + per-connection cursors + the shared **`rate.take`** token-bucket (egress fair-share).
-* `@repo/common` — `Type.MessageEnvelope` (the body, incl. `minAccess`), `Result`.
-* `@repo/endpoint` — `Access` (`isAllowed` / role ladder) for the per-event role gate.
-* Pairs with the **WebSocket API stack** ($connect auth + registry writes) and the client
-  [`WebsocketService`](../web/src/model/service/WebsocketService.ts) → `PubSubService` on the browser end.
+**Consumers (`Consumer` — long-running, self-driven; ECS/Fargate)** — the pipeline's two phases, scaled independently:
+
+| Class | Extends | Shape | Role | Req |
+|---|---|---|---|---|
+| **`RealtimeConsumer`** | `Consumer` | domain base | outbox · registry read · `Access` authz · token-bucket pacing; **not deployed alone** | — |
+| **`RealtimeIngestConsumer`** | `RealtimeConsumer` | **Kafka consumer group** (scaled on lag) | **Phase A** — filter to the **push set**, resolve `accountId` + `minAccess`, **append to the per-account outbox** (`XADD`) **iff ≥1 live connection** (one append regardless of connection count) | realtime-1.0 |
+| **`RealtimeDrainer`** | `RealtimeConsumer` | **leased per-connection fleet** | **Phase B** — read each connection's outbox at its cursor, **authorize per entry** (`Access.isAllowed`, re-checked — grants change mid-connection), **pace** (token bucket) + **shape** (>128 KB → S3 pointer), `WebSocketApi.post`, advance cursor; **prune on `410`** | realtime-2.0 / 6.0 |
+
+> **Why `Consumer`s, not `Job`s.** Both phases run **continuously**. **Phase A** reads the *whole* Kafka firehose
+> to forward a *small filtered subset* — paying a Lambda invocation per event to **drop ~95%** is the wrong cost
+> shape, and a **consumer group** gives offset control + **self-paced backpressure** (pause/resume partitions on
+> outbox pressure) + hot Redis/registry connections. **Phase B** drains a **live socket at its own pace** over
+> minutes (leases · token bucket · idle/410 management) — there is **no Lambda model** for a paced, long-lived
+> per-connection drain. **Rule:** *`Job` when work is discrete/spiky and you act on most events; **`Consumer`**
+> when you consume a high-volume firehose to forward a subset, or hold a live connection.*
+
+> **Paired WebSocket API stack (not a realtime role).** `$connect` (single-use **ticket auth**), `$disconnect`,
+> and the **connection-registry writes** + **presence on/off** live in the **WebSocket API stack**; realtime
+> **reads** the registry (ingest checks "≥1 connection", the drainer leases connections). **`$disconnect` is
+> what drives presence-off** — and is the signal [texting](../texting/SPECS.md)'s P2P **contact-lock
+> auto-release** keys off (`texting-21.2.2`). Realtime is **push-only** — no HTTP push-intake, the socket is
+> **receive-only**; durable writes always go through each owning service's REST.
+
+# AWS Services and Other Dependencies
+
+**AWS services**
+* **API Gateway (WebSocket)** — the egress transport (`WebSocketApi.post` via the Management API); the `$connect`/`$disconnect` + registry **writes** live with this stack (we **read**).
+* **Kafka (MSK)** — consume the curated push-set subset (`subscribeEvents`).
+* **DynamoDB** — the connection registry (read path, by `accountId`).
+* **Redis (ElastiCache)** — the per-account **outbox (Redis Streams)** + per-connection cursors + the shared **`rate.take`** token bucket + drainer **leases**.
+* **S3** — `presignGet` pointers for frames over the **128 KB** AGW limit.
+
+**Third-party libraries / services** — none.
+
+**Internal (`@repo/*`)**
+* `@repo/services` (`Kafka`, `WebSocketApi`, `Dynamo`, `S3.presignGet`, `Cache` / `rate.take`), `@repo/common` (`Type.MessageEnvelope` incl. **`minAccess`**, `Result`), `@repo/endpoint` (`Access` — `isAllowed` / role ladder).
+* Pairs with the **WebSocket API stack** (`$connect` auth + registry writes) and the browser [`WebsocketService`](../web/src/model/service/WebsocketService.ts) → `PubSubService`. Presence is access-gated by [auth](../auth/specs/SPECS.md); **does not** do mobile push (APNS/FCM) or collab CRDT.
+
+# Compliance & standards mapping
+
+How **this realtime service's** controls map to **OWASP Top 10 (2021)**, **ISO/IEC 27001:2022** (Annex A),
+**SOC 2 Type 2** (TSC), **HIPAA** (if PHI), **GDPR**, and **CCPA/CPRA**. Realtime is **push-only egress**
+(Kafka → browser); its dominant control is **server-side, per-push authorization** — the socket grants **no**
+visibility REST wouldn't, and nothing the client sends widens what it receives. There is **no PCI** and **no
+messaging-law** surface. **HIPAA** is ➖ (envelopes carry no PHI by [AUP](../account/specs/SPECS.md); a >128 KB
+payload becomes an access-controlled S3 pointer). Identity/RBAC live in [auth](../auth/specs/SPECS.md);
+residency is the platform [AWS topology](../../../packages/services/src/aws/SPECS.md) (single-region first).
+
+**Legend:** ✅ meets/exceeds · ⚠️ partial / open — see Gaps · ➖ n/a
+
+| Realtime control | OWASP T10 | ISO 27001:2022 | SOC 2 (TSC) | HIPAA (if PHI) | GDPR | CCPA | |
+|---|---|---|---|---|---|---|---|
+| **Server-side authorization on every push** — role + account grant; client cannot widen visibility | A01 | A.5.15 / A.8.3 | CC6.1 / CC6.3 | §164.312(a)(1) | Art 32 | ➖ | ✅ |
+| **Account isolation** — A's event never reaches B's connection (a requested `accountId` is not permission) | A01 | A.8.3 | CC6.1 | §164.312(a)(1) | Art 32 | §1798.100 | ✅ |
+| **`minAccess` fail-closed** — a pushable event missing `minAccess` is dropped + logged | A04 | A.8.27 / A.8.28 | CC6.1 | ➖ | Art 32 | ➖ | ✅ |
+| **Re-checked per push** — roles/grants re-evaluated each event (mid-connection revocation) | A01 / A07 | A.5.18 | CC6.2 / CC6.3 | §164.312(a)(2)(iii) | Art 32 | ➖ | ✅ |
+| **Data minimization** — client gets only what its role sees via REST; role gates the **whole** event (no extra fields) | A01 | A.5.34 / A.8.3 | (Privacy) | §164.502(b) | Art 5(1)(c) / 25 | §1798.100 | ✅ |
+| **Oversized frames → S3 pointer** — >128 KB sends a **time-limited presigned** pointer, not the bytes | A01 / A02 | A.8.20 | CC6.6 | ➖ | Art 32 | ➖ | ✅ |
+| **Egress fair-share / rate limiting** — per-connection + per-account token buckets; shed-only-at-cap | A04 | A.8.6 | CC6.6 / A1.2 | ➖ | ➖ | ➖ | ✅ |
+| **Encryption** — in transit (WSS / TLS) + at rest (Redis / DDB / S3 SSE-KMS) | A02 | A.8.24 | CC6.1 | §164.312(e) | Art 32 | ➖ | ✅ |
+| **Presence access-gated** — account-scoped + role-gated (auth); never cross-account | A01 | A.8.3 | CC6.1 | ➖ | Art 32 | ➖ | ✅ |
+| **No PHI** by AUP — envelopes are minimal, no PHI | ➖ | A.5.34 | (Privacy) | §164.502 (AUP) | Art 9 | ➖ | ✅ |
+
+# Gaps & open decisions
+
+*The one review list.* ✅ = resolved/decided · ⚠️ = **open — needs attention**.
+
+1. ✅ **Activation — DECIDED: server-decided (NOT client-registered).** Services emit the events meaningful to
+   the web app; **activating one** = adding its `type` to the **push-set config** **and** the **web app shipping
+   a handler** to consume it (the [`WebsocketService`](../web/src/model/service/WebsocketService.ts) →
+   `PubSubService` re-publishes the envelope; a view subscribes to the `type`). The event just needs `accountId`
+   + `minAccess`. Because the web app needs a code change to consume a new type **anyway**, the two ship
+   **together** — so a **re-deploy is fine**; hot-config-without-deploy is a nicety, not a requirement. A client
+   narrowing the set to its open views is a **far-future perf optimization**, **not planned** (`realtime-3.4`).
+2. ✅ **Cross-region — NOT A CONCERN (single-region, multi-AZ per market).** Each environment/market is **one
+   AWS account in one region, multi-AZ** — HA is automatic (API Gateway is regional/AZ-spanning; DynamoDB, MSK,
+   ElastiCache are multi-AZ with failover). Connections, registry, outbox + presence all live in that one
+   region, so the WebSocket regional-ownership issue (you can only `PostToConnection` from the owning region)
+   **never arises** — it would only bite with *two regions in one market*, which we don't run. Residency is
+   handled by the **separate per-market accounts** (no cross-region flow). The only residual is **full-region
+   DR**, a **platform-topology** decision (not realtime's) — and realtime recovers trivially (**reconnect +
+   REST resync**; the socket isn't the source of truth). See the [AWS topology](../../../packages/services/src/aws/SPECS.md).
+3. ✅ **Push-set source — DECIDED: AppConfig** (like every other service's config). Hot-change without a deploy
+   is supported but **not required** — since activating a new event is paired with a **web-app deploy** to
+   consume it (gap #1), a **re-deploy of the push-set is perfectly fine** (`realtime-3.3`).
+4. ✅ **`minAccess` on events — DECIDED.** The publishing service stamps the object's required `Access.Role` on
+   each pushable event; this service enforces it **generically** (object-agnostic). Adds a `minAccess?` field to
+   the shared envelope ([`@repo/common`](../../../packages/common/src/SPECS.md)).
+5. ✅ **Presence ("who's online") — DECIDED: owned here.** The connection registry this service reads **is** the
+   source of truth, so **account-wide presence is a read/aggregate over it** (≥1 live connection = online),
+   surfaced as a presence read + presence-change events. **Access-gated by [auth](../auth/specs/SPECS.md)**
+   (account-scoped + role-gated; never cross-account — auth provides the *gate*, not the data). Unlocks
+   **internal user-to-user messaging** (later). *(Room-scoped awareness — who's in a specific doc — is
+   [collab](../collab/SPECS.md).)*
+
+# Requirements (traceable register)
+
+The traceable requirement register for the **realtime service** (the narrative sections above are the
+rationale; this is the coded list). IDs are stable handles (**`realtime-N.M`**) — cite them in code, tickets,
+and tests. **Priority:** **A** = MVP, **B** = core / hardening, **C** = later. One level of sub-requirements; a
+group's priority is its floor. **Boundaries:** realtime owns **Kafka→browser push egress** — the registry
+**read** path, the push set, the per-account outbox + paced drain, per-push authorization, presence; the
+**WebSocket API stack** owns `$connect`/`$disconnect` + registry **writes**; **mobile push** + **collab CRDT**
+are separate; durable client writes go through **REST**.
+
+## realtime-1.0 Ingest (Phase A) — A
+- **realtime-1.1** Consume the **push-set subset** of Kafka events (`subscribeEvents`) — A
+- **realtime-1.2** **Filter** to push-set object-change `type`s; drop everything else immediately — A
+- **realtime-1.3** **Resolve `accountId` + `minAccess`**; missing either ⇒ **drop + log** — A
+- **realtime-1.4** **Append to the per-account outbox** (`XADD rt:{acct:<id>}:out`) **iff ≥1 live connection** (one append per event) — A
+
+## realtime-2.0 Drain & delivery (Phase B) — A
+- **realtime-2.1** Per-connection **cursor** reads the account log **in order** from its offset — A
+- **realtime-2.2** **Authorize per entry** — `Access.isAllowed(role, minAccess)` **and** the grant covers `accountId`; **re-checked every entry** — A
+- **realtime-2.3** **Pace** via the bytes + msgs/sec **token bucket** before posting — A
+- **realtime-2.4** Frames **>128 KB** → an `S3.presignGet` **pointer**, not the bytes — A
+- **realtime-2.5** `WebSocketApi.post` → advance cursor; **410** prune, **429** back off, fell-off-log → `resync` — A
+
+## realtime-3.0 Push set (contract) — A
+- **realtime-3.1** Eligible **object-change** types only; adding a `type` is a **reviewed** change — A
+- **realtime-3.2** **Exclude** internal / audit / billing / **service-config** / high-frequency M2M chatter — A
+- **realtime-3.3** **Push set is AppConfig-driven** — activate by adding the `type` to the AppConfig profile (a redeploy is fine); event carries `accountId` + `minAccess`; **the web app must ship a handler to consume it** *(gaps #1 / #3)* — A
+- **realtime-3.4** **Not client-registered** — the server (config + publishers) decides what's meaningful; client-side narrowing is a far-future perf optimization, not planned *(gap #1)* — C
+
+## realtime-4.0 Authorization — A
+- **realtime-4.1** **Server-side, every push** — the client cannot widen what it receives (requested `accountId` is a request, not a grant) — A
+- **realtime-4.2** Publisher stamps **`minAccess`**; this service enforces **generically** (no per-object rules here) *(gap #4)* — A
+- **realtime-4.3** **Fail-closed** on missing `minAccess`; **role gates the whole event** (no field redaction) — A
+- **realtime-4.4** **Account isolation** — never deliver A's event to a B-only connection — A
+
+## realtime-5.0 Delivery semantics — A
+- **realtime-5.1** **Lossless under bursts** (durable ordered outbox); **at-most-once only at the edges** (offline → REST resync; fell-off-cap → resync) — A
+- **realtime-5.2** **Per-entity ordering** (Kafka partition key → append order); `seq` lets a client drop a stale frame — A
+- **realtime-5.3** **Idempotency / dedup** via envelope `id` (brief dual connections on reconnect) — A
+- **realtime-5.4** **No per-object debounce**; chatty event *types* throttle at the **publisher** (emit every Ns / N%) — B
+
+## realtime-6.0 Throughput & flow control — A
+- **realtime-6.1** Per-account **outbox** (Redis Streams) + per-connection cursors; **bounded** (`MAXLEN` / bytes / TTL) — A
+- **realtime-6.2** **Paced drain** (`rate.take`) — **two stacked buckets** (per-connection + per-account; protects the AGW account throttle) — A
+- **realtime-6.3** Pace by **AGW backpressure** (no client ACK — keeps receive-only); **optional** ACK+timestamp upgrade (backlog/goodput + RTT trend) — B
+- **realtime-6.4** **Overflow** — absorb → **shed low-value first** → fell-off → one `resync` frame + **saturation metric** (throttle the publisher) — A
+- **realtime-6.5** **Drainer ownership** — a **Redis lease** (one drainer / connection) or connectionId-hash partition (no reorder) — A
+
+## realtime-7.0 Presence — A
+- **realtime-7.1** **Account-wide presence** = read/aggregate over the connection registry (≥1 live = online) *(gap #5)* — A
+- **realtime-7.2** Presence **read** + **presence-change** events — A
+- **realtime-7.3** **Access-gated by [auth](../auth/specs/SPECS.md)** — account-scoped + role-gated; never cross-account — A
+- **realtime-7.4** Unlocks **internal user-to-user messaging** (route a DM to a live socket) — C
+
+## realtime-8.0 Scaling & ops — A
+- **realtime-8.1** **Kafka consumer group** scaled on lag; partition count bounds parallelism (per-entity order holds) — A
+- **realtime-8.2** **Connection-registry reads** by `accountId` (hot path) — A
+- **realtime-8.3** Design around **AGW limits** — ~10 min idle / 2 h max / 128 KB frame; small frames, expect reconnects, prune on 410 — A
+- **realtime-8.4** **Failure isolation** — push per connection; a bad connection (410 / throttle) never stalls the batch — A
+
+## realtime-9.0 Boundaries & infra — A
+- **realtime-9.1** **Reader** of the registry; `$connect`/`$disconnect` + registry **writes** owned by the WebSocket API stack — A
+- **realtime-9.2** **Not** mobile push (APNS/FCM); **not** collab CRDT; durable client writes via **REST**, never a socket — A
+- **realtime-9.3** Infra — **API GW WebSocket** · **Kafka** · **DynamoDB** (registry) · **Redis** (outbox / cursors / `rate.take` / leases) · **S3** (pointers) — A
+
+## realtime-10.0 Service & Consumer topology — B
+- **realtime-10.1** **Bases** — `RealtimeApiService extends Service`; the consumers extend a `RealtimeConsumer extends Consumer` domain base (outbox · registry read · `Access` authz · token-bucket pacing); push-set filter + presence are shared modules — B
+- **realtime-10.2** **`RealtimeApiService`** — the thin `/realtime/*` REST (presence reads · internal connection lookup · config · health) — A
+- **realtime-10.3** **Core = two `Consumer`s (long-running, self-driven), not `Job`s** — **`RealtimeIngestConsumer`** (Phase A, Kafka consumer group, scaled on lag) + **`RealtimeDrainer`** (Phase B, leased per-connection, paced). Realtime is the **motivating case** for the platform `Consumer` base — A
+- **realtime-10.4** **Connection lifecycle is the paired WebSocket API stack** — `$connect` (ticket auth) / `$disconnect` / registry writes + presence on/off; realtime **reads** the registry, doesn't own the writes (`realtime-9.1`) — A
+- **realtime-10.5** **`$disconnect` drives presence-off** — the signal [texting](../texting/SPECS.md)'s P2P contact-lock **auto-release** keys off (`texting-21.2.2`) — A
+
+# Endpoints (first cut)
+
+Realtime is **push-only**, so its surface is thin: the **WebSocket** (egress) + a small **presence** read API.
+Service-prefixed **`/realtime/*`** for REST.
+
+> **Ingestion is not HTTP, and the socket is receive-only.** Events arrive on **Kafka** (`subscribeEvents`) —
+> there is **no HTTP push-intake** route. The client WebSocket is **receive-only** (client *actions* go through
+> the REST API of the owning service); realtime never processes inbound action frames. Durable writes always go
+> through **REST**, never a socket.
+
+**Access column:** **`minAccess`** on the `Access` ladder — **`-`** = public · account ladder
+**`SENDER`<`USER`<`BILLING`<`ACCOUNT`** · staff ladder **`SUPPORT`<`APPLICATION`<`ROOT`** · **`Internal`** =
+VPC-only S2S.
+
+### WebSocket — the egress socket (realtime-2)
+| Protocol | URI | Purpose | Access | Req |
+|---|---|---|---|---|
+| WSS · Upgrade | `wss://…/realtime?accountId={accountId}` | Open the receive-only push socket. **`$connect` auth + registry writes are owned by the WebSocket API stack**; realtime is the **reader / pusher** | USER | realtime-9.1 |
+
+#### WS frames ("the lines" over the socket)
+`S→C` = server→client · `C→S` = client→server.
+
+| Dir | Frame | Payload | Purpose | Req |
+|---|---|---|---|---|
+| S→C | `event` | `Type.MessageEnvelope` (role-gated) | A pushed object-change / presence-change event (full payload, or an S3 pointer if >128 KB) | realtime-2.5 |
+| S→C | `resync` | `{ type:"resync", scope }` | Recovery nudge — fell off the capped log / reconnect → re-sync via **REST** | realtime-6.4 |
+| C→S | `ack` *(optional)* | `{ ack: seq, t }` | **Flow-control signaling only** (backlog/goodput + RTT trend) — not an action; opt-in upgrade | realtime-6.3 |
+
+### Presence (REST reads — push-change over the socket) (realtime-7)
+| Method | URI | Purpose | Access | Req |
+|---|---|---|---|---|
+| GET | `/realtime/presence` | Who's online in the account (role-gated; account-scoped, never cross-account) | USER | realtime-7.1/7.3 |
+| GET | `/realtime/presence/{userId}` | Whether a specific user is online (≥1 live connection) | USER | realtime-7.1 |
+
+### Internal / S2S & ops
+| Method | URI | Purpose | Access | Req |
+|---|---|---|---|---|
+| GET | `/realtime/internal/connections` | S2S — live connection / presence lookup by `accountId` | Internal | realtime-8.2 |
+| GET, PUT | `/realtime/config` | Read / set runtime config (the **push set** is an AppConfig profile) | ROOT | realtime-3.3 |
+| GET | `/realtime/health` | Liveness / readiness (consumer lag + drainer fleet) | - | realtime-8.1 |
 
 # eof

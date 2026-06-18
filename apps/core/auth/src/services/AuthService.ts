@@ -1,6 +1,6 @@
 //
 
-import { Application, Service } from "@repo/services";
+import { Application, Service, Ports, Events } from "@repo/services";
 
 //
 // common auth server base
@@ -13,7 +13,9 @@ export class AuthService extends Service
     ///////////////////////////////////////////////////////////////////////////////////////
     constructor( role : AuthService.Role )
     {
-        super( [ AuthService.ID, role ].join(Application.ID_DIVIDER) );
+        // identity = Events.Service.AUTH (+ role → "auth:reader"); default to this role's port in the AUTH
+        // block for local dev; a deploy's env PORT overrides it
+        super( Events.Service.AUTH, role, AuthService.PORT[ role ] );
 
         // __dirname resolves to apps/auth/bin/services at runtime; loadPackageInfo walks up
         // to the nearest package.json (apps/auth/package.json)
@@ -30,13 +32,19 @@ export class AuthService extends Service
 
 export namespace AuthService
 {
-    export const ID : string = "auth";
-
     export enum Role
     {
         READER = "reader",
         WRITER = "writer"
     }
+
+    // role → its absolute port in the AUTH block. The numbers live ONLY in @repo/services Ports;
+    // any manifest containerPort references the SAME constants, so the two can never drift.
+    export const PORT : Record<Role, number> =
+    {
+        [ Role.READER ] : Ports.AUTH.READER,
+        [ Role.WRITER ] : Ports.AUTH.WRITER,
+    };
 }
 
 export default AuthService;

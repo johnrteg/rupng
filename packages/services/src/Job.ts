@@ -3,6 +3,7 @@
 import { Context } from 'aws-lambda';
 
 import { Application } from './Application';
+import type { Events } from '@repo/events';
 /*
 Jobs are short run functions that might be called from:
 1) SQS pipe
@@ -20,11 +21,12 @@ export abstract class Job<TEvent = any, TResult = any> extends Application
 
     ////////////////////////////////////////////////////////////////////////
     /**
-    * @param name - identifier for this job, used for logging and trace correlation
+    * @param service  the canonical service id (`Events.Service.*`) this job belongs to.
+    * @param jobName   optional job name distinguishing jobs of one service (e.g. `ticket`) → name `service:jobName`.
     */
-    constructor( name : string )
+    constructor( service : Events.Service, jobName ? : string )
     {
-        super( name );
+        super( service, jobName );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////

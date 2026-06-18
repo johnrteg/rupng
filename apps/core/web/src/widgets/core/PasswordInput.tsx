@@ -69,7 +69,7 @@ export function PasswordInput( props : PasswordInput.Props ) : JSX.Element
                         fullWidth   = { true }
                         error       = { error }
                         id          = { props.id }
-                        //autoComplete= "new-password"
+                        autoComplete= { props.autoComplete }
                         name        = { props.id }
                         label       = { props.label }
                         disabled    = { props.disabled != undefined ? props.disabled : false }
@@ -104,6 +104,7 @@ export namespace PasswordInput
         dense?          : boolean;
         disabled?       : boolean;
         allowGenerate?  : boolean
+        autoComplete?   : string;   // e.g. "current-password" (login) / "new-password" (signup/reset)
         onChange?       : ( new_value : string ) => void;
         onEnter?        : () => void;
     }

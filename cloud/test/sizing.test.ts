@@ -4,8 +4,8 @@
 import {
     fargateSize, rdsInstanceClass, auroraAcu, mskInstanceType,
     cacheLimits, batchSize, searchInstanceType, searchOcu,
-} from '../lib/sizing';
-import { Sizing, Scale } from '@repo/cloud-spec';
+} from '../src/lib/sizing';
+import { Sizing, Scale } from '@repo/cloud-manifest';
 
 describe('sizing mappers', () => {
 

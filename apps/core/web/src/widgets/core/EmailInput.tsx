@@ -45,6 +45,7 @@ export function EmailInput( props: EmailInput.Props ) : JSX.Element
                         endIcon={ value != "" && EmailUtils.isValid( value ) ? <IconButton onClick={ () => onClick() }><EmailOutlinedIcon /></IconButton> : null }
                         value={ value }
                         width={ props.sx && props.sx.width ? props.sx.width : undefined }
+                        autoComplete={ props.autoComplete }
                         onChange={ onChange }
                         onEnter={ props.onEnter != undefined ? props.onEnter : undefined }
                         />;
@@ -59,6 +60,7 @@ export namespace EmailInput
         value         : string;
         disabled ?    : boolean;
         sx?           : { width? : number | string };
+        autoComplete? : string;
         onChange?     : ( new_value : string ) => void;
         onEnter?      : () => void;
     }

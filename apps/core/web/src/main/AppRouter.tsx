@@ -331,51 +331,9 @@ export namespace AppRouter
 {
     export enum Route
     {
-        // server api's to avoid:
-        // /login
-        // /auth
-        // /account
-        // /verify
-        // /passkey
         ROOT            = `/`,
         LOGIN           = `/signin`,
         DASHBOARD       = `/dashboard`,
-
-        /*
-        DASHBOARD       = `/${prefix}/dashboard`,
-
-        SEND            = `/${prefix}/text`,
-
-        REGISTER        = `/${prefix}/register`,
-        
-        FORGOT          = `/${prefix}/forgot`,
-        CONVERSATIONS   = `/${prefix}/chats`,
-
-        ACTIONS         = `/${prefix}/action`,         // backward compatible (remove at some point)
-        PROJECTS        = `/${prefix}/projects`,
-
-        CONTACTS        = `/${prefix}/contacts`,
-        TOOLS           = `/${prefix}/tools`,
-
-        REPORTS         = `/${prefix}/reports`,
-
-        PROFILE         = `/${prefix}/profile`,
-        INFORMATION     = `/${prefix}/information`,
-        BILLING         = `/${prefix}/billing`,
-        ADMINS          = `/${prefix}/admins`,
-        TEAMS           = `/${prefix}/teams`,
-        REGISTRY        = `/${prefix}/registry`,
-        
-        OPTIN           = `/${prefix}/optin`,
-        OPTINSAMPLE     = `/${prefix}/optinsample`,
-
-        DISABLED        = `/${prefix}/disabled`,
-        RESET_PWD       = `/${prefix}/resetpw`,
-
-        CANCEL         = `/${prefix}/cancel`,
-
-        KITCHEN         = `/${prefix}/kitchen`
-        */
     }
 
     export interface Props

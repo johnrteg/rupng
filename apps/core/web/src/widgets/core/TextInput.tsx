@@ -240,7 +240,7 @@ function TextInput( props : TextInput.Props, ref : React.Ref<TextInputHandle> ) 
                         inputRef    = { inputRef }
                         size        = { props.dense !== undefined ? ( props.dense ? "small" : "medium" ) : "small" }
                         disabled    = { disabled !== undefined ? disabled : false }
-                        autoComplete= { props.id }
+                        autoComplete= { props.autoComplete ?? props.id }
                         onChange    = { ( evt: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> ) => onChange( evt ) }
                         onKeyDown   = { ( evt: React.KeyboardEvent<HTMLDivElement> ) => onKeyPress( evt )}
                         onFocus     = { onFocus }
@@ -299,6 +299,7 @@ export namespace TextInput
         onlyAlphaNumeric?   : boolean;
         maxLength?          : number;
         align?              : "left" | "center" | "right";
+        autoComplete?       : string;   // HTML autocomplete token (e.g. "username", "email"); defaults to id
         sx?                 : any;
         color?              : string;
         insertAtCursor?     : string | null;

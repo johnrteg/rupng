@@ -18,7 +18,7 @@
 // standard queue is the alternative (not implemented here — FIFO grouping covers the common case).
 //
 import type { Message } from "@aws-sdk/client-sqs";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 
@@ -27,7 +27,7 @@ import { Sqs } from "./Sqs";
 /**
  * A fair-share work queue over the {@link Sqs} facade. Producers {@link submit} work tagged with a
  * **fairness key** (usually `accountId`); consumers {@link receive} it priority-first, then fairly
- * round-robined across tenants. Resolve queues by their cloud-spec logical keys.
+ * round-robined across tenants. Resolve queues by their cloud-manifest logical keys.
  *
  * A service typically owns two queues in its manifest: a standard `…-priority` queue and a **FIFO**
  * `…-fair` queue (`fifo: true`).
@@ -144,7 +144,7 @@ export class WorkQueue
 
 export namespace WorkQueue
 {
-    /** Which queues back this WorkQueue (cloud-spec logical keys) + the priority/fair policy. */
+    /** Which queues back this WorkQueue (cloud-manifest logical keys) + the priority/fair policy. */
     export interface Options
     {
         /** The FIFO per-tenant fair queue (`fifo: true` in the manifest). */

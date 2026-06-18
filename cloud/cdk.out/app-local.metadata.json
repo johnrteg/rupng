@@ -1,0 +1,1116 @@
+{
+  "/app-local": [
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    },
+    {
+      "type": "aws:cdk:info",
+      "data": "[local] skipping rum — not emulated by LocalStack",
+      "trace": [
+        "Annotations.addMessage (/Users/johntegen/development/rupng/node_modules/aws-cdk-lib/core/lib/annotations.js:1:3441)",
+        "Annotations.addInfo (/Users/johntegen/development/rupng/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2588)",
+        "ServiceStack.skipLocal (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:1210:40)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:145:63)",
+        "Array.forEach (<anonymous>)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:145:37)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "Object.<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "Module._compile (node:internal/modules/cjs/loader:1829:14)",
+        "Object.transformer (/Users/johntegen/development/rupng/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)",
+        "Module.load (node:internal/modules/cjs/loader:1552:32)",
+        "Module._load (node:internal/modules/cjs/loader:1354:12)",
+        "wrapModuleLoad (node:internal/modules/cjs/loader:255:19)",
+        "loadCJSModuleWithModuleLoad (node:internal/modules/esm/translators:327:3)",
+        "ModuleWrap.<anonymous> (node:internal/modules/esm/translators:232:7)",
+        "ModuleJob.run (node:internal/modules/esm/module_job:437:25)",
+        "async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:642:26)",
+        "async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)"
+      ]
+    },
+    {
+      "type": "aws:cdk:info",
+      "data": "ECS service 'main': add an X-Ray/ADOT sidecar to the task definition to ship traces",
+      "trace": [
+        "Annotations.addMessage (/Users/johntegen/development/rupng/node_modules/aws-cdk-lib/core/lib/annotations.js:1:3441)",
+        "Annotations.addInfo (/Users/johntegen/development/rupng/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2588)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:719:40)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (<anonymous>)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "Object.<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "Module._compile (node:internal/modules/cjs/loader:1829:14)",
+        "Object.transformer (/Users/johntegen/development/rupng/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)",
+        "Module.load (node:internal/modules/cjs/loader:1552:32)",
+        "Module._load (node:internal/modules/cjs/loader:1354:12)",
+        "wrapModuleLoad (node:internal/modules/cjs/loader:255:19)",
+        "loadCJSModuleWithModuleLoad (node:internal/modules/esm/translators:327:3)",
+        "ModuleWrap.<anonymous> (node:internal/modules/esm/translators:232:7)",
+        "ModuleJob.run (node:internal/modules/esm/module_job:437:25)",
+        "async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:642:26)",
+        "async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)"
+      ]
+    },
+    {
+      "type": "aws:cdk:info",
+      "data": "ECS service 'public': add an X-Ray/ADOT sidecar to the task definition to ship traces",
+      "trace": [
+        "Annotations.addMessage (/Users/johntegen/development/rupng/node_modules/aws-cdk-lib/core/lib/annotations.js:1:3441)",
+        "Annotations.addInfo (/Users/johntegen/development/rupng/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2588)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:719:40)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (<anonymous>)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "Object.<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "Module._compile (node:internal/modules/cjs/loader:1829:14)",
+        "Object.transformer (/Users/johntegen/development/rupng/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)",
+        "Module.load (node:internal/modules/cjs/loader:1552:32)",
+        "Module._load (node:internal/modules/cjs/loader:1354:12)",
+        "wrapModuleLoad (node:internal/modules/cjs/loader:255:19)",
+        "loadCJSModuleWithModuleLoad (node:internal/modules/esm/translators:327:3)",
+        "ModuleWrap.<anonymous> (node:internal/modules/esm/translators:232:7)",
+        "ModuleJob.run (node:internal/modules/esm/module_job:437:25)",
+        "async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:642:26)",
+        "async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)"
+      ]
+    }
+  ],
+  "/app-local/Table-notices": [
+    {
+      "type": "aws:cdk:hasPhysicalName",
+      "data": {
+        "Ref": "TablenoticesC4CCFE70"
+      }
+    }
+  ],
+  "/app-local/AppConfig-config": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppConfigconfig"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "ServiceStack.makeAppConfig (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:374:48)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:53)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:34)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/AppConfigEnv-config-default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppConfigEnvconfigdefault"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:380:13)",
+        "Array.forEach (:)",
+        "ServiceStack.makeAppConfig (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:379:48)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:53)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:34)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/AppConfigProfile-config-settings": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppConfigProfileconfigsettings"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:381:37)",
+        "Array.forEach (:)",
+        "ServiceStack.makeAppConfig (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:381:23)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:53)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:34)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/AppConfigProfile-config-flags": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppConfigProfileconfigflags"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:381:37)",
+        "Array.forEach (:)",
+        "ServiceStack.makeAppConfig (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:381:23)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:53)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:34)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Key-data/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "Keydata296605E0"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Key2 in aws-cdk-lib...",
+        "ServiceStack.makeKey (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:222:31)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:130:53)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:130:34)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/Table-notices/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "TablenoticesC4CCFE70"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Table2 in aws-cdk-lib...",
+        "ServiceStack.makeTable (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:287:40)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:132:53)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:132:34)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/app-local/Queue-tickets-dlq/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "Queueticketsdlq1D076709"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Queue2 in aws-cdk-lib...",
+        "ServiceStack.makeQueue (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:316:37)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:53)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:34)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/Queue-tickets/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "QueueticketsBC29B8EF"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Queue2 in aws-cdk-lib...",
+        "ServiceStack.makeQueue (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:322:35)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:53)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:34)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/Queue-telemetry-dlq/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "Queuetelemetrydlq1E76FF95"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Queue2 in aws-cdk-lib...",
+        "ServiceStack.makeQueue (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:316:37)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:53)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:34)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/Queue-telemetry/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "QueuetelemetryA92A2C05"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Queue2 in aws-cdk-lib...",
+        "ServiceStack.makeQueue (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:322:35)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:53)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:34)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/Fn-ticket/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "Fnticket8FEEF28A"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Function2 in aws-cdk-lib...",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/Fn-telemetry/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "Fntelemetry619F66CC"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Function2 in aws-cdk-lib...",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/Fn-cacheInvalidation/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "FncacheInvalidationEC73C37A"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Function2 in aws-cdk-lib...",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/EcsCluster/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EcsCluster97242B84"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Cluster2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:663:52)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/ComputeSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ComputeSg63149A20"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in aws-cdk-lib...",
+        "ServiceStack.computeSg (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:203:50)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:689:43)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)"
+      ]
+    }
+  ],
+  "/app-local/ComputeSg/from applocalSvcmainLBSecurityGroup01D7E7CE:8100": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ComputeSgfromapplocalSvcmainLBSecurityGroup01D7E7CE8100B5BA5D9D"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/ComputeSg/from applocalSvcpublicLBSecurityGroup2DFB413E:8101": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ComputeSgfromapplocalSvcpublicLBSecurityGroup2DFB413E8101ECEEA431"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/LoadBalancerDNS": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainLoadBalancerDNS447AA223"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/app-local/Svc-main/ServiceURL": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainServiceURL323768C6"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/app-local/Svc-public/LoadBalancerDNS": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicLoadBalancerDNS11181776"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/app-local/Svc-public/ServiceURL": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicServiceURLBA8AB3D8"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/app-local/Api-api/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiapiE7E14836"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new HttpApi2 in aws-cdk-lib...",
+        "ServiceStack.makeApi (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:731:43)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:159:29)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/VpcLink-api/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VpcLinkapi676777B9"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new VpcLink2 in aws-cdk-lib...",
+        "ServiceStack.makeApi (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:752:75)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:159:29)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in aws-cdk-lib...",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:78:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)"
+      ]
+    }
+  ],
+  "/app-local/Key-data/Alias/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "KeydataAliasD06DF903"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Key2 in aws-cdk-lib...",
+        "ServiceStack.makeKey (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:222:31)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:130:53)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:130:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)"
+      ]
+    }
+  ],
+  "/app-local/Fn-ticket/ServiceRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "FnticketServiceRole0F8AFD86"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Function2 in aws-cdk-lib...",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)"
+      ]
+    }
+  ],
+  "/app-local/Fn-ticket/SqsEventSource:applocalQueueticketsA13AFD20/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "FnticketSqsEventSourceapplocalQueueticketsA13AFD2012C9EC64"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.addEventSource in aws-cdk-lib...",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:649:28)",
+        "Array.forEach (:)",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:645:33)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "Array.forEach (:)"
+      ]
+    }
+  ],
+  "/app-local/Fn-telemetry/ServiceRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "FntelemetryServiceRoleB97A0A99"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Function2 in aws-cdk-lib...",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)"
+      ]
+    }
+  ],
+  "/app-local/Fn-telemetry/SqsEventSource:applocalQueuetelemetry530C6F61/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "FntelemetrySqsEventSourceapplocalQueuetelemetry530C6F61A85B5824"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.addEventSource in aws-cdk-lib...",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:649:28)",
+        "Array.forEach (:)",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:645:33)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "Array.forEach (:)"
+      ]
+    }
+  ],
+  "/app-local/Fn-cacheInvalidation/ServiceRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "FncacheInvalidationServiceRole6DEB5C8A"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Function2 in aws-cdk-lib...",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:33)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/LB/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainLBB1ABC568"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainTaskDef32694275"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainServiceBDFC08E2"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/LB/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicLB8E207577"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicTaskDef27F1CED9"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicServiceCB977EAC"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+      ]
+    }
+  ],
+  "/app-local/Api-api/DefaultStage/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiapiDefaultStage400A0D0B"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new HttpApi2 in aws-cdk-lib...",
+        "ServiceStack.makeApi (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:731:43)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:159:29)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/Fn-ticket/ServiceRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "FnticketServiceRoleDefaultPolicy0103E728"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Function2 in aws-cdk-lib...",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)"
+      ]
+    }
+  ],
+  "/app-local/Fn-telemetry/ServiceRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "FntelemetryServiceRoleDefaultPolicy43A040CB"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Function2 in aws-cdk-lib...",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)"
+      ]
+    }
+  ],
+  "/app-local/Fn-cacheInvalidation/ServiceRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "FncacheInvalidationServiceRoleDefaultPolicyBA16495A"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Function2 in aws-cdk-lib...",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/LB/SecurityGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainLBSecurityGroup99CF0D0F"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/LB/SecurityGroup/to applocalComputeSg23388938:8100": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainLBSecurityGrouptoapplocalComputeSg233889388100EAABA346"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/LB/PublicListener/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainLBPublicListenerB65B7320"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainTaskDefTaskRole5EAE7692"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainTaskDefExecutionRoleCF3B2F72"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/LB/SecurityGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicLBSecurityGroupEDB35E7B"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/LB/SecurityGroup/to applocalComputeSg23388938:8101": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicLBSecurityGrouptoapplocalComputeSg233889388101DD9F7B67"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/LB/PublicListener/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicLBPublicListenerC10F971F"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicTaskDefTaskRole3AC79671"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicTaskDefExecutionRole99C9309A"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/LB/PublicListener/ECSGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainLBPublicListenerECSGroup2CC96D70"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/TaskDef/TaskRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainTaskDefTaskRoleDefaultPolicy9004C4C0"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/TaskDef/web/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainTaskDefwebLogGroup3E303F82"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainTaskDefExecutionRoleDefaultPolicy8F488161"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/Service/TaskCount/Target/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainServiceTaskCountTargetF1E8DB2D"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.autoScaleTaskCount in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:707:65)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/LB/PublicListener/ECSGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicLBPublicListenerECSGroup97E71F7B"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/TaskDef/TaskRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicTaskDefTaskRoleDefaultPolicy69C9199D"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/TaskDef/web/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicTaskDefwebLogGroupCDF444F9"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicTaskDefExecutionRoleDefaultPolicy10D88E1E"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/Service/TaskCount/Target/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicServiceTaskCountTarget07F6E661"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.autoScaleTaskCount in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:707:65)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+      ]
+    }
+  ],
+  "/app-local/Svc-main/Service/TaskCount/Target/Cpu/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcmainServiceTaskCountTargetCpu0C5FE7F7"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...ScalableTaskCount.scaleOnCpuUtilization in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:708:49)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)"
+      ]
+    }
+  ],
+  "/app-local/Svc-public/Service/TaskCount/Target/Cpu/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SvcpublicServiceTaskCountTargetCpuD63103FA"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...ScalableTaskCount.scaleOnCpuUtilization in aws-cdk-lib...",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:708:49)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "Array.forEach (:)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)"
+      ]
+    }
+  ]
+}

@@ -109,6 +109,7 @@ export function TelephoneInput( props : TelephoneInput.Props ) : JSX.Element
                         size        = "small"
                         value       = { phone }
                         autoFocus   = { props.autoFocus ?? false }
+                        autoComplete= { props.autoComplete }
                         disabled    = { props.disabled !== undefined ? props.disabled : false }
                         fullWidth   = { props.fullWidth ?? false }
                         sx          = { { width : props.fullWidth ? "100%" : ( props.sx ? props.sx.width : undefined ), minWidth : minWidth } }
@@ -126,6 +127,7 @@ export namespace TelephoneInput
         value           : string;
         shortLongToggle? : boolean;
         autoFocus?      : boolean;
+        autoComplete?   : string;
         disabled?       : boolean;
         fullWidth?      : boolean;
         minWidth?       : number | string;

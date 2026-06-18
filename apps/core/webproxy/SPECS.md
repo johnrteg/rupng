@@ -22,6 +22,20 @@ proxy always runs locally.
 > from S3) **+ API Gateway** (routes `/<service>/*` by prefix to ECS/Lambda). `webproxy` exists only to
 > **emulate that edge locally**, so a dev gets prod-like single-origin behavior without deploying anything.
 
+## Status — possibly superseded by the Vite dev server *(no full build-out)*
+
+**Vite's `server.proxy`** already gives **single-origin dev** (proxy API + WS to an upstream) with HMR — which
+is most of what webproxy does. **Decision pending:** keep webproxy only if it does something Vite's proxy can't
+(serving the **built `bin/`** prod-like, the Zendesk passthrough, multi-upstream switching); otherwise prefer
+Vite's proxy and retire it. Either way this is a **dev-only tool — not worth a full house-style spec.**
+
+> **⚠️ Must verify — multi-WebSocket proxying.** The web app now opens **≥2 sockets**: the notification WS
+> ([realtime](../realtime/SPECS.md)) **and** the collab **Y.js** socket ([collab](../collab/SPECS.md) — a
+> different protocol, likely a different upstream). The config below bridges a **single** `ws` path per upstream;
+> whatever serves dev (**Vite proxy *or* webproxy**) must handle **multiple concurrent WS upgrades** to different
+> upstreams. **Test this before relying on it for collab dev** — it's the one capability that could keep
+> webproxy alive if Vite's proxy can't cleanly multiplex both sockets.
+
 ## How it's built
 
 `ProxyService` extends the `@repo/services` **`Service`** base, which owns the Fastify instance, the

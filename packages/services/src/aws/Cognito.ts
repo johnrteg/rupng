@@ -1,15 +1,15 @@
 //
-// Cognito facade — user-pool admin/auth ops, keyed by cloud-spec LOGICAL user-pool keys.
+// Cognito facade — user-pool admin/auth ops, keyed by cloud-manifest LOGICAL user-pool keys.
 //
 import { CognitoIdentityProviderClient, AdminGetUserCommand } from "@aws-sdk/client-cognito-identity-provider";
 import type { AdminGetUserCommandOutput } from "@aws-sdk/client-cognito-identity-provider";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
- * Cognito facade — over `@aws-sdk/client-cognito-identity-provider`, addressed by cloud-spec
+ * Cognito facade — over `@aws-sdk/client-cognito-identity-provider`, addressed by cloud-manifest
  * LOGICAL user-pool keys (e.g. `"users"`).
  *
  * Kept intentionally **thin**: the full auth surface (sign-in / refresh, the TOTP MFA enroll
@@ -30,7 +30,7 @@ export class Cognito
     get client() : CognitoIdentityProviderClient { return this._client ??= ClientUtils.createClient( CognitoIdentityProviderClient ); }
 
     ////////////////////////////////////////////////////////////////////////////////
-    /** Resolve a cloud-spec logical user-pool key (e.g. `"users"`) to its physical pool id. */
+    /** Resolve a cloud-manifest logical user-pool key (e.g. `"users"`) to its physical pool id. */
     poolId( key : ResourceKey ) : string { return this.cloud.userPoolId( key ); }
 
     ////////////////////////////////////////////////////////////////////////////////

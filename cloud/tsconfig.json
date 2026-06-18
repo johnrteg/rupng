@@ -1,8 +1,11 @@
 {
     "extends": "@repo/tsconfig/base.json",
     "compilerOptions": {
-        "outDir": "./bin",
+        "outDir": "./dist",
+        // Bundler resolution (what tsx/CDK use at runtime) so tsc reads each service package's
+        // `exports` map — lets `import { manifest } from "<svc>/manifest"` resolve, like app/manifest.
+        "moduleResolution": "Bundler",
         "types": ["vitest/globals", "node"]
     },
-    "include": ["bin/**/*", "lib/**/*", "test/**/*"]
+    "include": ["src/**/*", "test/**/*"]
 }
