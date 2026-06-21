@@ -144,7 +144,7 @@ export function ProxyPanel()
                         {envs.map( ( c ) => <MenuItem key={c} value={c}>{c}</MenuItem> )}
                     </Select>
                 </Tooltip>
-                {env === "production" && <Chip size="small" color="error" label="LIVE" />}
+                {env === "production" && <Chip size="small" color="warning" label="LIVE" />}
                 <Tooltip title="Edge listen port (the browser connects here)">
                     <TextField size="small" label="port" type="number" value={port}
                                onChange={( e ) => changePort( parseInt( e.target.value ) || PROXY_DEFAULT_PORT )}
