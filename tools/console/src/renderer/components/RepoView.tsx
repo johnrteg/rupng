@@ -122,6 +122,7 @@ export function RepoView()
     const intentsReady : boolean = needsIntent.every( ( a ) => intents[ a.path ] !== undefined );
     // staging: root contributes its explicit files (not "."); other areas stage by directory
     const stagePaths : string[] = ( status?.areas ?? [] ).filter( ( a ) => testSel.has( a.path ) ).flatMap( ( a ) => a.kind === "root" ? a.files : [ a.path ] );
+    const hasChanges : boolean = ( status?.areas ?? [] ).length > 0;
 
     const isMain : boolean = targetBranch === "main" || targetBranch === "master";
     const canCommit : boolean = testsPassed && intentsReady && message.trim() !== "" && targetBranch.trim() !== "" && !busy;
@@ -362,31 +363,35 @@ export function RepoView()
                                 );
                             } )}
 
-                            {/* test gate */}
+                            {/* test gate — only "Test all" when there's nothing to check in */}
                             <Box sx={{ mt: 2, pt: 1.5, borderTop: "1px solid", borderColor: "divider" }}>
                                 <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1, flexWrap: "wrap" }}>
-                                    <Button variant="contained" startIcon={<ScienceIcon />} disabled={busy || testSel.size === 0} onClick={() => runTests( [ ...testSel ] )}>Test selected ({testSel.size})</Button>
+                                    {hasChanges && <Button variant="contained" startIcon={<ScienceIcon />} disabled={busy || testSel.size === 0} onClick={() => runTests( [ ...testSel ] )}>Test selected ({testSel.size})</Button>}
                                     <Button variant="outlined" startIcon={<ScienceIcon />} disabled={busy} onClick={() => runTests( [] )}>Test all</Button>
-                                    <Chip size="small" variant="outlined" color={testsPassed ? "success" : "default"} label={testsPassed ? "tests passed" : "tests required"} />
+                                    {hasChanges && <Chip size="small" variant="outlined" color={testsPassed ? "success" : "default"} label={testsPassed ? "tests passed" : "tests required"} />}
                                 </Box>
 
-                                {/* commit / push / PR */}
-                                <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
-                                    <Autocomplete freeSolo options={branches.branches} inputValue={targetBranch} onInputChange={( _e, v ) => setTargetBranch( v )}
-                                                  sx={{ width: 200 }} renderInput={( p ) => <TextField {...p} size="small" label="branch" />} />
-                                    <TextField size="small" fullWidth placeholder="commit message / PR title" value={message} onChange={( e ) => setMessage( e.target.value )} disabled={busy} />
-                                </Box>
-                                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                                    <Tooltip title={!testsPassed ? "Run tests first" : !intentsReady ? "Choose a version bump for every checked area" : `Commit & push to ${targetBranch || "?"}`}>
-                                        <span><Button variant="contained" startIcon={<UploadIcon />} disabled={!canCommit} onClick={() => void commitPush()}>Check-In</Button></span>
-                                    </Tooltip>
-                                    <Tooltip title={isMain ? "PRs are for non-default branches" : !testsPassed ? "Run tests first" : !intentsReady ? "Choose a version bump for every checked area" : "Commit, push & open a PR"}>
-                                        <span><Button variant="contained" color="success" startIcon={<MergeIcon />} disabled={!canCommit || isMain} onClick={() => void createPR()}>Create PR</Button></span>
-                                    </Tooltip>
-                                </Box>
-                                <Typography variant="caption" sx={{ color: "text.disabled", display: "block", mt: 0.5 }}>
-                                    Version bumps are an <b>intent</b> — applied only on commit. Tests must pass and every checked area needs a bump selected. Push to <b>{targetBranch || "…"}</b> (type a new name to branch), or open a PR from a non-default branch.
-                                </Typography>
+                                {hasChanges && (
+                                    <>
+                                        {/* commit / push / PR */}
+                                        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
+                                            <Autocomplete freeSolo options={branches.branches} inputValue={targetBranch} onInputChange={( _e, v ) => setTargetBranch( v )}
+                                                          sx={{ width: 200 }} renderInput={( p ) => <TextField {...p} size="small" label="branch" />} />
+                                            <TextField size="small" fullWidth placeholder="commit message / PR title" value={message} onChange={( e ) => setMessage( e.target.value )} disabled={busy} />
+                                        </Box>
+                                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                                            <Tooltip title={!testsPassed ? "Run tests first" : !intentsReady ? "Choose a version bump for every checked area" : `Commit & push to ${targetBranch || "?"}`}>
+                                                <span><Button variant="contained" startIcon={<UploadIcon />} disabled={!canCommit} onClick={() => void commitPush()}>Check-In</Button></span>
+                                            </Tooltip>
+                                            <Tooltip title={isMain ? "PRs are for non-default branches" : !testsPassed ? "Run tests first" : !intentsReady ? "Choose a version bump for every checked area" : "Commit, push & open a PR"}>
+                                                <span><Button variant="contained" color="success" startIcon={<MergeIcon />} disabled={!canCommit || isMain} onClick={() => void createPR()}>Create PR</Button></span>
+                                            </Tooltip>
+                                        </Box>
+                                        <Typography variant="caption" sx={{ color: "text.disabled", display: "block", mt: 0.5 }}>
+                                            Version bumps are an <b>intent</b> — applied only on commit. Tests must pass and every checked area needs a bump selected. Push to <b>{targetBranch || "…"}</b> (type a new name to branch), or open a PR from a non-default branch.
+                                        </Typography>
+                                    </>
+                                )}
                             </Box>
                         </>
                     )}
