@@ -20,8 +20,10 @@ import DeleteSweepIcon from "@mui/icons-material/DeleteSweep";
 import ScienceIcon from "@mui/icons-material/Science";
 import MergeIcon from "@mui/icons-material/CallMerge";
 import UploadIcon from "@mui/icons-material/Upload";
+import UpgradeIcon from "@mui/icons-material/Upgrade";
+import SyncIcon from "@mui/icons-material/Sync";
 
-import { REPO_ID, type BumpKind, type ClaudeMode, type LogLine, type ProcState, type RepoArea, type RepoBranches, type RepoStatus } from "../../shared/types";
+import { REPO_ID, type BumpKind, type ClaudeMode, type LogLine, type NpmOutdated, type ProcState, type RepoArea, type RepoBranches, type RepoStatus, type VersionConflict } from "../../shared/types";
 import { api } from "../api";
 import { MONO } from "../theme";
 import { LogView } from "./LogView";
@@ -35,6 +37,21 @@ import { ClaudePanel } from "./ClaudePanel";
 //
 
 const KIND_COLOR : Record<RepoArea[ "kind" ], string> = { service: "#3fb950", package: "#58c4ff", cloud: "#b07cff", console: "#d29922", root: "#8b949e" };
+
+type Delta = "patch" | "minor" | "major" | "same";
+const DELTA_COLOR : Record<Delta, string> = { patch: "#3fb950", minor: "#d29922", major: "#f85149", same: "#6e7681" };
+
+/** Which semver segment changed between current and latest — patch (green) / minor (yellow) / major (red). */
+function deltaKind( current : string, latest : string ) : Delta
+{
+    const c : RegExpMatchArray | null = current.match( /(\d+)\.(\d+)\.(\d+)/ );
+    const l : RegExpMatchArray | null = latest.match( /(\d+)\.(\d+)\.(\d+)/ );
+    if ( !c || !l ) return "same";
+    if ( c[ 1 ] !== l[ 1 ] ) return "major";
+    if ( c[ 2 ] !== l[ 2 ] ) return "minor";
+    if ( c[ 3 ] !== l[ 3 ] ) return "patch";
+    return "same";
+}
 
 /** Project a semver core (x.y.z) for a bump — for the intent display "v1.0.0 → v1.1.0". */
 function projectVersion( v : string, kind : BumpKind ) : string
@@ -50,7 +67,13 @@ function projectVersion( v : string, kind : BumpKind ) : string
 
 export function RepoView()
 {
-    const [ sub, setSub ]           = useState<"checkout" | "checkin">( "checkout" );
+    const [ sub, setSub ]           = useState<"checkout" | "checkin" | "updates" | "sync">( "checkout" );
+    const [ outdated, setOutdated ] = useState<NpmOutdated[] | null>( null );
+    const [ depSel, setDepSel ]     = useState<Set<string>>( new Set() );
+    const [ checking, setChecking ] = useState<boolean>( false );
+    const [ conflicts2, setConflicts2 ] = useState<VersionConflict[] | null>( null );
+    const [ syncSel, setSyncSel ]   = useState<Set<string>>( new Set() );
+    const [ scanning, setScanning ] = useState<boolean>( false );
     const [ status, setStatus ]     = useState<RepoStatus | null>( null );
     const [ branches, setBranches ] = useState<RepoBranches>( { current: "", branches: [] } );
     const [ lines, setLines ]       = useState<LogLine[]>( [] );
@@ -129,15 +152,55 @@ export function RepoView()
         void api.claudeSend( REPO_ID, `Resolve the current git merge conflicts in this repository. Conflicted files: ${files}. Edit each file to a correct merged result (no conflict markers), explain the choices, and stage them with git add.` );
     };
 
+    const checkUpdates = async () : Promise<void> =>
+    {
+        setChecking( true );
+        try { const r = await api.repoOutdated(); setOutdated( r.deps ); setDepSel( new Set() ); }
+        finally { setChecking( false ); }
+    };
+    const toggleDep = ( name : string ) : void => setDepSel( ( prev ) => { const n = new Set( prev ); n.has( name ) ? n.delete( name ) : n.add( name ); return n; } );
+    const depNames : string[] = [ ...new Set( ( outdated ?? [] ).map( ( d ) => d.name ) ) ];
+    const selectByDelta = ( kind : Delta ) : void => setDepSel( ( prev ) =>
+    {
+        const n : Set<string> = new Set( prev );
+        for ( const d of outdated ?? [] ) if ( deltaKind( d.current, d.latest ) === kind ) n.add( d.name );
+        return n;
+    } );
+    const updateDeps = ( names : string[] ) : void =>
+    {
+        if ( names.length === 0 ) return;
+        if ( window.confirm( `Update ${names.length} package(s) to latest, then wipe node_modules, npm install + rebuild?\n\n${names.join( ", " )}` ) )
+            void api.repoUpdateDeps( names ).then( () => checkUpdates() );
+    };
+
+    const clearLog = () : void => { void api.clearLog( REPO_ID, "runtime" ).then( () => setLines( [] ) ); };
+
+    const scanConflicts = async () : Promise<void> =>
+    {
+        setScanning( true );
+        try { const r = await api.repoVersionConflicts(); setConflicts2( r.conflicts ); setSyncSel( new Set() ); }
+        finally { setScanning( false ); }
+    };
+    const toggleSync = ( name : string ) : void => setSyncSel( ( prev ) => { const n = new Set( prev ); n.has( name ) ? n.delete( name ) : n.add( name ); return n; } );
+    const conflictNames : string[] = ( conflicts2 ?? [] ).map( ( c ) => c.name );
+    const syncVersions = ( names : string[] ) : void =>
+    {
+        if ( names.length === 0 ) return;
+        if ( window.confirm( `Align ${names.length} library(ies) to their newest version across all package.json, then npm install?\n\n${names.join( ", " )}` ) )
+            void api.repoSyncVersions( names ).then( () => scanConflicts() );
+    };
+
     const conflicts : string[] = status?.conflicts ?? [];
 
     return (
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
             {/* sub-tabs + branch */}
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
-                <Tabs value={sub} onChange={( _e, v : "checkout" | "checkin" ) => setSub( v )} sx={{ minHeight: 44, "& .MuiTab-root": { minHeight: 44 } }}>
+                <Tabs value={sub} onChange={( _e, v : "checkout" | "checkin" | "updates" | "sync" ) => setSub( v )} sx={{ minHeight: 44, "& .MuiTab-root": { minHeight: 44 } }}>
                     <Tab value="checkout" icon={<DownloadIcon fontSize="small" />} iconPosition="start" label="Check out" />
                     <Tab value="checkin" icon={<MergeIcon fontSize="small" />} iconPosition="start" label="Check in" />
+                    <Tab value="updates" icon={<UpgradeIcon fontSize="small" />} iconPosition="start" label="Updates" />
+                    <Tab value="sync" icon={<SyncIcon fontSize="small" />} iconPosition="start" label="Sync Version" />
                 </Tabs>
                 <Box sx={{ flexGrow: 1 }} />
                 {branches.current && <Chip size="small" variant="outlined" label={`on ${branches.current}`} sx={{ fontFamily: MONO }} />}
@@ -148,7 +211,89 @@ export function RepoView()
             <Box sx={{ display: "flex", flexGrow: 1, minHeight: 0 }}>
                 {/* left: the active sub-tab's controls */}
                 <Box sx={{ width: "48%", minWidth: 420, flexShrink: 0, overflow: "auto", p: 1.5, borderRight: "1px solid", borderColor: "divider" }}>
-                    {sub === "checkout" ? (
+                    {sub === "sync" ? (
+                        <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+                          <Box sx={{ flexShrink: 0 }}>
+                            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1.5, flexWrap: "wrap" }}>
+                                <Button variant="contained" startIcon={scanning ? <CircularProgress size={14} /> : <SyncIcon />} disabled={scanning || busy} onClick={() => void scanConflicts()}>Scan for mismatches</Button>
+                                <Button variant="outlined" disabled={busy || syncSel.size === 0} onClick={() => syncVersions( [ ...syncSel ] )}>Sync selected ({syncSel.size})</Button>
+                                <Button variant="outlined" color="warning" disabled={busy || conflictNames.length === 0} onClick={() => syncVersions( conflictNames )}>Sync all</Button>
+                            </Box>
+                            <Typography variant="caption" sx={{ color: "text.disabled", display: "block", mb: 1 }}>
+                                Libraries declared at different versions across package.json files. Sync rewrites the older ones to the <b>newest</b> found, then npm install.
+                            </Typography>
+                            {scanning && <Typography variant="caption" sx={{ color: "text.secondary" }}>scanning package.json files…</Typography>}
+                            {conflicts2 && conflicts2.length === 0 && <Typography variant="caption" sx={{ color: "success.main" }}>No version mismatches — every library is on one version.</Typography>}
+                          </Box>
+
+                          {/* only the mismatch list scrolls */}
+                          <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "auto" }}>
+                            {conflicts2 && conflicts2.map( ( c ) => (
+                                <Box key={c.name} sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, mb: 0.5, p: 0.5, pl: 1, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
+                                    <Checkbox size="small" checked={syncSel.has( c.name )} onChange={() => toggleSync( c.name )} sx={{ p: 0.5 }} />
+                                    <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                                        <Typography variant="body2" sx={{ fontWeight: 600 }}>{c.name} <Box component="span" sx={{ color: "success.main", fontFamily: MONO, fontWeight: 700 }}>→ {c.newest}</Box></Typography>
+                                        {c.occurrences.map( ( o, i ) => (
+                                            <Typography key={`${o.area}-${i}`} variant="caption" sx={{ display: "block", fontFamily: MONO, color: o.version === c.newest ? "text.disabled" : "warning.main" }}>
+                                                {o.area}: {o.version}{o.dev ? " (dev)" : ""}{o.version === c.newest ? "  ✓" : ""}
+                                            </Typography>
+                                        ) )}
+                                    </Box>
+                                </Box>
+                            ) )}
+                          </Box>
+                        </Box>
+                    ) : sub === "updates" ? (
+                        <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+                          <Box sx={{ flexShrink: 0 }}>
+                            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1.5, flexWrap: "wrap" }}>
+                                <Button variant="contained" startIcon={checking ? <CircularProgress size={14} /> : <UpgradeIcon />} disabled={checking || busy} onClick={() => void checkUpdates()}>Check for updates</Button>
+                                <Button variant="outlined" disabled={busy || depSel.size === 0} onClick={() => updateDeps( [ ...depSel ] )}>Update selected ({depSel.size})</Button>
+                                <Button variant="outlined" color="warning" disabled={busy || depNames.length === 0} onClick={() => updateDeps( depNames )}>Update all</Button>
+                            </Box>
+                            <Typography variant="caption" sx={{ color: "text.disabled", display: "block", mb: 1 }}>
+                                Update bumps the selected package.json deps to <b>latest</b>, wipes node_modules, reinstalls + rebuilds. Use the chat (lower right) if the build breaks.
+                            </Typography>
+
+                            {checking && <Typography variant="caption" sx={{ color: "text.secondary" }}>querying the npm registry…</Typography>}
+                            {outdated && outdated.length === 0 && <Typography variant="caption" sx={{ color: "success.main" }}>All dependencies are up to date.</Typography>}
+
+                            {outdated && outdated.length > 0 && (
+                                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 1, flexWrap: "wrap" }}>
+                                    <Typography variant="caption" sx={{ color: "text.disabled", mr: 0.5 }}>select:</Typography>
+                                    <Button size="small" sx={{ minWidth: 0 }} onClick={() => setDepSel( new Set( depNames ) )}>all</Button>
+                                    <Button size="small" sx={{ minWidth: 0 }} onClick={() => setDepSel( new Set() )}>none</Button>
+                                    <Button size="small" sx={{ minWidth: 0, color: DELTA_COLOR.patch }} onClick={() => selectByDelta( "patch" )}>patch</Button>
+                                    <Button size="small" sx={{ minWidth: 0, color: DELTA_COLOR.minor }} onClick={() => selectByDelta( "minor" )}>minor</Button>
+                                    <Button size="small" sx={{ minWidth: 0, color: DELTA_COLOR.major }} onClick={() => selectByDelta( "major" )}>major</Button>
+                                </Box>
+                            )}
+                          </Box>
+
+                          {/* only the dependency list scrolls */}
+                          <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "auto" }}>
+                            {outdated && outdated.map( ( d, i ) =>
+                            {
+                                const kind : Delta = deltaKind( d.current, d.latest );
+                                const color : string = DELTA_COLOR[ kind ];
+                                return (
+                                    <Box key={`${d.name}-${d.dependent}-${i}`} sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5, p: 0.5, pl: 1, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
+                                        <Checkbox size="small" checked={depSel.has( d.name )} onChange={() => toggleDep( d.name )} sx={{ p: 0.5 }} />
+                                        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                                            <Typography variant="body2" sx={{ fontWeight: 600 }}>{d.name} <Box component="span" sx={{ color: "text.disabled", fontFamily: MONO, fontWeight: 400 }}>{d.dependent}</Box></Typography>
+                                            <Typography variant="caption" sx={{ fontFamily: MONO }}>
+                                                <Box component="span" sx={{ color: "text.disabled" }}>{d.current} → </Box>
+                                                <Box component="span" sx={{ color, fontWeight: 700 }}>{d.latest}</Box>
+                                                {d.wanted && d.wanted !== d.latest && <Box component="span" sx={{ color: "text.disabled" }}>  (wanted {d.wanted})</Box>}
+                                            </Typography>
+                                        </Box>
+                                        {kind !== "same" && <Chip size="small" variant="outlined" label={kind} sx={{ color, borderColor: color, fontWeight: 600 }} />}
+                                    </Box>
+                                );
+                            } )}
+                          </Box>
+                        </Box>
+                    ) : sub === "checkout" ? (
                         <>
                             <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1.5, flexWrap: "wrap" }}>
                                 <Tooltip title="Branch to pull from">
@@ -180,10 +325,13 @@ export function RepoView()
                         </>
                     ) : (
                         <>
+                            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
+                                <Typography variant="caption" sx={{ color: "text.disabled", flexGrow: 1 }}>
+                                    Changed areas (checked = included in tests):
+                                </Typography>
+                                <Button size="small" variant="outlined" startIcon={busy ? <CircularProgress size={13} /> : <RefreshIcon fontSize="small" />} disabled={busy} onClick={() => void refresh()}>Refresh</Button>
+                            </Box>
                             {status?.clean && <Typography variant="body2" sx={{ color: "text.secondary", mb: 1 }}>Working tree is clean — nothing to check in.</Typography>}
-                            <Typography variant="caption" sx={{ color: "text.disabled", display: "block", mb: 0.75 }}>
-                                Changed areas (checked = included in tests):
-                            </Typography>
                             {( status?.areas ?? [] ).map( ( a ) =>
                             {
                                 const checked : boolean = testSel.has( a.path );
@@ -246,7 +394,7 @@ export function RepoView()
                 {/* right: git/npm console (top) + Claude chat (bottom) for resolving errors/conflicts */}
                 <Box sx={{ flexGrow: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
                     <Box sx={{ flexGrow: 1, minHeight: 0 }}>
-                        <LogView lines={lines} empty="git / npm output appears here" hideId />
+                        <LogView lines={lines} empty="git / npm output appears here" hideId onClear={clearLog} />
                     </Box>
                     <Box sx={{ height: "42%", minHeight: 220, flexShrink: 0, borderTop: "1px solid", borderColor: "divider" }}>
                         <ClaudePanel service={REPO_ID} mode={claudeMode} onMode={setClaudeMode} />

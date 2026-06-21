@@ -5,8 +5,10 @@ import InputBase from "@mui/material/InputBase";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
+import IconButton from "@mui/material/IconButton";
 import SearchIcon from "@mui/icons-material/Search";
 import VerticalAlignBottomIcon from "@mui/icons-material/VerticalAlignBottom";
+import ClearAllIcon from "@mui/icons-material/ClearAll";
 
 import type { LogLine } from "../../shared/types";
 import { MONO } from "../theme";
@@ -144,7 +146,7 @@ export function LogRow( { line, hideId } : { line : LogLine; hideId? : boolean }
 // A self-contained log pane: text filter + level filter (shown when structured records are present) +
 // autoscroll, over the formatted rows. Hand it a growing `lines` array; it handles the rest.
 //
-export function LogView( { lines, empty = "no output", hideId } : { lines : LogLine[]; empty? : string; hideId? : boolean } )
+export function LogView( { lines, empty = "no output", hideId, onClear } : { lines : LogLine[]; empty? : string; hideId? : boolean; onClear? : () => void } )
 {
     const [ filter, setFilter ]           = useState<string>( "" );
     const [ levelFilter, setLevelFilter ] = useState<string[]>( [] );
@@ -191,6 +193,7 @@ export function LogView( { lines, empty = "no output", hideId } : { lines : LogL
                         <VerticalAlignBottomIcon fontSize="small" />
                     </ToggleButton>
                 </Tooltip>
+                {onClear && <Tooltip title="Clear the log"><IconButton size="small" onClick={onClear}><ClearAllIcon fontSize="small" /></IconButton></Tooltip>}
             </Box>
 
             {/* body */}

@@ -1,8 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 
-import type { BumpKind, RepoArea, RepoAreaKind, RepoStatus } from "../shared/types";
+import type { BumpKind, NpmOutdated, RepoArea, RepoAreaKind, RepoStatus, VersionConflict, VersionOccurrence } from "../shared/types";
 import { REPO_ID } from "../shared/types";
 import { REPO_ROOT } from "./paths";
 import { logStore } from "./logStore";
@@ -155,6 +155,159 @@ export async function reinstall() : Promise<number>
 }
 
 /**
+ * `npm outdated` across the workspaces — installed vs available. Async (hits the registry, can be
+ * slow). npm exits 1 when anything is outdated but still prints JSON to stdout, so we parse stdout
+ * regardless of exit code. Each package may have one entry or several (one per dependent).
+ */
+export function npmOutdated() : Promise<{ deps : NpmOutdated[]; error? : string }>
+{
+    return new Promise( ( resolve ) =>
+    {
+        execFile( "npm", [ "outdated", "--json", "-l" ], { cwd: REPO_ROOT, maxBuffer: 32 * 1024 * 1024 }, ( _err, stdout ) =>
+        {
+            const text : string = ( stdout ?? "" ).toString().trim();
+            if ( text === "" ) { resolve( { deps: [] } ); return; }
+            try
+            {
+                const json = JSON.parse( text ) as Record<string, unknown>;
+                const deps : NpmOutdated[] = [];
+                for ( const [ name, info ] of Object.entries( json ) )
+                    for ( const e of ( Array.isArray( info ) ? info : [ info ] ) as Array<Record<string, string>> )
+                        deps.push( { name, current: e.current ?? "—", wanted: e.wanted ?? "", latest: e.latest ?? "", dependent: e.dependent ?? "" } );
+                deps.sort( ( a, b ) => a.name.localeCompare( b.name ) );
+                resolve( { deps } );
+            }
+            catch ( err ) { resolve( { deps: [], error: ( err as Error ).message } ); }
+        } );
+    } );
+}
+
+// ── cross-workspace version reconciliation (Sync Version) ─────────────────────────────────────────
+
+function isSemver( v : string ) : boolean { return /^\d+\.\d+\.\d+/.test( v ); }
+function semverCmp( a : string, b : string ) : number
+{
+    const pa = a.match( /(\d+)\.(\d+)\.(\d+)/ ), pb = b.match( /(\d+)\.(\d+)\.(\d+)/ );
+    if ( !pa || !pb ) return 0;
+    for ( let i = 1; i <= 3; i++ ) { const d : number = Number( pa[ i ] ) - Number( pb[ i ] ); if ( d !== 0 ) return d; }
+    return 0;
+}
+function newestOf( versions : string[] ) : string { return versions.filter( isSemver ).reduce( ( a, b ) => ( semverCmp( a, b ) >= 0 ? a : b ) ); }
+
+/** Every workspace package.json (root, cloud, each tools, packages and apps subdir). */
+function packageFiles() : string[] {
+    const files : string[] = [];
+    const add = ( dir : string ) : void => { const p = join( dir, "package.json" ); if ( existsSync( p ) ) files.push( p ); };
+    add( REPO_ROOT );
+    add( join( REPO_ROOT, "cloud" ) );
+    for ( const t of safeDirs( join( REPO_ROOT, "tools" ) ) ) add( t );
+    for ( const p of safeDirs( join( REPO_ROOT, "packages" ) ) ) add( p );
+    for ( const grp of safeDirs( join( REPO_ROOT, "apps" ) ) ) for ( const svc of safeDirs( grp ) ) add( svc );
+    return files;
+}
+
+/** name → its occurrences (area + version + dev) across every package.json. */
+function scanDeps() : Map<string, VersionOccurrence[]> {
+    const map : Map<string, VersionOccurrence[]> = new Map();
+    for ( const file of packageFiles() )
+    {
+        const area : string = relative( REPO_ROOT, dirname( file ) ) || ".";
+        let pkg : Record<string, Record<string, string>>;
+        try { pkg = JSON.parse( readFileSync( file, "utf8" ) ); } catch { continue; }
+        for ( const [ block, dev ] of [ [ "dependencies", false ], [ "devDependencies", true ] ] as const )
+            for ( const [ name, version ] of Object.entries( pkg[ block ] ?? {} ) )
+            {
+                if ( typeof version !== "string" || !isSemver( version ) ) continue;
+                const arr : VersionOccurrence[] = map.get( name ) ?? [];
+                arr.push( { area, version, dev } );
+                map.set( name, arr );
+            }
+    }
+    return map;
+}
+
+/** Libraries declared at more than one version across the workspaces (newest = the sync target). */
+export function versionConflicts() : { conflicts : VersionConflict[]; error? : string } {
+    try
+    {
+        const map : Map<string, VersionOccurrence[]> = scanDeps();
+        const conflicts : VersionConflict[] = [];
+        for ( const [ name, occ ] of map )
+        {
+            const distinctVersions : Set<string> = new Set( occ.map( ( o ) => o.version ) );
+            const distinctAreas : Set<string> = new Set( occ.map( ( o ) => o.area ) );
+            // only libraries used in MORE THAN ONE package, and not already on the same version
+            if ( distinctAreas.size > 1 && distinctVersions.size > 1 )
+                conflicts.push( { name, newest: newestOf( occ.map( ( o ) => o.version ) ), occurrences: occ.sort( ( a, b ) => semverCmp( a.version, b.version ) ) } );
+        }
+        conflicts.sort( ( a, b ) => a.name.localeCompare( b.name ) );
+        return { conflicts };
+    }
+    catch ( err ) { return { conflicts: [], error: ( err as Error ).message }; }
+}
+
+/** Set a dependency's version in one package.json (raw-text edit, preserves formatting). */
+function setDepVersion( file : string, name : string, version : string ) : boolean {
+    const text : string = readFileSync( file, "utf8" );
+    const esc : string = name.replace( /[.*+?^${}()|[\]\\]/g, "\\$&" );
+    const re = new RegExp( `("${esc}"\\s*:\\s*")[^"]*(")`, "g" );
+    const next : string = text.replace( re, `$1${version}$2` );
+    if ( next === text ) return false;
+    writeFileSync( file, next );
+    return true;
+}
+
+/** Align each named library to its newest version across all package.json, then `npm install`. */
+export async function syncVersions( names : string[] ) : Promise<number> {
+    const map : Map<string, VersionOccurrence[]> = scanDeps();
+    let changed : number = 0;
+    for ( const name of names )
+    {
+        const occ : VersionOccurrence[] | undefined = map.get( name );
+        if ( !occ || occ.length === 0 ) continue;
+        const newest : string = newestOf( occ.map( ( o ) => o.version ) );
+        for ( const file of packageFiles() )
+        {
+            const area : string = relative( REPO_ROOT, dirname( file ) ) || ".";
+            if ( occ.some( ( o ) => o.area === area && o.version !== newest ) && setDepVersion( file, name, newest ) )
+            { changed += 1; logStore.sys( REPO_ID, "runtime", `⇧ ${area}: ${name} → ${newest}` ); }
+        }
+    }
+    if ( changed === 0 ) { logStore.sys( REPO_ID, "runtime", "nothing to sync — versions already aligned" ); return 0; }
+    logStore.sys( REPO_ID, "runtime", `aligned ${changed} dependency declaration(s) — wiping node_modules, reinstalling + rebuilding…` );
+    return reinstall();
+}
+
+/**
+ * Update the named packages to their latest version, then clean-reinstall + rebuild.
+ *
+ * We write `latest` straight into whichever package.json DECLARES the dep (a dep is usually owned by
+ * a workspace like packages/services, not the root — so `npm install pkg@latest` at the root is a
+ * no-op against a pinned workspace version). Then `reinstall()` installs the new versions.
+ */
+export async function updateDeps( names : string[] ) : Promise<number>
+{
+    if ( names.length > 0 )
+    {
+        const { deps } = await npmOutdated();
+        const latest : Map<string, string> = new Map( deps.map( ( d ) => [ d.name, d.latest ] ) );
+        let changed : number = 0;
+        for ( const file of packageFiles() )
+        {
+            const area : string = relative( REPO_ROOT, dirname( file ) ) || ".";
+            for ( const name of names )
+            {
+                const v : string | undefined = latest.get( name );
+                if ( v && isSemver( v ) && setDepVersion( file, name, v ) )
+                { changed += 1; logStore.sys( REPO_ID, "runtime", `⇧ ${area}: ${name} → ${v}` ); }
+            }
+        }
+        logStore.sys( REPO_ID, "runtime", `updated ${changed} dependency declaration(s) to latest — reinstalling…` );
+    }
+    return reinstall();
+}
+
+/**
  * Run unit tests once (vitest run). With area paths → just those areas' tests (per-area); empty →
  * the whole repo (all). `--passWithNoTests` so an impacted area without tests doesn't fail the gate.
  */
@@ -198,11 +351,12 @@ export async function createPR( branch : string, title : string, paths : string[
 /** Locate node_modules dirs at the root + each workspace (one level deep — not nested ones). */
 function nodeModulesDirs() : string[]
 {
+    // NOTE: deliberately excludes tools/* (the console itself) — it isn't a root workspace, so a root
+    // `npm install` wouldn't restore it, and wiping the running app's own deps is self-destructive.
     const out : string[] = [];
     const add = ( dir : string ) : void => { const nm = join( dir, "node_modules" ); if ( existsSync( nm ) ) out.push( nm ); };
     add( REPO_ROOT );
     add( join( REPO_ROOT, "cloud" ) );
-    for ( const t of safeDirs( join( REPO_ROOT, "tools" ) ) ) add( t );
     for ( const p of safeDirs( join( REPO_ROOT, "packages" ) ) ) add( p );
     for ( const grp of safeDirs( join( REPO_ROOT, "apps" ) ) ) for ( const svc of safeDirs( grp ) ) add( svc );
     return out;

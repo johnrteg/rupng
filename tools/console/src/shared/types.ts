@@ -89,6 +89,21 @@ export interface RepoStatus
 /** Local + remote branches (origin/ stripped, de-duped) and the current one. */
 export interface RepoBranches { current : string; branches : string[]; }
 
+/** An outdated npm dependency (from `npm outdated`) — installed vs available. */
+export interface NpmOutdated
+{
+    name : string;
+    current : string;     // installed version
+    wanted : string;      // max satisfying the package.json range
+    latest : string;      // newest published
+    dependent : string;   // which workspace/package depends on it
+}
+
+/** One package.json declaring a dependency at a given version. */
+export interface VersionOccurrence { area : string; version : string; dev : boolean; }
+/** A library declared at >1 version across package.json files — the newest is the sync target. */
+export interface VersionConflict { name : string; newest : string; occurrences : VersionOccurrence[]; }
+
 /** One reverse-proxied upstream in the webproxy config (a path-prefix → target host). */
 export interface ProxyUpstream
 {
@@ -645,6 +660,10 @@ export const IPC =
     repoTest           : "repo:test",
     repoCommitPush     : "repo:commit-push",
     repoCreatePR       : "repo:create-pr",
+    repoOutdated       : "repo:outdated",
+    repoUpdateDeps     : "repo:update-deps",
+    repoVersionConflicts : "repo:version-conflicts",
+    repoSyncVersions   : "repo:sync-versions",
     watchSyncStart     : "web:watch-sync-start",
     watchSyncStop      : "web:watch-sync-stop",
     watchSyncState     : "web:watch-sync-state",
