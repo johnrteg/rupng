@@ -22,12 +22,6 @@ function git( args : string[] ) : string
 
 function currentBranch() : string { return git( [ "rev-parse", "--abbrev-ref", "HEAD" ] ).trim(); }
 
-function localBranchExists( branch : string ) : boolean
-{
-    try { git( [ "rev-parse", "--verify", "--quiet", `refs/heads/${branch}` ] ); return true; }
-    catch { return false; }
-}
-
 /** Local + remote branches (origin/ stripped, de-duped, current first) — for the pull/push selectors. */
 export function branches() : import("../shared/types").RepoBranches
 {
@@ -83,6 +77,7 @@ export function repoStatus() : RepoStatus
             if ( arrow >= 0 ) file = file.slice( arrow + 4 );
             file = file.replace( /^"|"$/g, "" );
             const a = areaFor( file );
+            if ( a.kind === "root" ) continue;   // loose repo-root files aren't a workspace; staging "." would over-add
             const existing : RepoArea | undefined = grouped.get( a.path );
             if ( existing ) existing.changed += 1;
             else grouped.set( a.path, { path: a.path, name: a.name, kind: a.kind, changed: 1,
@@ -170,27 +165,34 @@ export function test( areas : string[] = [] ) : Promise<number>
     return processManager.exec( REPO_ID, "runtime", "npx", [ "vitest", "run", "--passWithNoTests", ...areas ], REPO_ROOT );
 }
 
-/** Switch to `branch` (creating it from the current branch if new), stage everything, commit, push. */
-export async function commitPush( branch : string, message : string ) : Promise<number>
+/**
+ * Stage ONLY the selected area paths (so the commit is scoped to what was checked), commit on the
+ * CURRENT branch, and push to the target branch's ref on origin (`HEAD:<branch>` — creates it if new).
+ * We don't `git checkout` the target: that fails on a dirty tree. Committing where you are and
+ * pushing to the chosen ref is safe and needs no clean working tree.
+ */
+export async function commitPush( branch : string, message : string, paths : string[] = [] ) : Promise<number>
 {
-    if ( branch && branch !== currentBranch() )
-    {
-        const exists : boolean = localBranchExists( branch );
-        logStore.sys( REPO_ID, "runtime", `switching to ${branch}${exists ? "" : " (new branch)"}…` );
-        const co : number = await processManager.exec( REPO_ID, "runtime", "git", exists ? [ "checkout", branch ] : [ "checkout", "-b", branch ], REPO_ROOT );
-        if ( co !== 0 ) return co;
-    }
-    if ( await processManager.exec( REPO_ID, "runtime", "git", [ "add", "-A" ], REPO_ROOT ) !== 0 ) return 1;
+    const cur : string = currentBranch();
+    const add : string[] = paths.length > 0 ? [ "add", "--", ...paths ] : [ "add", "-A" ];
+    logStore.sys( REPO_ID, "runtime", `staging: ${paths.length > 0 ? paths.join( ", " ) : "all changes"}` );
+    if ( await processManager.exec( REPO_ID, "runtime", "git", add, REPO_ROOT ) !== 0 ) return 1;
     if ( await processManager.exec( REPO_ID, "runtime", "git", [ "commit", "-m", message ], REPO_ROOT ) !== 0 ) return 1;
-    return processManager.exec( REPO_ID, "runtime", "git", [ "push", "-u", "origin", branch || "HEAD" ], REPO_ROOT );
+
+    const cross : boolean = !!branch && branch !== cur;
+    if ( cross ) logStore.sys( REPO_ID, "runtime", `pushing ${cur} → origin/${branch}` );
+    const push : string[] = cross ? [ "push", "origin", `HEAD:${branch}` ] : [ "push", "-u", "origin", "HEAD" ];
+    return processManager.exec( REPO_ID, "runtime", "git", push, REPO_ROOT );
 }
 
-/** Commit + push to `branch`, then open a PR via the GitHub CLI. Renderer gates on passing tests. */
-export async function createPR( branch : string, title : string ) : Promise<number>
+/** Commit + push the selected paths, then open a PR (head = the pushed branch) via the GitHub CLI. */
+export async function createPR( branch : string, title : string, paths : string[] = [] ) : Promise<number>
 {
-    const code : number = await commitPush( branch, title );
+    const cur : string = currentBranch();
+    const code : number = await commitPush( branch, title, paths );
     if ( code !== 0 ) return code;
-    return processManager.exec( REPO_ID, "runtime", "gh", [ "pr", "create", "--fill", "--title", title ], REPO_ROOT );
+    const head : string[] = branch && branch !== cur ? [ "--head", branch ] : [];
+    return processManager.exec( REPO_ID, "runtime", "gh", [ "pr", "create", "--fill", "--title", title, ...head ], REPO_ROOT );
 }
 
 /** Locate node_modules dirs at the root + each workspace (one level deep — not nested ones). */

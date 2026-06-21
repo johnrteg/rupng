@@ -110,16 +110,18 @@ export function RepoView()
     const commitPush = async () : Promise<void> =>
     {
         if ( !canCommit ) return;
-        if ( !window.confirm( `Apply the selected version bumps, commit all changes, and push to "${targetBranch}"?` ) ) return;
+        const paths : string[] = [ ...testSel ];
+        if ( !window.confirm( `Apply version bumps, then stage + commit + push these to "${targetBranch}":\n\n${paths.join( "\n" )}` ) ) return;
         await applyIntents();
-        await after( api.repoCommitPush( targetBranch.trim(), message.trim() ) );
+        await after( api.repoCommitPush( targetBranch.trim(), message.trim(), paths ) );
     };
     const createPR = async () : Promise<void> =>
     {
         if ( !canCommit || isMain ) return;
-        if ( !window.confirm( `Apply version bumps, commit, push to "${targetBranch}", and open a pull request:\n\n"${message}"` ) ) return;
+        const paths : string[] = [ ...testSel ];
+        if ( !window.confirm( `Apply version bumps, stage + commit + push these to "${targetBranch}", and open a PR:\n\n${paths.join( "\n" )}` ) ) return;
         await applyIntents();
-        await after( api.repoCreatePR( targetBranch.trim(), message.trim() ) );
+        await after( api.repoCreatePR( targetBranch.trim(), message.trim(), paths ) );
     };
     const askClaude = () : void =>
     {
@@ -172,12 +174,9 @@ export function RepoView()
                             ) : (
                                 <Typography variant="caption" sx={{ color: "success.main" }}>No merge conflicts.</Typography>
                             )}
-
-                            {conflicts.length > 0 && (
-                                <Box sx={{ height: 360, mt: 1, border: "1px solid", borderColor: "divider", borderRadius: 1.5, overflow: "hidden" }}>
-                                    <ClaudePanel service={REPO_ID} mode={claudeMode} onMode={setClaudeMode} />
-                                </Box>
-                            )}
+                            <Typography variant="caption" sx={{ color: "text.disabled", display: "block", mt: 1 }}>
+                                Use the chat (lower right) to have Claude resolve conflicts or explain errors.
+                            </Typography>
                         </>
                     ) : (
                         <>
@@ -230,7 +229,7 @@ export function RepoView()
                                 </Box>
                                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                                     <Tooltip title={!testsPassed ? "Run tests first" : !intentsReady ? "Choose a version bump for every checked area" : `Commit & push to ${targetBranch || "?"}`}>
-                                        <span><Button variant="contained" startIcon={<UploadIcon />} disabled={!canCommit} onClick={() => void commitPush()}>Commit &amp; push</Button></span>
+                                        <span><Button variant="contained" startIcon={<UploadIcon />} disabled={!canCommit} onClick={() => void commitPush()}>Check-In</Button></span>
                                     </Tooltip>
                                     <Tooltip title={isMain ? "PRs are for non-default branches" : !testsPassed ? "Run tests first" : !intentsReady ? "Choose a version bump for every checked area" : "Commit, push & open a PR"}>
                                         <span><Button variant="contained" color="success" startIcon={<MergeIcon />} disabled={!canCommit || isMain} onClick={() => void createPR()}>Create PR</Button></span>
@@ -244,9 +243,14 @@ export function RepoView()
                     )}
                 </Box>
 
-                {/* right: shared git/npm console */}
-                <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                    <LogView lines={lines} empty="git / npm output appears here" hideId />
+                {/* right: git/npm console (top) + Claude chat (bottom) for resolving errors/conflicts */}
+                <Box sx={{ flexGrow: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+                    <Box sx={{ flexGrow: 1, minHeight: 0 }}>
+                        <LogView lines={lines} empty="git / npm output appears here" hideId />
+                    </Box>
+                    <Box sx={{ height: "42%", minHeight: 220, flexShrink: 0, borderTop: "1px solid", borderColor: "divider" }}>
+                        <ClaudePanel service={REPO_ID} mode={claudeMode} onMode={setClaudeMode} />
+                    </Box>
                 </Box>
             </Box>
         </Box>
