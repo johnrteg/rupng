@@ -3,8 +3,8 @@
     {
       "type": "aws:cdk:creationStack",
       "data": [
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals, tsx..."
       ]
     }
@@ -17,10 +17,10 @@
     {
       "type": "aws:cdk:creationStack",
       "data": [
-        "PlatformStack.makeMsk (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:79:9)",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:53:46)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "PlatformStack.makeMsk (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:79:9)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:53:46)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals, tsx..."
       ]
     }
@@ -33,10 +33,10 @@
     {
       "type": "aws:cdk:creationStack",
       "data": [
-        "PlatformStack.makeSearch (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:100:49)",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:56:36)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "PlatformStack.makeSearch (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:100:49)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:56:36)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals, tsx..."
       ]
     }
@@ -49,10 +49,10 @@
     {
       "type": "aws:cdk:creationStack",
       "data": [
-        "PlatformStack.makeSearch (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:105:49)",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:56:36)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "PlatformStack.makeSearch (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:105:49)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:56:36)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals, tsx..."
       ]
     }
@@ -65,10 +65,10 @@
     {
       "type": "aws:cdk:creationStack",
       "data": [
-        "PlatformStack.makeSearch (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:110:52)",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:56:36)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "PlatformStack.makeSearch (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:110:52)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:56:36)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals, tsx..."
       ]
     }
@@ -81,10 +81,10 @@
     {
       "type": "aws:cdk:creationStack",
       "data": [
-        "PlatformStack.makeSearch (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:118:13)",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:56:36)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "PlatformStack.makeSearch (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:118:13)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:56:36)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals, tsx..."
       ]
     }
@@ -124,9 +124,9 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Vpc2 in aws-cdk-lib...",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:45:20)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:45:20)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals, tsx..."
       ]
     }
@@ -140,9 +140,9 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Vpc2 in aws-cdk-lib...",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:45:20)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:45:20)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals, tsx..."
       ]
     }
@@ -156,9 +156,9 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Vpc2 in aws-cdk-lib...",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:45:20)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:45:20)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals, tsx..."
       ]
     }
@@ -172,10 +172,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new SecurityGroup2 in aws-cdk-lib...",
-        "PlatformStack.makeMsk (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:76:40)",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:53:46)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "PlatformStack.makeMsk (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:76:40)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:53:46)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals, tsx..."
       ]
     }
@@ -189,10 +189,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Trail2 in aws-cdk-lib...",
-        "PlatformStack.makeCloudTrail (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:63:9)",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:57:52)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "PlatformStack.makeCloudTrail (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:63:9)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:57:52)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals, tsx..."
       ]
     }
@@ -206,8 +206,8 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...App.synth in aws-cdk-lib...",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)"
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:85:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)"
       ]
     }
   ],
@@ -220,8 +220,8 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...App.synth in aws-cdk-lib...",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)"
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:85:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)"
       ]
     }
   ],
@@ -234,8 +234,8 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...App.synth in aws-cdk-lib...",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)"
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:85:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)"
       ]
     }
   ],
@@ -248,8 +248,8 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...App.synth in aws-cdk-lib...",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)"
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:85:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)"
       ]
     }
   ],
@@ -306,9 +306,9 @@
         ".../Users/johntegen/development/rupng/node_modules/aws-cdk-lib/aws-ec2/lib/vpc.js:1:208 in aws-cdk-lib...",
         "Array.forEach (:)",
         "...new Vpc2 in aws-cdk-lib...",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:45:20)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:45:20)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals..."
       ]
     }
@@ -322,9 +322,9 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Vpc2 in aws-cdk-lib...",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:45:20)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:45:20)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals..."
       ]
     }
@@ -338,9 +338,9 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Vpc2 in aws-cdk-lib...",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:45:20)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:45:20)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals..."
       ]
     }
@@ -398,9 +398,9 @@
         ".../Users/johntegen/development/rupng/node_modules/aws-cdk-lib/aws-ec2/lib/vpc.js:1:208 in aws-cdk-lib...",
         "Array.forEach (:)",
         "...new Vpc2 in aws-cdk-lib...",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:45:20)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:45:20)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals..."
       ]
     }
@@ -456,9 +456,9 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Vpc2 in aws-cdk-lib...",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:45:20)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)"
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:45:20)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)"
       ]
     }
   ],
@@ -513,9 +513,9 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Vpc2 in aws-cdk-lib...",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:45:20)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)"
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:45:20)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)"
       ]
     }
   ],
@@ -528,10 +528,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Trail2 in aws-cdk-lib...",
-        "PlatformStack.makeCloudTrail (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:63:9)",
-        "new PlatformStack (/Users/johntegen/development/rupng/cloud/lib/PlatformStack.ts:57:52)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:132:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/bin/app.ts:156:11)",
+        "PlatformStack.makeCloudTrail (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:63:9)",
+        "new PlatformStack (/Users/johntegen/development/rupng/cloud/src/lib/PlatformStack.ts:57:52)",
+        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:54:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:85:11)",
         "...node internals..."
       ]
     }

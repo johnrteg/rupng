@@ -1453,7 +1453,9 @@
        }
       ],
       "Essential": true,
-      "Image": "public.ecr.aws/docker/library/nginx:latest",
+      "Image": {
+       "Fn::Sub": "${AWS::AccountId}.dkr.ecr.us-east-1.${AWS::URLSuffix}/cdk-hnb659fds-container-assets-${AWS::AccountId}-us-east-1:fb1856144c3ed2b3c8507de7226002ecdc788b23ee2f841b7ccda91b1c7c0451"
+      },
       "LogConfiguration": {
        "LogDriver": "awslogs",
        "Options": {
@@ -1534,6 +1536,38 @@
    "Properties": {
     "PolicyDocument": {
      "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:",
+          {
+           "Ref": "AWS::Partition"
+          },
+          ":ecr:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":repository/",
+          {
+           "Fn::Sub": "cdk-hnb659fds-container-assets-${AWS::AccountId}-us-east-1"
+          }
+         ]
+        ]
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
       {
        "Action": [
         "logs:CreateLogStream",
@@ -2076,7 +2110,9 @@
        }
       ],
       "Essential": true,
-      "Image": "public.ecr.aws/docker/library/nginx:latest",
+      "Image": {
+       "Fn::Sub": "${AWS::AccountId}.dkr.ecr.us-east-1.${AWS::URLSuffix}/cdk-hnb659fds-container-assets-${AWS::AccountId}-us-east-1:fb1856144c3ed2b3c8507de7226002ecdc788b23ee2f841b7ccda91b1c7c0451"
+      },
       "LogConfiguration": {
        "LogDriver": "awslogs",
        "Options": {
@@ -2157,6 +2193,38 @@
    "Properties": {
     "PolicyDocument": {
      "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:",
+          {
+           "Ref": "AWS::Partition"
+          },
+          ":ecr:us-east-1:",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":repository/",
+          {
+           "Fn::Sub": "cdk-hnb659fds-container-assets-${AWS::AccountId}-us-east-1"
+          }
+         ]
+        ]
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
       {
        "Action": [
         "logs:CreateLogStream",
@@ -2374,6 +2442,55 @@
     "aws:cdk:path": "app-local/Api-api/DefaultStage/Resource"
    }
   },
+  "ApiapiGETappbootstrapIntapiGETappbootstrap140767E5": {
+   "Type": "AWS::ApiGatewayV2::Integration",
+   "Properties": {
+    "ApiId": {
+     "Ref": "ApiapiE7E14836"
+    },
+    "ConnectionId": {
+     "Ref": "VpcLinkapi676777B9"
+    },
+    "ConnectionType": "VPC_LINK",
+    "IntegrationMethod": "ANY",
+    "IntegrationType": "HTTP_PROXY",
+    "IntegrationUri": {
+     "Ref": "SvcpublicLBPublicListenerC10F971F"
+    },
+    "PayloadFormatVersion": "1.0"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "app-local/Api-api/GET--app--bootstrap/Int-api-GET---app--bootstrap/Resource"
+   }
+  },
+  "ApiapiGETappbootstrap9B17C7E3": {
+   "Type": "AWS::ApiGatewayV2::Route",
+   "Properties": {
+    "ApiId": {
+     "Ref": "ApiapiE7E14836"
+    },
+    "AuthorizationType": "NONE",
+    "RouteKey": "GET /app/bootstrap",
+    "Target": {
+     "Fn::Join": [
+      "",
+      [
+       "integrations/",
+       {
+        "Ref": "ApiapiGETappbootstrapIntapiGETappbootstrap140767E5"
+       }
+      ]
+     ]
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "app-local/Api-api/GET--app--bootstrap/Resource"
+   }
+  },
   "VpcLinkapi676777B9": {
    "Type": "AWS::ApiGatewayV2::VpcLink",
    "Properties": {
@@ -2397,7 +2514,7 @@
   "CDKMetadata": {
    "Type": "AWS::CDK::Metadata",
    "Properties": {
-    "Analytics": "v2:deflate64:H4sIAAAAAAAA/31T227bMAz9lr07WhGgw167LF2HZViXBHstGJkxWNuSpouLwPC/j6LjzGmHPfHwiHdSS7W8/ahu3sFLWOiyXjR0UP0ugq4Lpp76ug2q/4anYnU0Wdw1BCErAoaiPBlobclOezg0mF8EDEX4zZ4/EyYhBQwFOKetOVKl+hzDuYY0RLIm26xNR96aFk3M6koMk5f3R2+PlMM20B5KUP19MnpyvOB1x747m7zG75yKTCVx37BDQdCqfmvHikU+Wq5F+hzRUKDmDlZNChG9FHSG9+AriLiHUH/GIxma6njNWBOBDPoZd/bdoe9IS/IJ7jQ0eXI5yMomE3MBS14G6uQpnr54m9zo8D/iq6k8hvCGXwstTT05iNyHCWq2gI2F8hNXYDSWr4rEBkIk3bDFQSx4gh1X9m9vGdWVPrcjnqA520x49r7nzBgvnc1U3ryteB8bW12eJyx3NYWAFG3gWXKRPLzLUHMgGco1M4q954Nnh93o9/cUroichvJgXuCU+3+I0d05kt/AIqv8c6pxqwJ+Ob0hU2fiDIeh2GKQW8zsjxRd4k0bW6J6Du+75Qd1w9/xORAtPB8Btai2o/wDeoKmXasDAAA="
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/31T227bMAz9lr07WhFgw17TtN2CZViXBHsNGJkxWNuSpkuKwPC/j5TjNEmHPfHwiHeRUzX99EXdfYDXMNFlPWlop7p1BF0XTG27ug2q+47HYr43ImYNQRAlg74ojwZaW7LTBnYNyksGfRH+sOevhCmTGfQFOKet2VOlOonhXEMaIlkjNo/mQN6aFk0UdZ4Nk8/vz97uScI20O5KUN1TMnp0POPHA/uubfIaf3AqMlWO+47tC4JWdSs7VJzls+Vacp8D6gvU3MG8SSGizwWd4BP4CiJuINQPuCdDYx23jDURyKC/4E6+a/QH0jn5CNcaGpmcBJnbZKIUMOXPQJ08xeNXb5MbHP5HLEzlMYR3/GOmc1NbB5H7MEFdfMDSQnnPFRiN5U2R2ECIpBu22GULnuCBK/u3dx7VlX5pRzxBc7IZ8cX7hjNjPHd2oUrlfgshYAzqweoa/aKFCmfCyJtaobOBovXHewhYNLbi71va6hxtxHkNx4yQog08eu6JZ33+A8mbZ3jNDGLj+T7YYT34vW3OFSFpSOb4CkcZ17cY3cxRPh4WovKhVcMSZCDUyqY4oIWJWPnzddyog91vp5dkaiFOsO+LFYa87ML+TNGlWOQpSZK8/MaWqF7Cx8P0s7rj438JRBPPK0ctqtUg/wKkoKjwGQQAAA=="
    },
    "Metadata": {
     "aws:cdk:path": "app-local/CDKMetadata/Default"

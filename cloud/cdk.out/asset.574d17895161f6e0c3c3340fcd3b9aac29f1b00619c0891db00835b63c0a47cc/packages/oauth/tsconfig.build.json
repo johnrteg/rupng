@@ -1,0 +1,11 @@
+{
+    "//": "Build/emit config — clears `paths` so @repo/* resolves to each dependency's built .d.ts, and",
+    "//root": "pins rootDir to ./src so output emits flat to bin/.",
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "rootDir": "./src",
+        "paths": {}
+    },
+    "include": ["src/**/*"],
+    "exclude": ["src/tests/**", "src/**/*.test.ts", "src/**/*.spec.ts"]
+}

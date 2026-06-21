@@ -1,21 +1,41 @@
 {
   "version": "54.0.0",
   "files": {
-    "eebf51c5e5a2dd81cb4605c56c3a9c8dd96dab6aca1600a19d341c5bc3d4d58e": {
+    "6b308afa44f9a5f9976c0340a9d6246e5bbe3a18b28d05456c9fd5fa44e95756": {
       "displayName": "app-local Template",
       "source": {
         "path": "app-local.template.json",
         "packaging": "file"
       },
       "destinations": {
-        "current_account-us-east-1-360c7251": {
+        "current_account-us-east-1-178d546e": {
           "bucketName": "cdk-hnb659fds-assets-${AWS::AccountId}-us-east-1",
-          "objectKey": "eebf51c5e5a2dd81cb4605c56c3a9c8dd96dab6aca1600a19d341c5bc3d4d58e.json",
+          "objectKey": "6b308afa44f9a5f9976c0340a9d6246e5bbe3a18b28d05456c9fd5fa44e95756.json",
           "region": "us-east-1",
           "assumeRoleArn": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-hnb659fds-file-publishing-role-${AWS::AccountId}-us-east-1"
         }
       }
     }
   },
-  "dockerImages": {}
+  "dockerImages": {
+    "fb1856144c3ed2b3c8507de7226002ecdc788b23ee2f841b7ccda91b1c7c0451": {
+      "displayName": "Svc-main/TaskDef/web/AssetImage",
+      "source": {
+        "directory": "asset.fb1856144c3ed2b3c8507de7226002ecdc788b23ee2f841b7ccda91b1c7c0451",
+        "dockerBuildArgs": {
+          "APP_NAME": "app",
+          "APP_PATH": "core/app"
+        },
+        "dockerFile": "Dockerfile"
+      },
+      "destinations": {
+        "current_account-us-east-1-0890904a": {
+          "repositoryName": "cdk-hnb659fds-container-assets-${AWS::AccountId}-us-east-1",
+          "imageTag": "fb1856144c3ed2b3c8507de7226002ecdc788b23ee2f841b7ccda91b1c7c0451",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-hnb659fds-image-publishing-role-${AWS::AccountId}-us-east-1"
+        }
+      }
+    }
+  }
 }

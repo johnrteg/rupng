@@ -3,8 +3,8 @@
     {
       "type": "aws:cdk:creationStack",
       "data": [
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     },
@@ -14,12 +14,12 @@
       "trace": [
         "Annotations.addMessage (/Users/johntegen/development/rupng/node_modules/aws-cdk-lib/core/lib/annotations.js:1:3441)",
         "Annotations.addInfo (/Users/johntegen/development/rupng/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2588)",
-        "ServiceStack.skipLocal (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:1210:40)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:145:63)",
+        "ServiceStack.skipLocal (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:1274:40)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:146:63)",
         "Array.forEach (<anonymous>)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:145:37)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "Object.<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:146:37)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "Object.<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "Module._compile (node:internal/modules/cjs/loader:1829:14)",
         "Object.transformer (/Users/johntegen/development/rupng/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)",
         "Module.load (node:internal/modules/cjs/loader:1552:32)",
@@ -38,12 +38,12 @@
       "trace": [
         "Annotations.addMessage (/Users/johntegen/development/rupng/node_modules/aws-cdk-lib/core/lib/annotations.js:1:3441)",
         "Annotations.addInfo (/Users/johntegen/development/rupng/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2588)",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:719:40)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:783:40)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (<anonymous>)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "Object.<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "Object.<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "Module._compile (node:internal/modules/cjs/loader:1829:14)",
         "Object.transformer (/Users/johntegen/development/rupng/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)",
         "Module.load (node:internal/modules/cjs/loader:1552:32)",
@@ -62,12 +62,12 @@
       "trace": [
         "Annotations.addMessage (/Users/johntegen/development/rupng/node_modules/aws-cdk-lib/core/lib/annotations.js:1:3441)",
         "Annotations.addInfo (/Users/johntegen/development/rupng/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2588)",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:719:40)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:783:40)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (<anonymous>)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "Object.<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "Object.<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "Module._compile (node:internal/modules/cjs/loader:1829:14)",
         "Object.transformer (/Users/johntegen/development/rupng/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)",
         "Module.load (node:internal/modules/cjs/loader:1552:32)",
@@ -97,12 +97,12 @@
     {
       "type": "aws:cdk:creationStack",
       "data": [
-        "ServiceStack.makeAppConfig (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:374:48)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:53)",
+        "ServiceStack.makeAppConfig (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:421:48)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:138:53)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:34)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:138:34)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -115,14 +115,14 @@
     {
       "type": "aws:cdk:creationStack",
       "data": [
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:380:13)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:427:13)",
         "Array.forEach (:)",
-        "ServiceStack.makeAppConfig (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:379:48)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:53)",
+        "ServiceStack.makeAppConfig (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:426:48)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:138:53)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:34)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:138:34)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -135,14 +135,14 @@
     {
       "type": "aws:cdk:creationStack",
       "data": [
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:381:37)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:428:37)",
         "Array.forEach (:)",
-        "ServiceStack.makeAppConfig (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:381:23)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:53)",
+        "ServiceStack.makeAppConfig (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:428:23)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:138:53)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:34)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:138:34)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -155,14 +155,14 @@
     {
       "type": "aws:cdk:creationStack",
       "data": [
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:381:37)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:428:37)",
         "Array.forEach (:)",
-        "ServiceStack.makeAppConfig (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:381:23)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:53)",
+        "ServiceStack.makeAppConfig (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:428:23)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:138:53)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:137:34)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:138:34)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -202,12 +202,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Key2 in aws-cdk-lib...",
-        "ServiceStack.makeKey (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:222:31)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:130:53)",
+        "ServiceStack.makeKey (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:223:31)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:131:53)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:130:34)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:131:34)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -221,12 +221,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Table2 in aws-cdk-lib...",
-        "ServiceStack.makeTable (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:287:40)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:132:53)",
+        "ServiceStack.makeTable (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:334:40)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:53)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:132:34)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:34)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals..."
       ]
     }
@@ -240,12 +240,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Queue2 in aws-cdk-lib...",
-        "ServiceStack.makeQueue (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:316:37)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:53)",
+        "ServiceStack.makeQueue (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:363:37)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:134:53)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:34)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:134:34)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -259,12 +259,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Queue2 in aws-cdk-lib...",
-        "ServiceStack.makeQueue (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:322:35)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:53)",
+        "ServiceStack.makeQueue (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:369:35)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:134:53)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:34)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:134:34)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -278,12 +278,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Queue2 in aws-cdk-lib...",
-        "ServiceStack.makeQueue (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:316:37)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:53)",
+        "ServiceStack.makeQueue (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:363:37)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:134:53)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:34)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:134:34)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -297,12 +297,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Queue2 in aws-cdk-lib...",
-        "ServiceStack.makeQueue (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:322:35)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:53)",
+        "ServiceStack.makeQueue (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:369:35)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:134:53)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:133:34)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:134:34)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -316,12 +316,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Function2 in aws-cdk-lib...",
-        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:676:38)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -335,12 +335,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Function2 in aws-cdk-lib...",
-        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:676:38)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -354,12 +354,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Function2 in aws-cdk-lib...",
-        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:676:38)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -373,12 +373,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Cluster2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:663:52)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:728:52)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -392,13 +392,13 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new SecurityGroup2 in aws-cdk-lib...",
-        "ServiceStack.computeSg (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:203:50)",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:689:43)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.computeSg (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:204:50)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:754:43)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)"
       ]
     }
   ],
@@ -437,12 +437,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals..."
       ]
     }
@@ -456,12 +456,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals..."
       ]
     }
@@ -475,12 +475,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals..."
       ]
     }
@@ -494,12 +494,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals..."
       ]
     }
@@ -513,10 +513,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new HttpApi2 in aws-cdk-lib...",
-        "ServiceStack.makeApi (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:731:43)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:159:29)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "ServiceStack.makeApi (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:795:43)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:160:29)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -530,10 +530,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new VpcLink2 in aws-cdk-lib...",
-        "ServiceStack.makeApi (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:752:75)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:159:29)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "ServiceStack.makeApi (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:816:75)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:160:29)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
       ]
     }
@@ -547,8 +547,8 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...App.synth in aws-cdk-lib...",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:78:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)"
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:87:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)"
       ]
     }
   ],
@@ -561,11 +561,11 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Key2 in aws-cdk-lib...",
-        "ServiceStack.makeKey (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:222:31)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:130:53)",
+        "ServiceStack.makeKey (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:223:31)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:131:53)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:130:34)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:131:34)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)"
       ]
     }
   ],
@@ -578,12 +578,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Function2 in aws-cdk-lib...",
-        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:676:38)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)"
       ]
     }
   ],
@@ -596,10 +596,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...WrappedClass.addEventSource in aws-cdk-lib...",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:649:28)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:696:28)",
         "Array.forEach (:)",
-        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:645:33)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:692:33)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
         "Array.forEach (:)"
       ]
     }
@@ -613,12 +613,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Function2 in aws-cdk-lib...",
-        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:676:38)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)"
       ]
     }
   ],
@@ -631,10 +631,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...WrappedClass.addEventSource in aws-cdk-lib...",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:649:28)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:696:28)",
         "Array.forEach (:)",
-        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:645:33)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:692:33)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
         "Array.forEach (:)"
       ]
     }
@@ -648,12 +648,12 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Function2 in aws-cdk-lib...",
-        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:52)",
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:676:38)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:154:33)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)"
       ]
     }
   ],
@@ -666,10 +666,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)"
       ]
     }
   ],
@@ -682,10 +682,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)"
       ]
     }
   ],
@@ -698,10 +698,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)"
       ]
     }
   ],
@@ -714,10 +714,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)"
       ]
     }
   ],
@@ -730,10 +730,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)"
       ]
     }
   ],
@@ -746,10 +746,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)"
       ]
     }
   ],
@@ -762,11 +762,29 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new HttpApi2 in aws-cdk-lib...",
-        "ServiceStack.makeApi (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:731:43)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:159:29)",
-        "appManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:78:11)",
+        "ServiceStack.makeApi (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:795:43)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:160:29)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)",
         "...node internals, tsx..."
+      ]
+    }
+  ],
+  "/app-local/Api-api/GET--app--bootstrap/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiapiGETappbootstrap9B17C7E3"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        ".../Users/johntegen/development/rupng/node_modules/aws-cdk-lib/aws-apigatewayv2/lib/http/api.js:1:96 in aws-cdk-lib...",
+        "Array.map (:)",
+        "...WrappedClass.<anonymous> in aws-cdk-lib...",
+        "ServiceStack.makeApi (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:834:21)",
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:160:29)",
+        "webManifest (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:87:11)"
       ]
     }
   ],
@@ -779,7 +797,7 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Function2 in aws-cdk-lib...",
-        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)"
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:676:38)"
       ]
     }
   ],
@@ -792,7 +810,7 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Function2 in aws-cdk-lib...",
-        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)"
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:676:38)"
       ]
     }
   ],
@@ -805,7 +823,7 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new Function2 in aws-cdk-lib...",
-        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:629:38)"
+        "ServiceStack.makeJob (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:676:38)"
       ]
     }
   ],
@@ -818,8 +836,8 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)"
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)"
       ]
     }
   ],
@@ -858,8 +876,8 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)"
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)"
       ]
     }
   ],
@@ -885,8 +903,8 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)"
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)"
       ]
     }
   ],
@@ -925,8 +943,8 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)"
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)"
       ]
     }
   ],
@@ -943,6 +961,21 @@
       ]
     }
   ],
+  "/app-local/Api-api/GET--app--bootstrap/Int-api-GET---app--bootstrap/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiapiGETappbootstrapIntapiGETappbootstrap140767E5"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        ".../Users/johntegen/development/rupng/node_modules/aws-cdk-lib/aws-apigatewayv2/lib/http/api.js:1:96 in aws-cdk-lib...",
+        "Array.map (:)",
+        "...WrappedClass.<anonymous> in aws-cdk-lib...",
+        "ServiceStack.makeApi (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:834:21)"
+      ]
+    }
+  ],
   "/app-local/Svc-main/LB/PublicListener/ECSGroup/Resource": [
     {
       "type": "aws:cdk:logicalId",
@@ -952,7 +985,7 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)"
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)"
       ]
     }
   ],
@@ -1004,10 +1037,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...WrappedClass.autoScaleTaskCount in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:707:65)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:771:65)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)"
       ]
     }
   ],
@@ -1020,7 +1053,7 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...new ApplicationLoadBalancedFargateService2 in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:682:73)"
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:747:73)"
       ]
     }
   ],
@@ -1072,10 +1105,10 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...WrappedClass.autoScaleTaskCount in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:707:65)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:771:65)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)"
       ]
     }
   ],
@@ -1088,11 +1121,11 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...ScalableTaskCount.scaleOnCpuUtilization in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:708:49)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:772:49)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)"
       ]
     }
   ],
@@ -1105,11 +1138,11 @@
       "type": "aws:cdk:creationStack",
       "data": [
         "...ScalableTaskCount.scaleOnCpuUtilization in aws-cdk-lib...",
-        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:708:49)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:52)",
+        "ServiceStack.makeEcsService (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:772:49)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:52)",
         "Array.forEach (:)",
-        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:155:33)",
-        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:65:5)"
+        "new ServiceStack (/Users/johntegen/development/rupng/cloud/src/lib/ServiceStack.ts:156:33)",
+        "<anonymous> (/Users/johntegen/development/rupng/cloud/src/app.ts:74:5)"
       ]
     }
   ]

@@ -1,6 +1,6 @@
 ---
 name: event-bus-canonical-model
-description: The canonical Kafka event-bus model — object+verb+typed payload in Events.Envelope (@repo/events)
+description: The canonical Kafka event-bus model — object+verb+typed payload in Events.Envelope (@repo/system)
 metadata:
   type: project
 ---
@@ -8,9 +8,11 @@ metadata:
 Kafka (MSK) is the single inter-service bus, broadcast state-change (1 publisher → 0..N subscribers). The
 canonical model (decided + implemented 2026-06-17):
 
-**An event = `object` + `verb` + a typed `payload`, in `Events.Envelope`.** All in **`@repo/events`** — a
-package created as the shared base both `@repo/endpoint` and `@repo/cloud-manifest` import (so the vocabulary,
-verb set, and `Access` ladders have one home, no drift).
+**An event = `object` + `verb` + a typed `payload`, in `Events.Envelope`.** All in **`@repo/system`** (the
+foundational system package — **renamed from `@repo/events` on 2026-06-18** since it holds the service registry,
+`Access` ladders, payload repository + envelope, not just events) — the shared base both `@repo/endpoint` and
+`@repo/cloud-manifest` import (so the vocabulary, verb set, and `Access` ladders have one home, no drift). The
+`Events` / `Access` / `Payloads` namespaces are its exports.
 - `Events.Object` = `<service>.<noun>` (e.g. `media.asset`) — **IS the Kafka topic + the manifest
   `publishes`/`subscribes` binding**. One topic per entity, owned by the publisher, keyed by entity id.
 - `Events.Verb` = created/updated/deleted/purged (universal). Subscriber switches on it within a topic.
@@ -44,5 +46,5 @@ plus `publishStream`/`subscribeStream` for analytics; raw `publish*`/`subscribe*
 
 **Still pending:** per-object `PayloadFor<O>` (only `media.asset` defined); `/cloud` synth of Kafka
 topics/bindings (no ServiceStack code for `publishes`/`subscribes` yet); `audit` is a stub (no package.json) so
-AuditModel isn't compiled. Docs done: root SPECS, cloud/SPECS, MANIFEST.md, @repo/events README, endpoint/SPECS,
+AuditModel isn't compiled. Docs done: root SPECS, cloud/SPECS, MANIFEST.md, @repo/system README, endpoint/SPECS,
 aws/SPECS, common/SPECS, services/README.

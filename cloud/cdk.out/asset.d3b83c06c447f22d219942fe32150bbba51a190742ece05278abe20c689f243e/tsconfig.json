@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true
+    
+  },
+  "files": [],
+  "references": [
+    { "path": "packages/common" },
+    { "path": "packages/endpoint" },
+    { "path": "packages/services" },
+    { "path": "packages/api" },
+    { "path": "apps/core/auth" }
+  ]
+}

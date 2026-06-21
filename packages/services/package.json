@@ -1,6 +1,6 @@
 {
     "name": "@repo/services",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "private": true,
     "sideEffects": false,
     "main": "./bin/index.js",
@@ -37,7 +37,7 @@
         "@repo/cloud-manifest": "*",
         "@repo/common": "*",
         "@repo/endpoint": "*",
-        "@repo/events": "*",
+        "@repo/system": "*",
         "fastify": "5.8.5",
         "ioredis": "5.11.1",
         "kafkajs": "2.2.4",

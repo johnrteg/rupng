@@ -1,7 +1,10 @@
 {
     "name": "web",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "private": true,
+    "exports": {
+        "./manifest": "./src/CloudManifest.ts"
+    },
     "scripts": {
         "dev": "vite",
         "build": "vite build",
@@ -9,6 +12,7 @@
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {
+        "@repo/cloud-manifest": "*",
         "@codemirror/lang-html": "^6.4.11",
         "@codemirror/lang-javascript": "^6.2.5",
         "@codemirror/lang-json": "^6.0.2",
@@ -22,7 +26,7 @@
         "@repo/api": "*",
         "@repo/common": "*",
         "@repo/endpoint": "*",
-        "@repo/events": "*",
+        "@repo/system": "*",
         "@uiw/codemirror-theme-vscode": "^4.25.10",
         "@uiw/react-codemirror": "^4.25.10",
         "ajv": "8.20.0",

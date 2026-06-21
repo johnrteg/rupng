@@ -1,6 +1,6 @@
 {
     "name": "@repo/endpoint",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "private": true,
     "main": "./bin/index.js",
     "types": "./bin/index.d.ts",
@@ -10,7 +10,7 @@
     },
     "dependencies": {
         "@repo/common": "*",
-        "@repo/events": "*",
+        "@repo/system": "*",
         "ajv": "8.20.0",
         "ajv-formats": "3.0.1"
     },

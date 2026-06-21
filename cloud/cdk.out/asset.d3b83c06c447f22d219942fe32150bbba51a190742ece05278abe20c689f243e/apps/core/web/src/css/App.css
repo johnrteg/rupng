@@ -1,0 +1,41 @@
+body {
+    margin:0;
+    padding:0;
+    overflow: hidden;
+    width: 100%;
+    max-width: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.richtext-editor-content > div[contenteditable="true"] {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 12px;         /* Add your desired padding */
+  min-height: 80px;      /* Optional: ensures a minimum height */
+  background: transparent; /* Optional: or set a background if needed */
+  :first-child { margin-top: 0; };
+  :last-child { margin-bottom: 0; }
+}
+.richtext-editor-content .tiptap.ProseMirror {
+  padding: 0 !important;
+}
+
+/* Decoration-based regex highlight (never modifies document) */
+.rte-highlight {
+  background-color: #fff176;
+  border-radius: 2px;
+}
+/*
+.richtext-editor-content span[style*="font-size"] {
+  font-size: inherit !important;
+}
+*/
+
+.react-grid-placeholder {
+  background: #bbdefb !important; /* Example: lighter blue */
+  border: 2px dashed #1976d2 !important;
+  opacity: 0.5;
+}

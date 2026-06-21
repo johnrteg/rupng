@@ -1,15 +1,15 @@
 {
     "name": "@repo/cloud-manifest",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "private": true,
     "main": "./bin/index.js",
     "types": "./bin/index.d.ts",
     "scripts": {
-        "build": "tsc",
+        "build": "tsc -p tsconfig.build.json",
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {
-        "@repo/events": "*"
+        "@repo/system": "*"
     },
     "devDependencies": {
         "@repo/tsconfig": "*",

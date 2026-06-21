@@ -1,0 +1,16 @@
+{
+    "web": {
+        "root": "../../web/bin",
+        "index": "index.html",
+        "prefix": "/",
+        "spaFallback": true
+    },
+    "upstreams": [
+        {
+            "name": "local",
+            "target": "http://localhost:8000",
+            "ws": "/account/ws",
+            "prefixes": ["/rup", "/auth", "/account", "/passkey", "/login", "/verify", "/vcf", "/optin", "/uc"]
+        }
+    ]
+}

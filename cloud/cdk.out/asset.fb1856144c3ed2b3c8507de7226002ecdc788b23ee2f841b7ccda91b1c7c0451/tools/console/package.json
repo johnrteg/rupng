@@ -1,0 +1,46 @@
+{
+    "name": "rup-console",
+    "version": "1.0.0",
+    "description": "RumbleUp service console — build, deploy (LocalStack), run, and observe the service fleet from a desktop app.",
+    "private": true,
+    "author": "RumbleUp",
+    "main": "out/main/index.js",
+    "scripts": {
+        "dev": "electron-vite dev",
+        "build": "electron-vite build",
+        "preview": "electron-vite preview",
+        "start": "electron-vite preview",
+        "typecheck": "tsc --noEmit -p tsconfig.json"
+    },
+    "dependencies": {
+        "@anthropic-ai/claude-agent-sdk": "^0.3.181",
+        "@aws-sdk/client-apigatewayv2": "^3.1072.0",
+        "@aws-sdk/client-cloudformation": "^3.1072.0",
+        "@aws-sdk/client-cloudwatch": "^3.1072.0",
+        "@aws-sdk/client-cloudwatch-logs": "^3.1072.0",
+        "@aws-sdk/client-ecs": "^3.1072.0",
+        "@aws-sdk/client-elastic-load-balancing-v2": "^3.1073.0",
+        "@aws-sdk/client-lambda": "^3.1072.0",
+        "@aws-sdk/client-s3": "^3.1072.0",
+        "@aws-sdk/credential-providers": "^3.1072.0",
+        "@aws-sdk/shared-ini-file-loader": "^3.370.0",
+        "@dagrejs/dagre": "^3.0.0",
+        "@emotion/react": "11.13.5",
+        "@emotion/styled": "11.13.5",
+        "@mui/icons-material": "6.1.9",
+        "@mui/material": "6.1.9",
+        "@mui/x-charts": "^7.29.1",
+        "react": "18.3.1",
+        "react-dom": "18.3.1"
+    },
+    "devDependencies": {
+        "@types/node": "22.10.1",
+        "@types/react": "18.3.12",
+        "@types/react-dom": "18.3.1",
+        "@vitejs/plugin-react": "4.3.4",
+        "electron": "33.2.1",
+        "electron-vite": "2.3.0",
+        "typescript": "5.6.3",
+        "vite": "5.4.11"
+    }
+}

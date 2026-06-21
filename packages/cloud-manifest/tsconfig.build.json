@@ -1,0 +1,13 @@
+{
+    "//": "Build/emit config. Unlike tsconfig.json (which maps @repo/* to sibling SOURCE for editor +",
+    "//paths": "typecheck), this clears `paths` so @repo/* resolves to each dependency's built .d.ts (via",
+    "//built": "node_modules), and pins rootDir to ./src — so output emits FLAT to bin/ (bin/index.d.ts),",
+    "//flat": "not nested under bin/cloud-manifest/src when sibling source is pulled in via a path mapping.",
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "rootDir": "./src",
+        "paths": {}
+    },
+    "include": ["src/**/*"],
+    "exclude": ["src/tests/**", "src/**/*.test.ts", "src/**/*.spec.ts"]
+}

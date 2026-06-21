@@ -1,0 +1,23 @@
+/*
+ * App.css — base / global styles for the web app.
+ * Component styling lives with MUI (sx / theme); this is just the page shell reset.
+ */
+
+html, body, #root
+{
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+#root
+{
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+}
+
+*
+{
+    box-sizing: border-box;
+}
