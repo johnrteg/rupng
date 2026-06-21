@@ -117,9 +117,11 @@ export function RepoView()
     const toggleArea = ( path : string ) : void => setTestSel( ( prev ) => { const n = new Set( prev ); n.has( path ) ? n.delete( path ) : n.add( path ); return n; } );
     const setIntent  = ( path : string, kind : BumpKind ) : void => setIntents( ( prev ) => ( { ...prev, [ path ]: kind } ) );
 
-    // checked, versioned, non-deleted areas must each carry a bump intent before check-in
-    const needsIntent : RepoArea[] = ( status?.areas ?? [] ).filter( ( a ) => testSel.has( a.path ) && !!a.version && !a.deleted );
+    // checked, versioned, non-deleted, non-root areas must each carry a bump intent before check-in
+    const needsIntent : RepoArea[] = ( status?.areas ?? [] ).filter( ( a ) => testSel.has( a.path ) && !!a.version && !a.deleted && a.kind !== "root" );
     const intentsReady : boolean = needsIntent.every( ( a ) => intents[ a.path ] !== undefined );
+    // staging: root contributes its explicit files (not "."); other areas stage by directory
+    const stagePaths : string[] = ( status?.areas ?? [] ).filter( ( a ) => testSel.has( a.path ) ).flatMap( ( a ) => a.kind === "root" ? a.files : [ a.path ] );
 
     const isMain : boolean = targetBranch === "main" || targetBranch === "master";
     const canCommit : boolean = testsPassed && intentsReady && message.trim() !== "" && targetBranch.trim() !== "" && !busy;
@@ -133,18 +135,16 @@ export function RepoView()
     const commitPush = async () : Promise<void> =>
     {
         if ( !canCommit ) return;
-        const paths : string[] = [ ...testSel ];
-        if ( !window.confirm( `Apply version bumps, then stage + commit + push these to "${targetBranch}":\n\n${paths.join( "\n" )}` ) ) return;
+        if ( !window.confirm( `Apply version bumps, then stage + commit + push to "${targetBranch}":\n\n${stagePaths.join( "\n" )}` ) ) return;
         await applyIntents();
-        await after( api.repoCommitPush( targetBranch.trim(), message.trim(), paths ) );
+        await after( api.repoCommitPush( targetBranch.trim(), message.trim(), stagePaths ) );
     };
     const createPR = async () : Promise<void> =>
     {
         if ( !canCommit || isMain ) return;
-        const paths : string[] = [ ...testSel ];
-        if ( !window.confirm( `Apply version bumps, stage + commit + push these to "${targetBranch}", and open a PR:\n\n${paths.join( "\n" )}` ) ) return;
+        if ( !window.confirm( `Apply version bumps, stage + commit + push to "${targetBranch}", and open a PR:\n\n${stagePaths.join( "\n" )}` ) ) return;
         await applyIntents();
-        await after( api.repoCreatePR( targetBranch.trim(), message.trim(), paths ) );
+        await after( api.repoCreatePR( targetBranch.trim(), message.trim(), stagePaths ) );
     };
     const askClaude = () : void =>
     {
@@ -336,21 +336,22 @@ export function RepoView()
                             {
                                 const checked : boolean = testSel.has( a.path );
                                 const intent : BumpKind | undefined = intents[ a.path ];
-                                const needs : boolean = checked && !!a.version && !a.deleted && intent === undefined;   // checked but no intent yet
+                                const versioned : boolean = !!a.version && !a.deleted && a.kind !== "root";   // root isn't version-bumped here
+                                const needs : boolean = checked && versioned && intent === undefined;   // checked but no intent yet
                                 return (
                                     <Box key={a.path} sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5, p: 0.5, pl: 1, border: "1px solid", borderColor: needs ? "warning.main" : "divider", borderRadius: 1.5 }}>
                                         <Checkbox size="small" checked={checked} onChange={() => toggleArea( a.path )} sx={{ p: 0.5 }} />
                                         <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: KIND_COLOR[ a.kind ], flexShrink: 0 }} />
                                         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
                                             <Typography variant="body2" sx={{ fontWeight: 600 }}>{a.name} <Box component="span" sx={{ color: "text.disabled", fontFamily: MONO, fontWeight: 400 }}>{a.path}</Box></Typography>
-                                            {a.version && !a.deleted
+                                            {versioned
                                                 ? <Typography variant="caption" sx={{ fontFamily: MONO, color: intent ? "success.main" : ( needs ? "warning.main" : "text.disabled" ) }}>
-                                                      {a.changed} file(s) · {intent ? `v${a.version} → v${projectVersion( a.version, intent )}` : `v${a.version}${needs ? " — choose a bump" : ""}`}
+                                                      {a.changed} file(s) · {intent ? `v${a.version} → v${projectVersion( a.version!, intent )}` : `v${a.version}${needs ? " — choose a bump" : ""}`}
                                                   </Typography>
-                                                : <Typography variant="caption" sx={{ color: "text.disabled" }}>{a.changed} file(s)</Typography>}
+                                                : <Typography variant="caption" sx={{ color: "text.disabled" }}>{a.changed} file(s){a.version && a.kind === "root" ? ` · v${a.version}` : ""}</Typography>}
                                         </Box>
                                         {a.deleted && <Chip size="small" variant="outlined" color="error" label="deleted" />}
-                                        {a.version && !a.deleted && (
+                                        {versioned && (
                                             <ToggleButtonGroup size="small" exclusive value={intent ?? null} onChange={( _e, v : BumpKind | null ) => v && setIntent( a.path, v )}>
                                                 <ToggleButton value="major" sx={{ px: 1, py: 0.1 }}>major</ToggleButton>
                                                 <ToggleButton value="minor" sx={{ px: 1, py: 0.1 }}>minor</ToggleButton>

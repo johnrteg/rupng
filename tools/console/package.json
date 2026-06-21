@@ -1,6 +1,6 @@
 {
     "name": "rup-console",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "description": "RumbleUp service console — build, deploy (LocalStack), run, and observe the service fleet from a desktop app.",
     "private": true,
     "author": "RumbleUp",

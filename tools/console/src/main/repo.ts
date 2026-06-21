@@ -77,10 +77,9 @@ export function repoStatus() : RepoStatus
             if ( arrow >= 0 ) file = file.slice( arrow + 4 );
             file = file.replace( /^"|"$/g, "" );
             const a = areaFor( file );
-            if ( a.kind === "root" ) continue;   // loose repo-root files aren't a workspace; staging "." would over-add
             const existing : RepoArea | undefined = grouped.get( a.path );
-            if ( existing ) existing.changed += 1;
-            else grouped.set( a.path, { path: a.path, name: a.name, kind: a.kind, changed: 1,
+            if ( existing ) { existing.changed += 1; existing.files.push( file ); }
+            else grouped.set( a.path, { path: a.path, name: a.name, kind: a.kind, changed: 1, files: [ file ],
                                         version: versionAt( a.path ), deleted: !existsSync( join( REPO_ROOT, a.path ) ) } );
         }
 

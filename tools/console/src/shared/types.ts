@@ -73,6 +73,7 @@ export interface RepoArea
     name : string;        // display name, e.g. "app", "api", "cloud"
     kind : RepoAreaKind;
     changed : number;     // number of changed files in this area
+    files : string[];     // the changed file paths in this area (for precise staging)
     version? : string;    // current package.json version (if the area has one)
     deleted? : boolean;   // the directory no longer exists on disk (fully removed)
 }
