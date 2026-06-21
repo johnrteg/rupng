@@ -21,6 +21,16 @@ import { MONO } from "../theme";
 export const ANSI = /\[[0-9;]*m/g;
 const LEVEL_COLOR = { out: "#c9d1d9", err: "#f85149", sys: "#58a6ff" } as const;
 
+// Tools write lots of *informational* text to stderr (vitest config, npm notices, git hints), so a
+// raw line is shown red only when it actually reads like an error — otherwise it uses the normal
+// output color. (Trace records keep their own level coloring.)
+const ERROR_RE = /(^|\s)(error|errors|fatal|failed|failure|exception|err!|✖|✗|×)(\b|:|!|\s|$)/i;
+function rawColor( level : "out" | "err" | "sys", text : string ) : string
+{
+    if ( level === "sys" ) return LEVEL_COLOR.sys;
+    return ERROR_RE.test( text ) ? LEVEL_COLOR.err : LEVEL_COLOR.out;
+}
+
 /** The structured levels we filter on (matches Trace's labels). */
 export const LEVELS = [ "INFO", "WARN", "ERROR" ] as const;
 
@@ -94,7 +104,7 @@ export function LogRow( { line, hideId } : { line : LogLine; hideId? : boolean }
 
     if ( !p.record )
         return (
-            <Box component="pre" sx={{ m: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", color: LEVEL_COLOR[ line.level ] }}>
+            <Box component="pre" sx={{ m: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", color: rawColor( line.level, p.raw ) }}>
                 {p.raw}
             </Box>
         );
