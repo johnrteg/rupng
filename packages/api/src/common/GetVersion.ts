@@ -3,31 +3,25 @@ import { NetworkUtils } from "@repo/common";
 import { RestfulEndpoint, Access } from "@repo/endpoint";
 
 /*
+    A tiny, unauthenticated endpoint that reports the running service's id + version. Audience PUBLIC
+    so it is reachable at the API Gateway edge (exposure derives from audience) — the deploy console
+    discovers each service's gateway and reads /version to show what's actually live per environment.
+
     client:
-    const endpt : GetHealth = new GetHealth( {} );
-    const response : Restful.Response = await appdata.server.fetch( endpt );
-    if( response.ok )
-    {
-        const reply : GetHealth.Response = response.data;
-    }
-
-    server:
-    // register
-    server.register( new GetHealth(), callback );
-
-    // respond
-    const RestfulEndpoint.Response : resp = await GetHeath.execute( auth );
+    const endpt : GetVersion = new GetVersion( {} );
+    const response = await appdata.server.fetch( endpt );
+    if( response.ok ) { const reply : GetVersion.Response = response.data; }
 */
-export class GetHealth extends RestfulEndpoint<GetHealth.Query, undefined>
+export class GetVersion extends RestfulEndpoint<GetVersion.Query, undefined>
 {
-    public readonly uri      : string = "/health";
+    public readonly uri      : string = "/version";
     public readonly method   : NetworkUtils.Method = NetworkUtils.Method.GET;
     public readonly access   : Access.Role | undefined = undefined;   // non-authenticated
     public readonly timeout  : number | undefined = undefined;        // default
-    public readonly audience : RestfulEndpoint.Audience = RestfulEndpoint.Audience.APP;   // edge-reachable, not a published dev API
+    public readonly audience : RestfulEndpoint.Audience = RestfulEndpoint.Audience.PUBLIC;   // edge-reachable + published
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    constructor( query? : GetHealth.Query )
+    constructor( query? : GetVersion.Query )
     {
         super( query ?? {}, undefined );
     }
@@ -39,7 +33,7 @@ export class GetHealth extends RestfulEndpoint<GetHealth.Query, undefined>
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    public getQuerySchema(): RestfulEndpoint.SchemaFor<GetHealth.Query> | null
+    public getQuerySchema(): RestfulEndpoint.SchemaFor<GetVersion.Query> | null
     {
         return null;
     }
@@ -52,7 +46,7 @@ export class GetHealth extends RestfulEndpoint<GetHealth.Query, undefined>
 }
 
 
-export namespace GetHealth
+export namespace GetVersion
 {
     export interface Query extends RestfulEndpoint.NonAuthRequest
     {
@@ -60,7 +54,9 @@ export namespace GetHealth
 
     export interface Response
     {
-        ok : boolean;
+        /** Canonical service id (e.g. "app"). */
+        service : string;
+        /** package.json version of the running service. */
         version : string;
     }
 
@@ -73,4 +69,4 @@ export namespace GetHealth
 
 }
 
-export default GetHealth;
+export default GetVersion;

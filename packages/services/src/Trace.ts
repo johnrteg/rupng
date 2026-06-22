@@ -57,8 +57,7 @@ export class Trace
             message : message,
         };
 
-        if( args.length > 0 )
-            record.args = args.map( Trace.serializeArg );
+        if( args.length > 0 )record.args = args.map( Trace.serializeArg );
 
         const line : string = JSON.stringify( record );
 

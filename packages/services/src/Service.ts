@@ -16,6 +16,7 @@ import { NetworkUtils } from '@repo/common';
 import { Daemon } from './Daemon';
 import type { Register } from '@repo/system';
 import { GetHealthImpl } from './endpoints/GetHealthImpl';
+import { GetVersionImpl } from './endpoints/GetVersionImpl';
 import { fastifyLogger } from './FastifyLog';
 
 
@@ -26,6 +27,7 @@ export class Service extends Daemon
     private log_server  : boolean;
     private port        : number = 8000;
     private host        : string = 'localhost';
+    public version      : string = "unset";
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /**
@@ -45,6 +47,19 @@ export class Service extends Daemon
 
         this.host       = process.env.HOST ?? '0.0.0.0';            // inside container host
         this.log_server = true;
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    protected setVersion( version : string ) : void
+    {
+        this.version = version;
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** Canonical service id (e.g. "app"), without any role qualifier — for the public /version reply. */
+    public name() : string
+    {
+        return String( this.service );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -200,6 +215,7 @@ export class Service extends Daemon
     protected async registerEndpoints() : Promise<void>
     {
         this.register( new GetHealthImpl( this ) );
+        this.register( new GetVersionImpl( this ) );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////

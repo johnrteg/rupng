@@ -8,6 +8,13 @@ RumbleUp omnichannel marketing & engagement platform — a Turborepo + npm-works
 - Node.js (with npm workspaces support)
 - Docker (for LocalStack)
 - AWS CDK CLI: `npm install -g aws-cdk`
+- GitHub CLI (`gh`) — used by the Console's Repo/Deploy tabs to open PRs and by the release workflow
+  (see [RELEASE.md](../RELEASE.md)). Install from <https://cli.github.com>:
+  - macOS: `brew install gh`
+  - Windows: `winget install GitHub.cli`
+  - Linux: `sudo apt install gh` (or `sudo dnf install gh`)
+
+  Then authenticate once: `gh auth login`.
 
 ## Install dependencies
 

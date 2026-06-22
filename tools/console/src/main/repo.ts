@@ -193,13 +193,13 @@ function semverCmp( a : string, b : string ) : number
 }
 function newestOf( versions : string[] ) : string { return versions.filter( isSemver ).reduce( ( a, b ) => ( semverCmp( a, b ) >= 0 ? a : b ) ); }
 
-/** Every workspace package.json (root, cloud, each tools, packages and apps subdir). */
+/** Every rupng workspace package.json (root, cloud, packages, apps). Excludes tools/* — the console
+ *  manages its own deps; the Repo tab must never update/sync the running tool's dependencies. */
 function packageFiles() : string[] {
     const files : string[] = [];
     const add = ( dir : string ) : void => { const p = join( dir, "package.json" ); if ( existsSync( p ) ) files.push( p ); };
     add( REPO_ROOT );
     add( join( REPO_ROOT, "cloud" ) );
-    for ( const t of safeDirs( join( REPO_ROOT, "tools" ) ) ) add( t );
     for ( const p of safeDirs( join( REPO_ROOT, "packages" ) ) ) add( p );
     for ( const grp of safeDirs( join( REPO_ROOT, "apps" ) ) ) for ( const svc of safeDirs( grp ) ) add( svc );
     return files;

@@ -1,10 +1,10 @@
 {
   "extends": "@repo/tsconfig/base.json",
   "compilerOptions": {
-    "outDir": "./bin",
-    // `paths` are resolved relative to baseUrl. Set it explicitly so tsc, the editor TS server,
-    // and the bundler all honor these aliases identically.
-    "baseUrl": ".",
+    // no outDir — web is bundled by vite; tsc only typechecks (`--noEmit`). With @repo/* mapped to
+    // source via `paths`, an outDir would make TS6 require those files under web/ (TS6059).
+    // No `baseUrl` (deprecated in TS6): `paths` resolve relative to this tsconfig's directory, which
+    // is exactly what baseUrl "." meant — so the alias values below are unchanged.
     // react/web app - NOT node. `types: []` excludes ambient @types/node (hoisted from sibling
     // packages); React/MUI types come in via import resolution, not ambient, so this is fine.
     "types": [],
@@ -25,14 +25,14 @@
       "@repo/cloud-manifest" : ["../../../packages/cloud-manifest/src/index.ts"],
       "@repo/ai"         : ["../../../packages/ai/src/index.ts"],
       "@repo/oauth"      : ["../../../packages/oauth/src/index.ts"],
-      "@api/*"    : ["src/api/*"],
-      "@model/*"  : ["src/model/*"],
-      "@common/*" : ["src/common/*"],
-      "@pages/*"  : ["src/pages/*"],
-      "@main/*"   : ["src/main/*"],
-      "@utils/*"  : ["src/utils/*"],
-      "@widgets/*": ["src/widgets/*"],
+      "@api/*"    : ["./src/api/*"],
+      "@model/*"  : ["./src/model/*"],
+      "@common/*" : ["./src/common/*"],
+      "@pages/*"  : ["./src/pages/*"],
+      "@main/*"   : ["./src/main/*"],
+      "@utils/*"  : ["./src/utils/*"],
+      "@widgets/*": ["./src/widgets/*"],
     }
   },
-  "include": ["src/**/*"]
+  "include": ["./src/**/*"]
 }

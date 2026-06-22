@@ -9,5 +9,5 @@
         "paths": {}
     },
     "include": ["src/**/*"],
-    "exclude": ["src/tests/**", "src/**/*.test.ts", "src/**/*.spec.ts"]
+    "exclude": ["src/tests/**", "src/**/*.test.ts", "src/**/*.spec.ts", "tests/**"]
 }

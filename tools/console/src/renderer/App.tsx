@@ -7,6 +7,7 @@ import { AppHeader, type AppView } from "./components/AppHeader";
 import { DevelopView } from "./components/DevelopView";
 import { CloudView } from "./components/CloudView";
 import { RepoView } from "./components/RepoView";
+import { DeployView } from "./components/DeployView";
 
 //
 // Shell: the two top-level tabs (Develop = build/deploy workspace; Monitor = LocalStack observability)
@@ -39,6 +40,11 @@ export function App()
             {view === "repo" && (
                 <Box sx={{ flexGrow: 1, minHeight: 0 }}>
                     <RepoView />
+                </Box>
+            )}
+            {view === "deploy" && (
+                <Box sx={{ flexGrow: 1, minHeight: 0 }}>
+                    <DeployView />
                 </Box>
             )}
         </Box>

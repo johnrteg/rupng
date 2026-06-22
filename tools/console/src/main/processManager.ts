@@ -293,9 +293,9 @@ class ProcessManager extends EventEmitter
     }
 
     /** Run an arbitrary command, streaming to a (service, stream) log slot. Resolves with the exit code. */
-    exec( service : string, stream : LogStream, cmd : string, args : string[], cwd : string ) : Promise<number>
+    exec( service : string, stream : LogStream, cmd : string, args : string[], cwd : string, env? : NodeJS.ProcessEnv ) : Promise<number>
     {
-        return this.run( service, stream, cmd, args, cwd );
+        return this.run( service, stream, cmd, args, cwd, env );
     }
 
     // ── the pipeline ─────────────────────────────────────────────────────────────────────────────

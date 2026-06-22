@@ -22,6 +22,7 @@ import MergeIcon from "@mui/icons-material/CallMerge";
 import UploadIcon from "@mui/icons-material/Upload";
 import UpgradeIcon from "@mui/icons-material/Upgrade";
 import SyncIcon from "@mui/icons-material/Sync";
+import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 
 import { REPO_ID, type BumpKind, type ClaudeMode, type LogLine, type NpmOutdated, type ProcState, type RepoArea, type RepoBranches, type RepoStatus, type VersionConflict } from "../../shared/types";
 import { api } from "../api";
@@ -93,8 +94,9 @@ export function RepoView()
         setBranches( b );
         setTestSel( new Set( s.areas.map( ( a ) => a.path ) ) );   // auto-select impacted areas
         setIntents( {} );                                          // version intents reset on refresh
-        // both check out and check in default to main (else master, else current)
-        const def : string = b.branches.includes( "main" ) ? "main" : b.branches.includes( "master" ) ? "master" : b.current;
+        // per RELEASE.md, work flows into the active release line — default to the newest release/X.Y
+        const releases : string[] = b.branches.filter( ( x ) => x.startsWith( "release/" ) ).sort().reverse();
+        const def : string = releases[ 0 ] ?? ( b.branches.includes( "main" ) ? "main" : b.branches.includes( "master" ) ? "master" : b.current );
         setPullBranch( ( p ) => p || def );
         setTargetBranch( ( p ) => p || def );
     }, [] );
@@ -125,6 +127,8 @@ export function RepoView()
     const hasChanges : boolean = ( status?.areas ?? [] ).length > 0;
 
     const isMain : boolean = targetBranch === "main" || targetBranch === "master";
+    const targetIsRelease : boolean = targetBranch.startsWith( "release/" );
+    const onSharedLine : boolean = branches.current === "main" || branches.current === "master" || branches.current.startsWith( "release/" );
     const canCommit : boolean = testsPassed && intentsReady && message.trim() !== "" && targetBranch.trim() !== "" && !busy;
 
     /** Apply each selected area's version intent (writes package.json) right before committing. */
@@ -136,7 +140,8 @@ export function RepoView()
     const commitPush = async () : Promise<void> =>
     {
         if ( !canCommit ) return;
-        if ( !window.confirm( `Apply version bumps, then stage + commit + push to "${targetBranch}":\n\n${stagePaths.join( "\n" )}` ) ) return;
+        const warn : string = targetIsRelease ? "\n\n⚠ Direct push to a release line — prefer 'Create PR' so the change is reviewed (RELEASE.md).\n" : "";
+        if ( !window.confirm( `Apply version bumps, then stage + commit + push to "${targetBranch}":${warn}\n${stagePaths.join( "\n" )}` ) ) return;
         await applyIntents();
         await after( api.repoCommitPush( targetBranch.trim(), message.trim(), stagePaths ) );
     };
@@ -326,6 +331,14 @@ export function RepoView()
                         </>
                     ) : (
                         <>
+                            {onSharedLine && (
+                                <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1, p: 0.75, border: "1px solid", borderColor: "warning.main", borderRadius: 1.5 }}>
+                                    <WarningAmberIcon fontSize="small" sx={{ color: "warning.main" }} />
+                                    <Typography variant="caption" sx={{ color: "warning.main" }}>
+                                        You're on <b>{branches.current}</b>, a shared line. Per RELEASE.md, work on a personal branch (<code>{`<dev>-<date>`}</code>) and open a <b>PR</b> into the active <code>release/X.Y</code> line.
+                                    </Typography>
+                                </Box>
+                            )}
                             <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
                                 <Typography variant="caption" sx={{ color: "text.disabled", flexGrow: 1 }}>
                                     Changed areas (checked = included in tests):
