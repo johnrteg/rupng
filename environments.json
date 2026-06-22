@@ -1,0 +1,1 @@
+{ "dev": {"ref":"release/1.1"}, "staging": {"ref":"release/1.0"}, "production": {"ref":"v1.0.0","tag":"v1.0.0"} }
