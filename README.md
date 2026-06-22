@@ -58,6 +58,10 @@ Each `apps/core/<service>` and most `packages/*` carry a `SPECS.md` (detailed re
 
 ## Quick start
 
+Prerequisites: **Node.js**, **Docker**, **AWS CDK CLI** (`npm i -g aws-cdk`), and **GitHub CLI**
+(`gh` — for PRs from the Console + the release workflow; macOS `brew install gh`, then `gh auth login`).
+Full list + install details in [docs/GETSTARTED.md](docs/GETSTARTED.md).
+
 ```bash
 npm install            # install workspace deps
 npm run build          # turbo build all workspaces
