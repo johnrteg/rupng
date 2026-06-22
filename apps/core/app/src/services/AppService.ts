@@ -10,19 +10,22 @@ import { Application, Service, Ports, Register } from "@repo/services";
 export class AppService extends Service
 {
     // name/version of this app, read from apps/core/app/package.json at startup
-    protected pkg : Application.PackageInfo;
+    //protected pkg : Application.PackageInfo;
 
     ///////////////////////////////////////////////////////////////////////////////////////
     constructor( role : AppService.Role )
     {
+        
         // identity = Register.Service.APP (+ role → "app:main"); default to this role's port in the APP block
         // for local dev; a deploy's env PORT overrides it
         super( Register.Service.APP, role, AppService.PORT[ role ] );
 
         // __dirname resolves to apps/core/app/bin/services at runtime; loadPackageInfo walks
         // up to the nearest package.json (apps/core/app/package.json)
-        this.pkg = this.loadPackageInfo( __dirname );
-        this.log.info( "version", { name: this.pkg.name, version: this.pkg.version } );
+        const pkg : Application.PackageInfo = this.loadPackageInfo( __dirname );
+        this.setVersion( pkg.version );
+
+        this.log.info( "version", { name: pkg.name, version: pkg.version } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////

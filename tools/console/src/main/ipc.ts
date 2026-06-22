@@ -23,6 +23,8 @@ import { isWatchSyncing, startWatchSync, stopWatchSync } from "./webDev";
 import { listProxyConfigs, readProxyConfig, writeActiveConfig, writeProxyConfig } from "./proxyConfig";
 import { gatewayTargets } from "./proxyGateway";
 import { branches, bumpVersion, commitPush, createPR, npmOutdated, pull, reinstall, repoStatus, syncVersions, test, updateDeps, versionConflicts } from "./repo";
+import { deployAudit, deployMap, deployProposeTag, deployRefs, deployRun, deployState, deployedVersions, gitVersions, openReleaseLine } from "./deploy";
+import type { DeployEnvConfig, DeployEnvName, DeployRequest } from "../shared/types";
 import { WEBPROXY_ID } from "../shared/types";
 import { isReadOnly, setTarget, targetInfo } from "./aws";
 import { deleteRequest, discoverEndpoints, listSaved, saveRequest, sendRequest } from "./apiTester";
@@ -150,6 +152,17 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     ipcMain.handle( IPC.watchSyncStart, ( _e, service : string ) => startWatchSync( service ) );
     ipcMain.handle( IPC.watchSyncStop, ( _e, service : string ) => { stopWatchSync( service ); } );
     ipcMain.handle( IPC.watchSyncState, ( _e, service : string ) => isWatchSyncing( service ) );
+
+    // ── deploy (git → real AWS environment) ──────────────────────────────────────────────────────
+    ipcMain.handle( IPC.deployRefs, () => deployRefs() );
+    ipcMain.handle( IPC.deployGitVersions, ( _e, ref : string, services : string[] ) => gitVersions( ref, services ) );
+    ipcMain.handle( IPC.deployedVersions, ( _e, config : DeployEnvConfig ) => deployedVersions( config ) );
+    ipcMain.handle( IPC.deployRun, ( _e, req : DeployRequest ) => deployRun( req ) );
+    ipcMain.handle( IPC.deployMap, ( _e, configs : Record<DeployEnvName, DeployEnvConfig> ) => deployMap( configs ) );
+    ipcMain.handle( IPC.deployState, () => deployState() );
+    ipcMain.handle( IPC.deployAudit, ( _e, limit? : number ) => deployAudit( limit ) );
+    ipcMain.handle( IPC.deployProposeTag, ( _e, ref : string ) => deployProposeTag( ref ) );
+    ipcMain.handle( IPC.deployOpenLine, () => openReleaseLine() );
 
     // ── api tester ────────────────────────────────────────────────────────────────────────────────
     ipcMain.handle( IPC.apiDiscover, ( _e, service : string ) => discoverEndpoints( service ) );

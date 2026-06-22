@@ -6,6 +6,9 @@
     "extends": "./tsconfig.json",
     "compilerOptions": {
         "rootDir": "./src",
+        "outDir": "./bin",
+        "declaration": true,
+        "declarationMap": true,
         "paths": {}
     },
     "include": ["src/**/*"],

@@ -133,6 +133,15 @@ export const manifest : ResourceManifest =
             cors       : true,
             throttle   : {  default: { rateLimit: 100, burstLimit: 200 },
                             production: { rateLimit: 1000, burstLimit: 2000 } },
+            // Public, unauthenticated edge routes. /version (and /health) are inherited by every
+            // service from the shared framework; declaring them here gives them a gateway route so
+            // the deploy console can read the live version per environment. (Authed app routes will
+            // be generated from the public RestfulEndpoint defs once that wiring lands.)
+            endpoints  :
+            [
+                { method: "GET", path: "/version", public: true, authRequired: false },
+                { method: "GET", path: "/health",  public: true, authRequired: false },
+            ],
         },
     },
 

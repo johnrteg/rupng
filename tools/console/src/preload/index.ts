@@ -9,7 +9,8 @@ import {
     type LocalStackState, type LogEvent, type LogLine, type LogStream, type S3Listing,
     type Target, type TargetInfo,
     type ApiEndpointDef, type ApiRequestSpec, type ApiResponse, type SavedRequest,
-    type PipelineRequest, type PipelineResult, type ProcState, type ServiceInfo, type StageState
+    type PipelineRequest, type PipelineResult, type ProcState, type ServiceInfo, type StageState,
+    type DeployRequest, type DeployResult, type DeployEnvConfig, type DeployEnvName, type DeployMap, type DeployState, type AuditEntry
 } from "../shared/types";
 
 //
@@ -120,6 +121,17 @@ const api =
     watchSyncStart   : ( service : string ) : Promise<{ ok : boolean; error? : string }> => ipcRenderer.invoke( IPC.watchSyncStart, service ),
     watchSyncStop    : ( service : string ) : Promise<void> => ipcRenderer.invoke( IPC.watchSyncStop, service ),
     watchSyncState   : ( service : string ) : Promise<boolean> => ipcRenderer.invoke( IPC.watchSyncState, service ),
+
+    // deploy (git → real AWS environment)
+    deployRefs        : () : Promise<{ branches : string[]; tags : string[]; current : string }> => ipcRenderer.invoke( IPC.deployRefs ),
+    deployGitVersions : ( ref : string, services : string[] ) : Promise<Record<string, string>> => ipcRenderer.invoke( IPC.deployGitVersions, ref, services ),
+    deployedVersions  : ( config : DeployEnvConfig ) : Promise<{ deployed : Record<string, string>; error? : string }> => ipcRenderer.invoke( IPC.deployedVersions, config ),
+    deployRun         : ( req : DeployRequest ) : Promise<DeployResult> => ipcRenderer.invoke( IPC.deployRun, req ),
+    deployMap         : ( configs : Record<DeployEnvName, DeployEnvConfig> ) : Promise<DeployMap> => ipcRenderer.invoke( IPC.deployMap, configs ),
+    deployState       : () : Promise<DeployState> => ipcRenderer.invoke( IPC.deployState ),
+    deployAudit       : ( limit? : number ) : Promise<AuditEntry[]> => ipcRenderer.invoke( IPC.deployAudit, limit ),
+    deployProposeTag  : ( ref : string ) : Promise<string | undefined> => ipcRenderer.invoke( IPC.deployProposeTag, ref ),
+    deployOpenLine    : () : Promise<{ ok : boolean; line? : string; error? : string }> => ipcRenderer.invoke( IPC.deployOpenLine ),
 
     // live events
     onLog            : ( h : ( line : LogLine ) => void ) : () => void => on( IPC.onLog, h ),

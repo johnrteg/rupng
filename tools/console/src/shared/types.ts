@@ -61,6 +61,142 @@ export const WEBPROXY_ID = "webproxy";
 /** Pseudo-service id the Repo tab streams git/npm output under. */
 export const REPO_ID = "repo";
 
+/** Pseudo-service id the Deploy tab streams git/build/cdk output under. */
+export const DEPLOY_ID = "deploy";
+
+// ── Deploy (git → real AWS environment) ────────────────────────────────────────────────────────
+//
+// The console deploys LOCAL code only to LocalStack (the per-service pipeline). Promoting code to a
+// real AWS account is a separate, deliberate flow: pick an environment, pick a committed git ref,
+// pick services, then the console checks the ref out into an isolated worktree, builds, and runs
+// `cdk deploy <svc>-<env> --profile <p>` (CDK builds + pushes the images and applies CloudFormation).
+//
+
+/** The real AWS environments code can be promoted to (LOCAL is the per-service LocalStack pipeline). */
+export type DeployEnvName = "dev" | "staging" | "production";
+
+export const DEPLOY_ENVS : DeployEnvName[] = [ "dev", "staging", "production" ];
+
+/** Environment → its long-lived git branch (the branch tip IS what belongs in that account). See RELEASE.md. */
+export const ENV_BRANCH : Record<DeployEnvName, string> = { dev: "development", staging: "staging", production: "production" };
+
+/** Per-environment AWS wiring: the named ~/.aws profile + region used for cdk and gateway discovery. */
+export interface DeployEnvConfig
+{
+    /** Named ~/.aws profile passed to `cdk --profile` (and AWS_PROFILE), and used to read deployed versions. */
+    profile : string;
+    /** AWS region for the deploy. */
+    region : string;
+}
+
+/** A request to diff or deploy selected service stacks of a git ref to an environment. */
+export interface DeployRequest
+{
+    env : DeployEnvName;
+    /** Service ids (apps/core/<id>) → stacks `<id>-<env>`. */
+    services : string[];
+    /** Also (re)deploy the shared `platform-<env>` stack. */
+    platform : boolean;
+    /** Committed git ref (a `release/X.Y` line, or a `vX.Y.Z` tag for rollback) to deploy from. */
+    ref : string;
+    /** "diff" previews CloudFormation changes; "deploy" applies them. */
+    mode : "diff" | "deploy";
+    /** AWS wiring for the target env. */
+    config : DeployEnvConfig;
+    /** Production only: the immutable tag to stamp on the deployed commit (proposed vX.Y.Z, editable). */
+    tag? : string;
+    /** Production only: the named approver (must differ from the actor) — change-control authorization. */
+    approver? : string;
+    /** Production only: linked change ticket / issue id. */
+    ticket? : string;
+    /** Production only: emergency change (e.g. skip-staging hotfix) — flagged for retroactive review. */
+    emergency? : boolean;
+}
+
+// ── deploy state (environments.json) + audit trail (deploy-audit.jsonl) ────────────────────────
+// Environments are POINTERS: environments.json records which ref/tag is currently deployed to each
+// account. Both files live on a protected "state/audit" branch (default `main`) so the record is
+// stable regardless of the working branch, and the Console commits them (signed) + pushes per deploy.
+
+/** What is currently deployed to one environment. */
+export interface DeployEnvState
+{
+    /** The ref deployed (a `release/X.Y` line, or a `vX.Y.Z` tag). */
+    ref : string;
+    /** The immutable production tag (production only). */
+    tag? : string;
+    /** ISO timestamp of the deploy. */
+    ts? : string;
+    /** Who performed it (git identity). */
+    actor? : string;
+}
+
+/** environments.json — the env → deployed-ref pointers. */
+export interface DeployState
+{
+    dev : DeployEnvState;
+    staging : DeployEnvState;
+    production : DeployEnvState;
+}
+
+export type AuditAction = "deploy" | "rollback" | "hotfix" | "promote";
+
+/** One append-only line in deploy-audit.jsonl (see RELEASE.md → Compliance & Controls). */
+export interface AuditEntry
+{
+    ts : string;                          // UTC ISO
+    actor : string;                       // git identity that ran it
+    action : AuditAction;
+    environment : DeployEnvName;
+    ref : string;                         // what was deployed
+    tag? : string;                        // resulting immutable tag (production)
+    manifest : Record<string, string>;    // per-service versions at the deployed commit
+    approver? : string;                   // required for production (≠ actor)
+    ticket? : string;
+    emergency? : boolean;
+    result : "success" | "failed";
+    commit? : string;                     // deployed commit sha
+    signed? : boolean;                    // whether the audit commit was GPG/SSH-signed
+}
+
+/** Outcome of a deploy/diff run (per the streamed log). */
+export interface DeployResult { ok : boolean; stage? : string; error? : string; }
+
+/** Versions of each service at a git ref (from package.json) vs what's actually running in an env. */
+export interface DeployVersions
+{
+    /** service id → package.json version at the requested ref. */
+    git : Record<string, string>;
+    /** service id → version reported by the env's aggregated /version (empty if unreachable). */
+    deployed : Record<string, string>;
+    /** non-fatal note (e.g. /version endpoint not reachable / not yet deployed). */
+    error? : string;
+}
+
+/** One environment's column in the service × environment map. */
+export interface DeployEnvMap
+{
+    /** The ref currently deployed to this env (a `release/X.Y` line or `vX.Y.Z` tag), from environments.json. */
+    ref : string;
+    /** The immutable production tag, when set. */
+    tag? : string;
+    /** service id → version committed at `ref`. */
+    branchVersions : Record<string, string>;
+    /** service id → version actually running (from each service's public /version). */
+    liveVersions : Record<string, string>;
+    /** non-fatal note when live versions couldn't be read (no profile / not deployed / unreachable). */
+    liveError? : string;
+}
+
+/** The whole service × environment map + pending-promotion counts between stages. */
+export interface DeployMap
+{
+    envs : Record<DeployEnvName, DeployEnvMap>;
+    /** commits each upstream env branch is ahead of the next (unreleased / pending-release work). */
+    pending : { devAheadOfStaging? : number; stagingAheadOfProduction? : number };
+    error? : string;
+}
+
 // ── Repo (git check-out / check-in) ──────────────────────────────────────────────────────────────
 
 export type RepoAreaKind = "service" | "package" | "cloud" | "console" | "root";
@@ -668,6 +804,16 @@ export const IPC =
     watchSyncStart     : "web:watch-sync-start",
     watchSyncStop      : "web:watch-sync-stop",
     watchSyncState     : "web:watch-sync-state",
+    // deploy (git → real AWS environment)
+    deployRefs         : "deploy:refs",
+    deployGitVersions  : "deploy:git-versions",
+    deployedVersions   : "deploy:deployed-versions",
+    deployRun          : "deploy:run",
+    deployMap          : "deploy:map",
+    deployState        : "deploy:state",
+    deployAudit        : "deploy:audit",
+    deployProposeTag   : "deploy:propose-tag",
+    deployOpenLine     : "deploy:open-line",
     targetGet          : "cloud:target-get",
     targetSet          : "cloud:target-set",
     // api tester
