@@ -1,12 +1,14 @@
 //
-// SNS facade — publish notifications, keyed by cloud-spec LOGICAL SNS topic keys.
+// SNS facade — publish notifications, keyed by cloud-manifest LOGICAL SNS topic keys.
 //
 import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
+import { ResultUtils } from "@repo/common";
+import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
- * SNS facade — publish over `@aws-sdk/client-sns`, addressed by cloud-spec LOGICAL topic keys
+ * SNS facade — publish over `@aws-sdk/client-sns`, addressed by cloud-manifest LOGICAL topic keys
  * (e.g. `"alerts"`).
  *
  * **Use SNS for** fan-out notifications — one publish delivered to many subscribers
@@ -18,15 +20,21 @@ export class Sns
 {
     private _client? : SNSClient;
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** @param cloud the owning service's resolver — maps logical SNS topic keys to topic ARNs. */
     constructor( private readonly cloud : CloudResolver ) {}
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** The raw `SNSClient` — escape hatch (subscribe, attributes, SMS). Lazy + cached. */
     get client() : SNSClient { return this._client ??= ClientUtils.createClient( SNSClient ); }
 
-    /** Resolve a cloud-spec logical SNS topic key (e.g. `"alerts"`) to its physical topic ARN. */
-    arn( key : ResourceKey ) : string { return this.cloud.snsTopicArn( key ); }
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    /** Resolve a cloud-manifest logical SNS topic key (e.g. `"alerts"`) to its physical topic ARN.
+     *  Internal — {@link publish} resolves the ARN for you; callers pass the logical key. (For raw
+     *  `.client` work that needs an ARN, use `cloud.snsTopicArn(key)` directly.) */
+    private arn( key : ResourceKey ) : string { return this.cloud.snsTopicArn( key ); }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * Publish a message to all of the topic's subscribers. Non-string messages are
      * JSON-stringified. For a **FIFO** topic pass `groupId` (ordering scope) and `dedupeId`.
@@ -34,14 +42,17 @@ export class Sns
      * @param message  payload (object → JSON).
      * @param opts     `subject` (email subject line) / FIFO `groupId` + `dedupeId`.
      */
-    async publish( topicKey : ResourceKey, message : string | object, opts : { subject? : string; groupId? : string; dedupeId? : string } = {} ) : Promise<void>
+    publish( topicKey : ResourceKey, message : string | object, opts : { subject? : string; groupId? : string; dedupeId? : string } = {} ) : Promise<Type.Result<void>>
     {
-        await this.client.send( new PublishCommand( {
-            TopicArn               : this.arn( topicKey ),
-            Message                : typeof message === "string" ? message : JSON.stringify( message ),
-            Subject                : opts.subject,
-            MessageGroupId         : opts.groupId,
-            MessageDeduplicationId : opts.dedupeId,
-        } ) );
+        return ResultUtils.from( async () : Promise<void> =>
+        {
+            await this.client.send( new PublishCommand( {
+                TopicArn               : this.arn( topicKey ),
+                Message                : typeof message === "string" ? message : JSON.stringify( message ),
+                Subject                : opts.subject,
+                MessageGroupId         : opts.groupId,
+                MessageDeduplicationId : opts.dedupeId,
+            } ) );
+        } );
     }
 }

@@ -1,5 +1,5 @@
 
-import { Network } from '@repo/common';
+import { NetworkUtils } from '@repo/common';
 import { RestfulEndpoint } from '../RestfulEndpoint';
 import Access from '../Access';
 
@@ -7,7 +7,7 @@ export class postSampleEndpoint extends RestfulEndpoint<postSampleEndpoint.Query
 {
     // required implementations from RestfulEndpoint
     public readonly uri     : string = '/sample/:id';
-    public readonly method  : Network.Method = Network.Method.POST;
+    public readonly method  : NetworkUtils.Method = NetworkUtils.Method.POST;
     public readonly access  : Access.Role | undefined = Access.AccountRole.USER;
     public readonly timeout : number | undefined = undefined;
 

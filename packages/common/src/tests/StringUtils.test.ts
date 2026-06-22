@@ -109,11 +109,7 @@ test('truncate shortens string and adds ...', () => {
     expect(StringUtils.truncate('abc', 5)).toBe('abc');
 });
 
-test('fileSizeToString formats file size', () => {
-    expect(StringUtils.fileSizeToString(0)).toBe('0 B');
-    expect(StringUtils.fileSizeToString(1024)).toBe('1.0 KB');
-    expect(StringUtils.fileSizeToString(1048576)).toBe('1.0 MB');
-});
+// (fileSizeToString moved to ByteUtils.toString — see ByteUtils.test.ts)
 
 test('toMixedCase capitalizes first letter of each word', () => {
     expect(StringUtils.toMixedCase('hello world')).toBe('Hello World');
@@ -398,3 +394,15 @@ describe( "StringUtils.resolvePlaceholders", () =>
 } );
 
 // eof
+describe('StringUtils.isValid (moved from Validator.isString)', () => {
+    test('true only for strings', () => {
+        expect( StringUtils.isValid('text') ).toBe( true );
+        expect( StringUtils.isValid('') ).toBe( true );
+        expect( StringUtils.isValid( 123 ) ).toBe( false );
+        expect( StringUtils.isValid( null ) ).toBe( false );
+        expect( StringUtils.isValid( undefined ) ).toBe( false );
+        expect( StringUtils.isValid( { food: 'bar' } ) ).toBe( false );
+        expect( StringUtils.isValid( true ) ).toBe( false );
+        expect( StringUtils.isValid( new Date() ) ).toBe( false );
+    });
+});

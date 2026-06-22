@@ -1,16 +1,18 @@
 //
 // Database facade — PostgreSQL (RDS / Aurora) via `pg`, through the RDS PROXY endpoint, keyed
-// by a cloud-spec LOGICAL database key. Routes by access mode to the writer or reader endpoint.
+// by a cloud-manifest LOGICAL database key. Routes by access mode to the writer or reader endpoint.
 //
 import { Pool } from "pg";
 import type { PoolClient, QueryResult, QueryResultRow } from "pg";
 import { Signer } from "@aws-sdk/rds-signer";
-import { ResourceKind } from "@repo/cloud-spec";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import { ResourceKind } from "@repo/cloud-manifest";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
+import { ResultUtils } from "@repo/common";
+import type { Type } from "@repo/common";
 
 /**
  * PostgreSQL facade (RDS / Aurora) over `pg`, against the **RDS Proxy** endpoint resolved from a
- * cloud-spec LOGICAL database key (default `"main"`).
+ * cloud-manifest LOGICAL database key (default `"main"`).
  *
  * **Default to DynamoDB instead** for most service data — it runs identically local↔cloud with
  * no proxy/pooling/IAM-user setup. Use this facade only for a genuinely **relational** workload
@@ -101,35 +103,41 @@ export class Database
      * (never string-interpolate — SQL injection).
      * @param access routing — `READ` hits the reader endpoint; default `READ_WRITE` hits the writer.
      */
-    async query<T extends QueryResultRow>( sql : string, params : Array<unknown> = [], access : Database.Access = Database.Access.READ_WRITE ) : Promise<Array<T>>
+    query<T extends QueryResultRow>( sql : string, params : Array<unknown> = [], access : Database.Access = Database.Access.READ_WRITE ) : Promise<Type.Result<Array<T>>>
     {
-        const result : QueryResult<T> = await this.poolFor( access ).query<T>( sql, params );
-        return result.rows;
+        return ResultUtils.from( async () : Promise<Array<T>> =>
+        {
+            const result : QueryResult<T> = await this.poolFor( access ).query<T>( sql, params );
+            return result.rows;
+        } );
     }
 
     /**
      * Run `fn` inside a transaction on the **writer** (`BEGIN`/`COMMIT`, `ROLLBACK` on throw).
      * The provided `PoolClient` is released automatically.
      */
-    async tx<T>( fn : ( client : PoolClient ) => Promise<T> ) : Promise<T>
+    tx<T>( fn : ( client : PoolClient ) => Promise<T> ) : Promise<Type.Result<T>>
     {
-        const client : PoolClient = await this.writer().connect();
-        try
+        return ResultUtils.from( async () : Promise<T> =>
         {
-            await client.query( "BEGIN" );
-            const result : T = await fn( client );
-            await client.query( "COMMIT" );
-            return result;
-        }
-        catch ( error )
-        {
-            await client.query( "ROLLBACK" );
-            throw error;
-        }
-        finally
-        {
-            client.release();
-        }
+            const client : PoolClient = await this.writer().connect();
+            try
+            {
+                await client.query( "BEGIN" );
+                const result : T = await fn( client );
+                await client.query( "COMMIT" );
+                return result;
+            }
+            catch ( error )
+            {
+                await client.query( "ROLLBACK" );
+                throw error;   // rethrow → captured by ResultUtils.from as { ok: false }
+            }
+            finally
+            {
+                client.release();
+            }
+        } );
     }
 
     /** Close the pool(s) — call during graceful shutdown. */

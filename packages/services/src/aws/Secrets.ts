@@ -1,14 +1,16 @@
 //
-// Secrets Manager facade — fetch secret values, keyed by cloud-spec LOGICAL secret keys.
+// Secrets Manager facade — fetch secret values, keyed by cloud-manifest LOGICAL secret keys.
 //
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import type { GetSecretValueCommandOutput } from "@aws-sdk/client-secrets-manager";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
+import { ResultUtils } from "@repo/common";
+import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
 
 /**
  * Secrets Manager facade — read secret values over `@aws-sdk/client-secrets-manager`,
- * addressed by cloud-spec LOGICAL secret keys (e.g. `"db"`).
+ * addressed by cloud-manifest LOGICAL secret keys (e.g. `"db"`).
  *
  * **Use for** credentials and long-lived secrets (DB passwords, third-party API keys) — values
  * that rotate and must never sit in env vars or code. For non-secret, change-without-redeploy
@@ -31,7 +33,7 @@ export class Secrets
     get client() : SecretsManagerClient { return this._client ??= ClientUtils.createClient( SecretsManagerClient ); }
 
     ////////////////////////////////////////////////////////////////////////////////
-    /** Resolve a cloud-spec logical secret key (e.g. `"db"`) to its physical secret ARN. */
+    /** Resolve a cloud-manifest logical secret key (e.g. `"db"`) to its physical secret ARN. */
     arn( key : ResourceKey ) : string { return this.cloud.secretArn( key ); }
 
     ////////////////////////////////////////////////////////////////////////////////
@@ -40,10 +42,13 @@ export class Secrets
      * @param secretKey logical secret key.
      * @returns the secret string, or `undefined` if it has no string value.
      */
-    async get( secretKey : ResourceKey ) : Promise<string | undefined>
+    async get( secretKey : ResourceKey ) : Promise<Type.Result<string | undefined>>
     {
-        const result : GetSecretValueCommandOutput = await this.client.send( new GetSecretValueCommand( { SecretId: this.arn( secretKey ) } ) );
-        return result.SecretString;
+        return ResultUtils.from( async () : Promise<string | undefined> =>
+        {
+            const result : GetSecretValueCommandOutput = await this.client.send( new GetSecretValueCommand( { SecretId: this.arn( secretKey ) } ) );
+            return result.SecretString;
+        } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////
@@ -52,9 +57,10 @@ export class Secrets
      * @typeParam T the expected shape of the parsed secret.
      * @returns the parsed object, or `undefined` if the secret is empty.
      */
-    async getJson<T>( secretKey : ResourceKey ) : Promise<T | undefined>
+    async getJson<T>( secretKey : ResourceKey ) : Promise<Type.Result<T | undefined>>
     {
-        const raw : string | undefined = await this.get( secretKey );
-        return raw ? ( JSON.parse( raw ) as T ) : undefined;
+        const result : Type.Result<string | undefined> = await this.get( secretKey );
+        if( !result.ok ) return result;
+        return ResultUtils.attempt( () => result.data ? ( JSON.parse( result.data ) as T ) : undefined );
     }
 }

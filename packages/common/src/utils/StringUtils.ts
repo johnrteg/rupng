@@ -1,10 +1,15 @@
 //
-import MathUtils        from "./MathUtils";
-import SysConstants     from "./SysConstants";
+import NumberUtils        from "./NumberUtils";
 
 //
 export default class StringUtils
 {
+    /** True if `value` is a string (the type check; moved from `Validator.isString`). `""` counts. */
+    public static isValid( value : any ) : boolean
+    {
+        return typeof value === "string";
+    }
+
     public static readonly ELLIPSE              : string = '…';
     public static readonly COLON                : string = ':';
     public static readonly SPACE                : string = ' ';
@@ -302,7 +307,7 @@ export default class StringUtils
      * Generate a random string of alphabetic characters.
      *
      * Creates a random string containing only uppercase and lowercase letters (a-z, A-Z).
-     * Each character is randomly selected from the alphabet using MathUtils.randomRange().
+     * Each character is randomly selected from the alphabet using NumberUtils.randomRange().
      *
      * @param places - The length of the random string to generate. Must be a positive number.
      * @returns A random string containing only alphabetic characters of the specified length.
@@ -321,7 +326,7 @@ export default class StringUtils
         let i : number;
         for( i=0; i < places; i++ )
         {
-            str += alphabet[ MathUtils.randomRange( 0, nbr ) ];
+            str += alphabet[ NumberUtils.randomRange( 0, nbr ) ];
         }
         return str;
     }
@@ -449,7 +454,7 @@ export default class StringUtils
      * Generate a random string of numeric digits.
      *
      * Creates a random string containing only digits (0-9) of the specified length.
-     * Each digit is randomly selected using MathUtils.randomRange() to ensure uniform
+     * Each digit is randomly selected using NumberUtils.randomRange() to ensure uniform
      * distribution across all possible digit values.
      *
      * @param places - The length of the random digit string to generate. Must be a positive number.
@@ -468,7 +473,7 @@ export default class StringUtils
         let i : number;
         for( i=0; i < places; i++ )
         {
-            str += MathUtils.randomRange( 0, 9 ).toString();
+            str += NumberUtils.randomRange( 0, 9 ).toString();
         }
         return str;
     }
@@ -520,11 +525,11 @@ export default class StringUtils
     {
         const suffix : Array<string> = [ "com", "net", "gov", "edu", "co" ];
         const nbr_suffix : number = suffix.length - 1;
-        let str : string = StringUtils.randomString( MathUtils.randomRange( 4, 10 ) );
+        let str : string = StringUtils.randomString( NumberUtils.randomRange( 4, 10 ) );
         str += "@";
-        str += StringUtils.randomString( MathUtils.randomRange( 10, 20 ) );
+        str += StringUtils.randomString( NumberUtils.randomRange( 10, 20 ) );
         str += ".";
-        str += suffix[ MathUtils.randomRange( 0, nbr_suffix ) ];
+        str += suffix[ NumberUtils.randomRange( 0, nbr_suffix ) ];
         return str.toLowerCase();
     }
 
@@ -551,19 +556,19 @@ export default class StringUtils
     public static randomPhone() : string
     {
         // area code
-        let str : string = MathUtils.randomRange( 2, 7 ).toString();
-        str += MathUtils.randomRange( 0, 9 ).toString();
-        str += MathUtils.randomRange( 1, 9 ).toString();
+        let str : string = NumberUtils.randomRange( 2, 7 ).toString();
+        str += NumberUtils.randomRange( 0, 9 ).toString();
+        str += NumberUtils.randomRange( 1, 9 ).toString();
 
         // number
-        str += MathUtils.randomRange( 1, 9 ).toString();
-        str += MathUtils.randomRange( 0, 9 ).toString();
-        str += MathUtils.randomRange( 1, 9 ).toString();
+        str += NumberUtils.randomRange( 1, 9 ).toString();
+        str += NumberUtils.randomRange( 0, 9 ).toString();
+        str += NumberUtils.randomRange( 1, 9 ).toString();
 
-        str += MathUtils.randomRange( 0, 9 ).toString();
-        str += MathUtils.randomRange( 0, 9 ).toString();
-        str += MathUtils.randomRange( 0, 9 ).toString();
-        str += MathUtils.randomRange( 0, 9 ).toString();
+        str += NumberUtils.randomRange( 0, 9 ).toString();
+        str += NumberUtils.randomRange( 0, 9 ).toString();
+        str += NumberUtils.randomRange( 0, 9 ).toString();
+        str += NumberUtils.randomRange( 0, 9 ).toString();
         return str;
     }
 
@@ -610,35 +615,35 @@ export default class StringUtils
         // Add required uppercase letters
         for( i = 0; i < nbrUpper; i++ )
         {
-            chars.push( upperChars[ MathUtils.randomRange(0, upperChars.length - 1)]);
+            chars.push( upperChars[ NumberUtils.randomRange(0, upperChars.length - 1)]);
         }
         // Add required lowercase letters
         for( i = 0; i < nbrLower; i++)
         {
-            chars.push( lowerChars[ MathUtils.randomRange(0, lowerChars.length - 1)]);
+            chars.push( lowerChars[ NumberUtils.randomRange(0, lowerChars.length - 1)]);
         }
         // Add required numbers
         for( i = 0; i < nbrNumbers; i++)
         {
-            chars.push( numberChars[ MathUtils.randomRange(0, numberChars.length - 1)]);
+            chars.push( numberChars[ NumberUtils.randomRange(0, numberChars.length - 1)]);
         }
         // Add required special characters
         for( i = 0; i < nbrSpecial; i++)
         {
-            chars.push( specialChars[ MathUtils.randomRange(0, specialChars.length - 1)]);
+            chars.push( specialChars[ NumberUtils.randomRange(0, specialChars.length - 1)]);
         }
 
         // Fill the rest with random characters from all sets if needed
         const allChars = upperChars + lowerChars + numberChars + specialChars;
         while( chars.length < length )
         {
-            chars.push( allChars[ MathUtils.randomRange(0, allChars.length - 1)]);
+            chars.push( allChars[ NumberUtils.randomRange(0, allChars.length - 1)]);
         }
 
         // Shuffle the array to randomize character positions
         for (let i = chars.length - 1; i > 0; i--)
         {
-            const j = MathUtils.randomRange(0, i);
+            const j = NumberUtils.randomRange(0, i);
             [chars[i], chars[j]] = [chars[j], chars[i]];
         }
 
@@ -1496,57 +1501,7 @@ export default class StringUtils
             return value;
     }
 
-    //////////////////////////////////////////////////////////////////////////////////
-    /**
-     * Convert a file size in bytes to a human-readable string with appropriate units.
-     *
-     * Converts a numeric byte value into a formatted string using binary units (1024-based)
-     * with appropriate suffixes (B, KB, MB, GB, TB). The method automatically selects the
-     * most appropriate unit to display a readable number (typically between 1-1023) and
-     * formats the result with a specified number of decimal places. Uses standard binary
-     * prefixes where 1 KB = 1024 bytes, following common file system conventions.
-     *
-     * @param size - The file size in bytes to convert. Must be a non-negative number.
-     * @param digits - The number of decimal places to display in the formatted output. Defaults to 1.
-     * @returns A formatted string representing the file size with appropriate units (B, KB, MB, GB, TB).
-     *
-     * @example
-     * ```typescript
-     * // Basic file size conversions
-     * StringUtils.fileSizeToString(0); // '0 B'
-     * StringUtils.fileSizeToString(512); // '512.0 B'
-     * StringUtils.fileSizeToString(1024); // '1.0 KB'
-     * StringUtils.fileSizeToString(1536); // '1.5 KB'
-     * 
-     * // Various file sizes with default 1 decimal place
-     * StringUtils.fileSizeToString(2048); // '2.0 KB'
-     * StringUtils.fileSizeToString(1048576); // '1.0 MB' (1024² bytes)
-     * StringUtils.fileSizeToString(1073741824); // '1.0 GB' (1024³ bytes)
-     * StringUtils.fileSizeToString(1099511627776); // '1.0 TB' (1024⁴ bytes)
-     * 
-     * // Custom decimal precision
-     * StringUtils.fileSizeToString(1536, 0); // '2 KB' (no decimals, rounded)
-     * StringUtils.fileSizeToString(1536, 2); // '1.50 KB' (2 decimal places)
-     * StringUtils.fileSizeToString(1536, 3); // '1.500 KB' (3 decimal places)
-     * 
-     * ```
-     *
-     * @note This method uses binary (base-1024) units following the traditional computing convention
-     * where 1 KB = 1024 bytes, 1 MB = 1024² bytes, etc. This differs from decimal (base-1000) units
-     * sometimes used in marketing where 1 KB = 1000 bytes. The method handles sizes up to terabytes
-     * (TB) and will display very large files in TB units. For files larger than the TB range, the
-     * result may not be as meaningful. The decimal formatting uses toFixed() which rounds the result
-     * to the specified number of decimal places. This method is commonly used in file managers,
-     * upload progress indicators, and storage analytics displays.
-     */
-    public static fileSizeToString( size : number, digits : number = 1 ) : string
-    {
-        if( size == 0 )return "0 B";
-
-        let i     : number = Math.floor( Math.log( size ) / Math.log( 1024 ) );
-        let fsize : number = ( size / Math.pow( SysConstants.Bytes.BYTES_TO_KB , i ) );
-        return fsize.toFixed( digits ) + ' ' + ['B', 'KB', 'MB', 'GB', 'TB'][i];
-    }
+    
 
     /////////////////////////////////////////////////////////////////////////////////
     /**

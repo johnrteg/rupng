@@ -1,6 +1,12 @@
 //
 export default class ObjectUtils
 {
+    /** True if `value` is a non-null object (moved from `Validator.isObject`). Arrays + Dates count
+     *  (they're objects in JS) — use `ArrayUtils.isValid` / `DateUtils.isDate` to distinguish. */
+    public static isValid( value : any ) : boolean
+    {
+        return value !== null && value !== undefined && typeof value === "object";
+    }
 
     ////////////////////////////////////////////////////////////////////////////
     /**

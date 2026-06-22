@@ -1,14 +1,16 @@
 //
 import StringUtils from "./StringUtils";
-import SysConstants     from "./SysConstants";
-import Validator        from "./Validator";
-
-//import { DateTime } from "luxon";
-
-// https://moment.github.io/luxon/#/zones
+import NumberUtils from "./NumberUtils";
 
 export class DateUtils
 {
+    /////////////////////////////////////////////////////////////////////////////////
+    /** True if `value` is a `Date` instance (moved from `Validator.isDate`). Note: doesn't check
+     *  validity of the date's time value — use `!Number.isNaN(value.getTime())` for that. */
+    public static isValid( value : any ) : boolean
+    {
+        return value instanceof Date;
+    }
 
     /////////////////////////////////////////////////////////////////////////////////
     /**
@@ -36,7 +38,7 @@ export class DateUtils
             return null;
         }
         // is a normal number OR looks is a number inside a string ("1776279127870")
-        else if( Validator.isNumber( value ) || ( Validator.isString( value ) && /^\d+$/.test( value as string ) ) )
+        else if( NumberUtils.isValid( value ) || ( StringUtils.isValid( value ) && /^\d+$/.test( value as string ) ) )
         {
             const num_value : number = parseInt( value.toString() );    // catches both cases
             const value_str : string = value.toString();
@@ -50,7 +52,7 @@ export class DateUtils
             else                                    // microseconds
                 return new Date( num_value / 1000 );
         }
-        else if( Validator.isString( value ) && ( value as string ).trim() !== "" )
+        else if( StringUtils.isValid( value ) && ( value as string ).trim() !== "" )
         {
             const value_trimmed : string = ( value as string ).trim();
 
@@ -114,43 +116,9 @@ export class DateUtils
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////
-    /**
-     * Gets the current local time converted to a specified timezone.
-     *
-     * Takes the current local time and converts it to the specified timezone using Luxon's DateTime.
-     * Returns a JavaScript Date object representing what the current time would be in the target timezone.
-     * Note: The returned Date object represents the local time in the target timezone, not a UTC-adjusted time.
-     *
-     * @param tz - The timezone identifier (e.g., 'America/New_York', 'Europe/London', 'Asia/Tokyo').
-     *             Must be a valid IANA timezone name.
-     * @returns A Date object representing the current time as it appears in the specified timezone.
-     *
-     * @example
-     * // Get current time as it appears in New York
-     * DateUtils.tzLocalTime('America/New_York');
-     * 
-     * // Get current time as it appears in London
-     * DateUtils.tzLocalTime('Europe/London');
-     * 
-     */
-     /*
-    public static tzLocalTime( tz : string ): Date
-    {
-        const local   : DateTime = DateTime.local();        // current time
-        const rezoned : DateTime = local.setZone( tz );
-
-        return new Date(
-                        rezoned.year,
-                        rezoned.month - 1,
-                        rezoned.day,
-                        rezoned.hour,
-                        rezoned.minute,
-                        rezoned.second,
-                        rezoned.millisecond
-                    );
-
-    }
-    */
+    // NOTE: date <-> IANA-timezone conversion lives in **TimeZoneUtils** — "current wall-clock in a zone"
+    // is `TimeZoneUtils.nowIn(tz)` (returns a Type.ZonedDateTime, not a Date that misrepresents the
+    // instant). DateUtils keeps machine-local + general date helpers; zoned conversion is not here.
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////
     /**
@@ -348,7 +316,7 @@ export class DateUtils
      */
     public static addMinutes( date : Date, minutes : number ): Date
     {
-        return new Date( date.getTime() + ( minutes * SysConstants.Time.MINUTES_TO_MS ) );
+        return new Date( date.getTime() + ( minutes * DateUtils.Time.MINUTES_TO_MS ) );
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -373,7 +341,7 @@ export class DateUtils
      */
     public static addDays( date : Date, days : number ): Date
     {
-        return new Date( date.getTime() + ( days * SysConstants.Time.DAYS_TO_MS ) );
+        return new Date( date.getTime() + ( days * DateUtils.Time.DAYS_TO_MS ) );
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -400,7 +368,7 @@ export class DateUtils
     public static addHours( date : Date | null, hours : number ): Date | null
     {
         if( date === null )return null;
-        return new Date( date.getTime() + ( hours * SysConstants.Time.HOURS_TO_MS ) );
+        return new Date( date.getTime() + ( hours * DateUtils.Time.HOURS_TO_MS ) );
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -501,7 +469,7 @@ export class DateUtils
         return date.toISOString();
     }
 
-    
+    ///////////////////////////////////////////////////////////////////
     /**
      * Converts a "HH:mm" time string to a Date object with today's date.
      * Returns null if input is falsy or invalid.
@@ -509,7 +477,8 @@ export class DateUtils
      * @param time - Time string in "HH:mm" format.
      * @returns Date object with today's date and given time, or null.
      */
-    public static timeStringToDate(time?: string): Date | null {
+    public static timeStringToDate(time?: string): Date | null
+    {
         if (!time) return null;
         const [h, m] = time.split(":");
         if (h === undefined || m === undefined) return null;
@@ -518,6 +487,7 @@ export class DateUtils
         return d;
     }
 
+    ///////////////////////////////////////////////////////////////////
     /**
      * Converts a Date object to a "HH:mm" time string.
      * Returns empty string if input is null.
@@ -525,7 +495,8 @@ export class DateUtils
      * @param date - Date object.
      * @returns Time string in "HH:mm" format, or "".
      */
-    public static dateToTimeString(date: Date | null): string {
+    public static dateToTimeString(date: Date | null): string
+    {
         if (!date) return "";
         return StringUtils.format(
             "{0}:{1}",
@@ -537,12 +508,12 @@ export class DateUtils
 
 export namespace DateUtils
 {
-    export enum ShortTimeZone
+    export namespace Time
     {
-        ET = "ET",
-        CT = "CT",
-        MT = "MT",
-        PT = "PT"
+        export const SECONDS_TO_MS : number = 1000;
+        export const MINUTES_TO_MS : number = 60000;
+        export const HOURS_TO_MS : number = 3600000;
+        export const DAYS_TO_MS : number = 86400000;
     }
 }
 

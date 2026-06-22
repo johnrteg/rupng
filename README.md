@@ -1,87 +1,68 @@
+# rupng
 
-npm install @types/node --save-dev --workspace=@repo/common
+**RumbleUp** — an omnichannel marketing & engagement platform. A Turborepo + npm-workspaces monorepo
+(TypeScript, Fastify on AWS ECS Fargate + Lambda, AWS CDK infrastructure, React SPA).
 
-$ rm -rf node_modules **/node_modules
-$ rm -rf .turbo **/bin
+This is the **documentation index**. All docs live in [`docs/`](docs/); each service and package also carries
+its own `SPECS.md` / `README.md` next to its code.
 
-#
-# installing packages
-#
-npm install typescript@5.9.3 @types/node@22 --save-dev -W
-# with the `-W` option to put at root for all work spaces
+---
 
+## Documentation
 
-# --------------------------------------------------------------------
-# Install AWS CDK
-`npm install -g aws-cdk`
+### Start here
+| Doc | What it is |
+|---|---|
+| [docs/GETSTARTED.md](docs/GETSTARTED.md) | **Local dev setup** — prerequisites, install, run. |
+| [docs/DEVELOP.md](docs/DEVELOP.md) | **Developing in the monorepo** — layout, day-to-day commands, and how to add a new service/package so it builds, bundles, tests, and containerizes like the rest. |
 
+### Architecture & specs
+| Doc | What it is |
+|---|---|
+| [docs/SPECS.md](docs/SPECS.md) | **Platform specification** — the high-level map + the **spec index** linking every service & package's detailed spec. Start here for "what the platform is." |
+| [cloud/SPECS.md](cloud/SPECS.md) · [cloud/README.md](cloud/README.md) | Infrastructure **design** (tenets, residency, topology) + the **how-to** (add a service to the cloud). |
+| [packages/cloud-manifest/docs/MANIFEST.md](packages/cloud-manifest/docs/MANIFEST.md) · [DYNAMODB.md](packages/cloud-manifest/docs/DYNAMODB.md) | The resource **manifest** reference + **DynamoDB** modeling (entity interface ⇄ table). |
+| [packages/endpoint/SPECS.md](packages/endpoint/SPECS.md) · [packages/system/README.md](packages/system/README.md) | The API contract (one def → client/server/docs) + **`@repo/system`** — the foundation: event vocabulary (object/verb/payload), `Access` ladders, payload repository, service registry. |
+| [packages/services/README.md](packages/services/README.md) (+ [DATABASE.md](packages/services/DATABASE.md)) · [packages/common/src/SPECS.md](packages/common/src/SPECS.md) | AWS facades + `Result` + fair-share queue · shared types/utils. |
 
-* Install localstack:
-# https://www.localstack.cloud/
-1) Register and log into localstack.
-2) `brew install localstack/tap/localstack-cli`
-3) Copy Personal Auth Token from localstack web page after login:
-4) Verify install by `>localstack` -v and should get something like: `LocalStack CLI 2026.5.0`
-5) Set token: `> localstack auth set-token <token>`. Should reply with `Token configured successfully`
-6) Verify token `> localstack auth show-token`
+### Operations
+| Doc | What it is |
+|---|---|
+| [docs/RUNBOOK.md](docs/RUNBOOK.md) | **Operational + incident-response runbooks** and the platform's time commitments (SLAs / cadences). Processes owned by people, not code. |
+| [docs/DR.md](docs/DR.md) | **Disaster Recovery Plan** — RTO/RPO targets, backup cadence, the region-failover runbook, and the quarterly drill. |
 
-7) Run localstack `localstack start`
-* Options: -d (background)
+### Security & compliance
+| Doc | What it is |
+|---|---|
+| [docs/SECURITY_COMPLIANCE.md](docs/SECURITY_COMPLIANCE.md) | **Platform-wide security & compliance overview** — what we cover and how (with per-service pointers) + architecture-impacting gaps. |
+| [docs/SECURITY_QUESTIONS.md](docs/SECURITY_QUESTIONS.md) | The vendor **security questionnaire**, answered against the design (covered / partial / gap). |
 
-     __                     _______ __             __
-    / /   ____  _________ _/ / ___// /_____ ______/ /__
-   / /   / __ \/ ___/ __ `/ /\__ \/ __/ __ `/ ___/ //_/
-  / /___/ /_/ / /__/ /_/ / /___/ / /_/ /_/ / /__/ ,<
- /_____/\____/\___/\__,_/_//____/\__/\__,_/\___/_/|_|
+---
 
-- LocalStack CLI: 2026.5.0
-- Profile: default
-- App: https://app.localstack.cloud
+## Repository layout
 
-[19:28:45] starting LocalStack in Docker mode 🐳                   
+```
+apps/
+  core/<service>/         # platform services (auth, account, contact, campaign, app, media, …)
+  integrations/<vendor>/  # marketplace connectors (hubspot, shopify, zapier, …)
+packages/
+  endpoint/ events/ services/ common/ cloud-manifest/ ai/ tsconfig/
+cloud/                    # AWS CDK app — synthesizes one stack per service from its manifest
+docs/                     # ← all platform-level docs (this index points into them)
+```
 
-8) Status check: `localstack status`
-┌─────────────────┬───────────────────────────────────────────────────────┐
-│ Runtime version │ 2026.5.0                                              │
-│ Docker image    │ tag: latest, id: a3517e7b7c14, 📆 2026-05-20T08:13:15 │
-│ Runtime status  │ ✖ stopped                                             │
-└─────────────────┴───────────────────────────────────────────────────────┘
+Each `apps/core/<service>` and most `packages/*` carry a `SPECS.md` (detailed requirements) and/or `README.md`
+(how-to); the [spec index in docs/SPECS.md](docs/SPECS.md#spec-index) links them all.
 
-9) Stop: `localstack stop`
+---
 
-ls-DoloNUjo-JuBi-7284-raSA-wipIyIyI29c0
+## Quick start
 
-# Start localstack
-`localstack start -d`  // in background
+```bash
+npm install            # install workspace deps
+npm run build          # turbo build all workspaces
+npm run typecheck      # turbo typecheck
+```
 
-in `~/.aws`
-Create `config` file containing:
-[profile localstack]
-region=us-east-1
-output=json
-endpoint_url = http://localhost.localstack.cloud:4556
-
-Create `credentials`
-[localstack]
-aws_access_key_id = test
-aws_secret_access_key = test
-
-
-
-export AWS_ACCESS_KEY_ID=test
-export AWS_SECRET_ACCESS_KEY=test
-
-# --------------------------------------------------------------------
-# setup
-# Deploy to local stack
-`npx aws-cdk-local bootstrap`
-
-# --------------------------------------------------------------------
-# Deploy
-`npx aws-cdk-local deploy --app 'node ./bin/cloud.js'` (-verbose)
-
-# Destroy
-`npx aws-cdk-local destroy --app 'node ./bin/cloud.js`
-
-# Deploy to AWS
-`cdk deploy`
+Full setup, per-service run commands, and LocalStack/CDK usage are in [docs/GETSTARTED.md](docs/GETSTARTED.md)
+and [docs/DEVELOP.md](docs/DEVELOP.md).

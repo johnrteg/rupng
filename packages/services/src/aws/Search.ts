@@ -1,17 +1,19 @@
 //
 // OpenSearch facade — index/search over `@opensearch-project/opensearch` (NOT an AWS SDK
-// client), against the endpoint resolved from a cloud-spec LOGICAL search key. Bound to one
+// client), against the endpoint resolved from a cloud-manifest LOGICAL search key. Bound to one
 // cluster; methods operate on indices within it.
 //
 import { Client } from "@opensearch-project/opensearch";
 import type { ApiResponse } from "@opensearch-project/opensearch";
 import { AwsSigv4Signer } from "@opensearch-project/opensearch/aws";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
-import type { CloudResolver, ResourceKey } from "@repo/cloud-spec";
+import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
+import { ResultUtils } from "@repo/common";
+import type { Type } from "@repo/common";
 
 /**
  * OpenSearch facade — full-text search + analytics over `@opensearch-project/opensearch`,
- * against the endpoint resolved from a cloud-spec LOGICAL search key (default `"search"`).
+ * against the endpoint resolved from a cloud-manifest LOGICAL search key (default `"search"`).
  *
  * **Use for** search and log/analytics queries — never as the system of record (index
  * *projections* of data owned by DynamoDB/RDS). In the cloud, requests are SigV4-signed with
@@ -22,6 +24,7 @@ export class Search
 {
     private _client? : Client;
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * @param cloud     the owning service's resolver — maps the logical search key to an endpoint.
      * @param searchKey logical search key (default `"search"`).
@@ -33,6 +36,7 @@ export class Search
         private readonly service : Search.Service = Search.Service.SERVERLESS,
     ) {}
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** The raw OpenSearch `Client` — escape hatch (bulk, aggregations, mappings, …). Lazy + cached. */
     get client() : Client
     {
@@ -55,43 +59,63 @@ export class Search
         return this._client;
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** Index (create or replace) a document by id; refreshes so it's immediately searchable. */
-    async index( indexName : string, id : string, document : Record<string, unknown> ) : Promise<void>
+    index( indexName : string, id : string, document : Record<string, unknown> ) : Promise<Type.Result<void>>
     {
-        await this.client.index( { index: indexName, id, body: document, refresh: true } );
+        return ResultUtils.from( async () : Promise<void> =>
+        {
+            await this.client.index( { index: indexName, id, body: document, refresh: true } );
+        } );
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /**
      * Run a query and return the matching documents (`_source`). Pass an OpenSearch query DSL
      * object (e.g. `{ match: { name: "ada" } }`). For paging/aggregations/sorting use `.client`.
      * @typeParam T the document shape.
      */
-    async search<T>( indexName : string, query : Record<string, unknown> ) : Promise<Array<T>>
+    search<T>( indexName : string, query : Record<string, unknown> ) : Promise<Type.Result<Array<T>>>
     {
-        const response : ApiResponse = await this.client.search( { index: indexName, body: { query } } );
-        // OpenSearch's response body is loosely typed; narrow to the hits we care about.
-        const hits : Array<{ _source? : T }> = ( response.body as { hits?: { hits?: Array<{ _source? : T }> } } ).hits?.hits ?? [];
-        return hits.map( ( hit ) => hit._source as T );
+        return ResultUtils.from( async () : Promise<Array<T>> =>
+        {
+            const response : ApiResponse = await this.client.search( { index: indexName, body: { query } } );
+            // OpenSearch's response body is loosely typed; narrow to the hits we care about.
+            const hits : Array<{ _source? : T }> = ( response.body as { hits?: { hits?: Array<{ _source? : T }> } } ).hits?.hits ?? [];
+            return hits.map( ( hit ) => hit._source as T );
+        } );
     }
 
-    /** Get one document by id, or `undefined` if it doesn't exist. */
-    async get<T>( indexName : string, id : string ) : Promise<T | undefined>
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    /** Get one document by id; `ok` with `undefined` data if it doesn't exist (404). */
+    get<T>( indexName : string, id : string ) : Promise<Type.Result<T | undefined>>
     {
-        try
+        return ResultUtils.from( async () : Promise<T | undefined> =>
         {
-            const response : ApiResponse = await this.client.get( { index: indexName, id } );
-            return response.body._source as T;
-        }
-        catch
-        {
-            return undefined;   // 404 not_found
-        }
+            try
+            {
+                const response : ApiResponse = await this.client.get( { index: indexName, id } );
+                return response.body._source as T;
+            }
+            catch ( cause : unknown )
+            {
+                // a genuine "not found" is data (undefined), not an error; anything else propagates.
+                const status : number | undefined = ( cause as { statusCode? : number; meta? : { statusCode? : number } } ).statusCode
+                    ?? ( cause as { meta? : { statusCode? : number } } ).meta?.statusCode;
+                if( status === 404 ) return undefined;
+                throw cause;
+            }
+        } );
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** Delete a document by id. */
-    async remove( indexName : string, id : string ) : Promise<void>
+    remove( indexName : string, id : string ) : Promise<Type.Result<void>>
     {
-        await this.client.delete( { index: indexName, id } );
+        return ResultUtils.from( async () : Promise<void> =>
+        {
+            await this.client.delete( { index: indexName, id } );
+        } );
     }
 }
 
@@ -99,7 +123,7 @@ export namespace Search
 {
     /**
      * The SigV4 signing service name — differs by OpenSearch flavor (must match the cluster you
-     * provisioned in cloud-spec):
+     * provisioned in cloud-manifest):
      * - **`SERVERLESS`** (`"aoss"`) — OpenSearch **Serverless** collection (the platform default).
      * - **`DOMAIN`** (`"es"`) — a managed OpenSearch **domain** (node-based).
      */

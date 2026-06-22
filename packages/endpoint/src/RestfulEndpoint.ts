@@ -1,7 +1,6 @@
 //
-import { Network } from "@repo/common";
+import { NetworkUtils, UserAgent } from "@repo/common";
 import Access from "./Access";
-import UserAgent from "./UserAgent";
 
 import Ajv, { Schema, ValidateFunction } from "ajv";
 
@@ -17,7 +16,7 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
 {
     // 1. Core Infrastructure Properties
     public abstract readonly uri: string;
-    public abstract readonly method: Network.Method;
+    public abstract readonly method: NetworkUtils.Method;
     public abstract readonly access: Access.Role | undefined;
     public abstract readonly timeout: number | undefined; // in milliseconds
 
@@ -26,16 +25,35 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
     // exceptions declare it, so concrete endpoints aren't forced to implement it.
     public readonly accessOverride: Array<Access.Role> | undefined = undefined;
 
-    // Whether this endpoint is exposed at the public API Gateway or reachable only inside
-    // the VPC. Defaults to INTERNAL (deny-by-default); public endpoints opt in explicitly.
-    // The /cloud build reads this to generate API Gateway routes from the SAME definition
-    // the web client (marshalClient) and the server (unmarshalServer/execute) use.
-    public readonly exposure: RestfulEndpoint.Exposure = RestfulEndpoint.Exposure.INTERNAL;
+    // AUDIENCE — WHO an endpoint is for + whether it's PUBLISHED, in one deny-by-default field:
+    //   INTERNAL — service-to-service, VPC only (no edge route).
+    //   APP      — first-party web/mobile app: edge-reachable + JWT, but NOT in the public dev API/docs.
+    //   PUBLIC   — published developer API: edge + dev-key/JWT, documented (toOpenApi) + version-stable.
+    // This supersedes the old binary "exposure"; network reachability is now DERIVED from it (below).
+    // The /cloud build + authorizer read it (via `exposure`) from the SAME definition the web client
+    // (marshalClient) and server (unmarshalServer/execute) share. Only PUBLIC is emitted to dev docs.
+    public readonly audience: RestfulEndpoint.Audience = RestfulEndpoint.Audience.INTERNAL;
+
+    // NetworkUtils reachability, DERIVED from audience (edge for APP/PUBLIC, VPC for INTERNAL). Kept so the
+    // /cloud route builder + auth artifact keep one "is this edge-reachable?" signal unchanged.
+    public get exposure(): RestfulEndpoint.Exposure
+    {
+        return this.audience === RestfulEndpoint.Audience.INTERNAL
+            ? RestfulEndpoint.Exposure.INTERNAL
+            : RestfulEndpoint.Exposure.PUBLIC;
+    }
+
+    // Optional doc metadata (summary/description/tags/examples) — lives WITH the definition so the
+    // generated OpenAPI can't drift from the code. Only consumed for PUBLIC endpoints (see toOpenApi).
+    public readonly docs?: RestfulEndpoint.Docs;
 
     // 2. Declarative Schema Configurations
     protected abstract getMappings(): Array<RestfulEndpoint.FieldMap>;
     protected abstract getQuerySchema(): Schema | null;
     protected abstract getBodySchema(): Schema | null;
+    // Optional success-response body shape (JSON Schema) — powers the response section of the docs.
+    // Defaults to none; override to document what an endpoint returns. (JSON Schema == OpenAPI 3.1.)
+    protected getResponseSchema(): Schema | null { return null; }
 
     // 3. Runtime State Containers
     public query!: Q;
@@ -163,6 +181,86 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
             uri      : e.uri,
             exposure : e.exposure,
             access   : e.access,
+        } ) );
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+    * Generate an **OpenAPI 3.1** document from the endpoint definitions — the SAME source of truth the
+    * client (marshalClient) and server (unmarshalServer) already use, so the docs **cannot drift** from
+    * the code. Only **PUBLIC** endpoints are included (APP/INTERNAL are first-party/private). Because
+    * JSON Schema *is* OpenAPI 3.1, the query/body/response schemas embed directly — no translation.
+    * Run it in the build (and diff the output in CI) to keep published docs/SDKs in lockstep.
+    */
+    public static toOpenApi( endpoints : Array<RestfulEndpoint>, info : RestfulEndpoint.OpenApi.Info ) : RestfulEndpoint.OpenApi.Document
+    {
+        const paths : Record<string, Record<string, unknown>> = {};
+
+        for( const endpoint of endpoints )
+        {
+            if( endpoint.audience !== RestfulEndpoint.Audience.PUBLIC ) continue;   // publish only PUBLIC
+
+            const path           : string         = RestfulEndpoint.toOpenApiPath( endpoint.uri );
+            const body           : Schema | null   = endpoint.getBodySchema();
+            const responseSchema : Schema | null   = endpoint.getResponseSchema();
+            const secured        : boolean         = endpoint.access !== undefined;
+
+            const operation : Record<string, unknown> = {
+                operationId : endpoint.docs?.operationId ?? endpoint.constructor.name,
+                summary     : endpoint.docs?.summary,
+                description : endpoint.docs?.description,
+                tags        : endpoint.docs?.tags,
+                deprecated  : endpoint.docs?.deprecated,
+                parameters  : RestfulEndpoint.toOpenApiParams( endpoint ),
+                requestBody : body ? { required: true, content: { "application/json": { schema: body } } } : undefined,
+                responses   : {
+                    "200": { description: "Success", ...( responseSchema ? { content: { "application/json": { schema: responseSchema } } } : {} ) },
+                    "400": { description: "Validation error" },
+                    ...( secured ? { "401": { description: "Unauthenticated" }, "403": { description: "Forbidden" } } : {} ),
+                },
+                security    : secured ? [ { devKey: [] }, { bearer: [] } ] : [],
+            };
+
+            ( paths[ path ] ??= {} )[ endpoint.method.toLowerCase() ] = operation;
+        }
+
+        return {
+            openapi    : "3.1.0",
+            info,
+            paths,
+            components : {
+                securitySchemes : {
+                    devKey : { type: "apiKey", in: "header", name: RestfulEndpoint.RestfulHeaders.DEVKEY },
+                    bearer : { type: "http", scheme: "bearer", bearerFormat: "JWT" },
+                },
+            },
+        };
+    }
+
+    /** Convert a route template's `:param` / `:param?` placeholders to OpenAPI `{param}`. */
+    private static toOpenApiPath( uri : string ) : string
+    {
+        return uri.replace( /:([^/?]+)\??/g, "{$1}" );
+    }
+
+    /** Build OpenAPI `parameters` (path/header/query) from an endpoint's field mappings + query schema. */
+    private static toOpenApiParams( endpoint : RestfulEndpoint ) : Array<Record<string, unknown>>
+    {
+        const locationIn : Record<RestfulEndpoint.AttrLocation, string> = {
+            [ RestfulEndpoint.AttrLocation.URI ]         : "path",
+            [ RestfulEndpoint.AttrLocation.HEADER ]      : "header",
+            [ RestfulEndpoint.AttrLocation.QUERY_PARAM ] : "query",
+        };
+        const querySchema : Schema | null = endpoint.getQuerySchema();
+        const props : Record<string, unknown> = ( typeof querySchema === "object" && querySchema !== null )
+            ? ( ( querySchema as { properties? : Record<string, unknown> } ).properties ?? {} )
+            : {};
+
+        return endpoint.getMappings().map( ( map : RestfulEndpoint.FieldMap ) => ( {
+            name     : map.field,
+            in       : locationIn[ map.location ],
+            required : map.location === RestfulEndpoint.AttrLocation.URI || map.required === true,
+            schema   : props[ map.field ] ?? { type: "string" },
         } ) );
     }
 
@@ -298,7 +396,7 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
     /**
     * Builds a standard error response payload.
     */
-    public failure( status : Network.Status, message? : string ) : RestfulEndpoint.Response
+    public failure( status : NetworkUtils.Status, message? : string ) : RestfulEndpoint.Response
     {
         const err : RestfulEndpoint.ErrorResponse = { message : message };
         return { status : status, data : err };
@@ -311,7 +409,7 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
     */
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
-        return this.failure( Network.Status.NOT_IMPLEMENTED, `Request not implemented yet ${this.method} @ ${this.uri}` );
+        return this.failure( NetworkUtils.Status.NOT_IMPLEMENTED, `Request not implemented yet ${this.method} @ ${this.uri}` );
     }
 }
 
@@ -364,27 +462,70 @@ export namespace RestfulEndpoint
     export interface ClientTransport
     {
         url: string;
-        //method: Network.Method;
+        //method: NetworkUtils.Method;
         //timeout: number;
         headers: Record<string, string>;
         body?  : Record<string, any> | null;
     }
 
-    // Whether an endpoint is reachable from the public API Gateway or only inside the VPC.
+    // NetworkUtils reachability (derived from Audience): edge-reachable vs VPC-only.
     export enum Exposure
     {
         PUBLIC   = "public",
         INTERNAL = "internal",
     }
 
+    // WHO an endpoint is for + whether it's PUBLISHED. Supersedes the binary Exposure (which derives
+    // from this). It's an ascending LADDER, not a union — each level includes the access of the one
+    // below, so you pick exactly ONE value:
+    //   INTERNAL — service-to-service, VPC only (service/IAM auth).
+    //   APP      — first-party web/mobile app: edge, JWT only, NOT published.
+    //   PUBLIC   — published developer API: edge, JWT *or* dev-key, documented + version-stable.
+    // **PUBLIC assumes APP** — a public endpoint is also app-callable (a JWT works on it); it just
+    // ADDITIONALLY accepts a dev-key and appears in the docs. The "JWT or dev-key" OR lives at the
+    // CREDENTIAL layer (the authorizer derives accepted credentials from audience), not here — you
+    // never tag an endpoint APP+PUBLIC. (A rare dev-key-only/no-session endpoint would be a separate
+    // flag, not a fourth audience.)
+    export enum Audience
+    {
+        INTERNAL = "internal",   // service-to-service, VPC only (service/IAM auth)
+        APP      = "app",        // first-party app — edge, JWT only, NOT published
+        PUBLIC   = "public",     // published dev API — edge, JWT OR dev-key, documented + versioned (⊇ APP)
+    }
+
+    // Documentation metadata attached to an endpoint definition (feeds toOpenApi). Per-field
+    // descriptions/examples live in the JSON Schemas themselves (the `description`/`examples` keywords).
+    export interface Docs
+    {
+        summary?     : string;                    // one-line operation summary
+        description? : string;                    // longer markdown description
+        tags?        : Array<string>;             // grouping in the docs (e.g. "Contacts")
+        operationId? : string;                    // stable id for SDK codegen (default: the class name)
+        deprecated?  : boolean;
+        examples?    : Record<string, unknown>;   // example request/response payloads
+    }
+
     // Route metadata extracted from an endpoint definition (see RestfulEndpoint.toRoutes).
     // The /cloud build maps these into API Gateway routes.
     export interface RouteInfo
     {
-        method   : Network.Method;
+        method   : NetworkUtils.Method;
         uri      : string;
         exposure : Exposure;
         access   : Access.Role | undefined;
+    }
+
+    // Minimal OpenAPI 3.1 shapes for the generated document (see RestfulEndpoint.toOpenApi).
+    export namespace OpenApi
+    {
+        export interface Info { title : string; version : string; description? : string; }
+        export interface Document
+        {
+            openapi     : string;
+            info        : Info;
+            paths       : Record<string, Record<string, unknown>>;
+            components? : Record<string, unknown>;
+        }
     }
 
     //
@@ -444,7 +585,7 @@ export namespace RestfulEndpoint
 
     export interface Response
     {
-        status : Network.Status;
+        status : NetworkUtils.Status;
         data?  : any | ErrorResponse;
     }
 

@@ -22,7 +22,7 @@ an alternative.
 | Ephemeral: cache, sessions, rate-limit counters, locks, pub/sub, leaderboards | **Redis** (ElastiCache) |
 
 Repo facades: `Dynamo` · `Database` (`Database.Access` Read/Write/ReadWrite) · `Cache`. Each
-resolves cloud-spec **logical keys** via `CloudResolver` (`tableName` / `databaseUrl` /
+resolves cloud-manifest **logical keys** via `CloudResolver` (`tableName` / `databaseUrl` /
 `cacheEndpoint`).
 
 ---
@@ -60,13 +60,15 @@ resolves cloud-spec **logical keys** via `CloudResolver` (`tableName` / `databas
   and **LSIs** (Local — same PK, alt SK). You design indexes around the queries you'll run.
 - **Single-table design** is common: many entity types in one table, discriminated by key
   prefixes (`ACCOUNT#123`, `CONTACT#456`) — trades modeling effort for fewer round-trips.
-- In cloud-spec: `TableSpec { partitionKey, sortKey?, globalSecondaryIndexes?, billingMode, … }`.
+- In cloud-manifest: `TableSpec { partitionKey, sortKey?, globalSecondaryIndexes?, billingMode, … }`.
+  How a TS **entity interface** maps to that `TableSpec` (keys are the only overlap; schemaless beyond them) +
+  the typed `keyOf`/`ttlOf` binding: [`@repo/cloud-manifest` DYNAMODB.md](../cloud-manifest/docs/DYNAMODB.md).
 
 ### RDS/Aurora
 - Tables = typed **columns** with constraints. Normalized across many tables; relationships via
   **foreign keys**. Indexes (`CREATE INDEX`) for query paths. Full DDL.
-- In cloud-spec: `DatabaseSpec { engine, serverless?, sizing, … }` — the *cluster*; the **schema
-  lives in migrations** the service owns (not in cloud-spec).
+- In cloud-manifest: `DatabaseSpec { engine, serverless?, sizing, … }` — the *cluster*; the **schema
+  lives in migrations** the service owns (not in cloud-manifest).
 
 ### Redis
 - No tables. Keys → values that are strings / hashes / lists / sets / sorted-sets / streams.
@@ -123,6 +125,43 @@ node-pg-migrate / Flyway). The **expand → migrate → contract** pattern is th
 **Redis** — you don't migrate a cache; change the key schema and let it re-warm (or bump a key
 prefix/namespace to invalidate the old shape).
 
+## Production data — access & change discipline (fixes & migrations)
+
+**Default: no standing write access to prod data.** Reads are least-privilege; writes are **break-glass**; every
+change is **code, not console**.
+
+**Access tiers**
+- **Read (troubleshooting)** — a **read-only** IAM role, reached via **SSM / approved access**, **CloudTrail-
+  audited**. Query by **key / GSI** (never **scan** a large prod table); for ad-hoc "find all X", **PITR-export →
+  Athena** (zero live-table impact). **No PII in logs / tickets** (reference opaque ids). EU data stays in the EU
+  account.
+- **Write (fix / migrate)** — **break-glass only**: **time-boxed**, **second-reviewer approved**, **MFA**,
+  **CloudTrail-audited** — *not* a standing permission; scoped to the specific table(s).
+- **Residency** — prod-eu data is fixed / migrated **in the EU account/region**, never pulled cross-jurisdiction.
+
+**Change via code, not the console.** Even a one-row fix is a **reviewed, parameterized, idempotent script** (PR-
+reviewed, run by the runner) — *not* hand-editing items in the console. It's then **repeatable, peer-reviewed,
+dry-runnable, rerunnable**, and leaves an artifact; console hand-edits are unrepeatable + fat-finger-prone.
+
+**The change ladder**
+1. **Hotfix (one / few items)** — a parameterized script doing a **conditional update** (optimistic-concurrency /
+   `schemaVersion` guard) so it **can't clobber a concurrent write**; dry-run (log before/after) → apply.
+2. **Bulk migration / backfill** — a **migration job** (Lambda / Fargate): **idempotent + checkpointed**
+   (resumable), **rate-limited** (WCU cap / token bucket so it **never throttles live traffic**), reading from a
+   **PITR export or DynamoDB Streams** rather than a live scan where possible (see *Migrations* above).
+3. **Schema evolution** — **additive + versioned** (`schemaVersion`; migrate-on-read + backfill job); key/index
+   reshape = new table / GSI → **dual-write → backfill → cut over → retire**. Never destructive in place.
+
+**Safety rules — every prod data change**
+- **Backup first** — on-demand backup / confirm **PITR**, so you can **restore to the moment before**.
+- **Dev → staging → prod** — run the *exact* script through the env ladder first.
+- **Dry-run** — log intended changes (count + sample before/after) before any write.
+- **Idempotent + resumable** — safe to re-run; checkpoint progress.
+- **Rate-limited** — bounded WCU / concurrency; a bulk job must **not** degrade live traffic.
+- **Reversible** — know the rollback (PITR restore, or an inverse script).
+- **Conditional writes** — guard on `version` / `schemaVersion` so you never overwrite newer data.
+- **Audited** — CloudTrail + a migration changelog (what / who / when / how many rows).
+
 ## Seeding
 
 - **DynamoDB** — `BatchWriteItem` (25/req) via a seed script (`Dynamo.client`), or `awslocal
@@ -144,7 +183,7 @@ prefix/namespace to invalidate the old shape).
 
 ## Configuration (in this repo)
 
-| | cloud-spec | CDK (ServiceStack) | Runtime facade |
+| | cloud-manifest | CDK (ServiceStack) | Runtime facade |
 |---|---|---|---|
 | DynamoDB | `owns.tables: TableSpec[]` | table + GSIs + PITR + KMS | `Dynamo` (`new Dynamo(this.cloud)`) |
 | RDS/Aurora | `owns.databases: DatabaseSpec[]` | cluster/instance **+ RDS Proxy + READ_ONLY endpoint** + IAM connect | `Database` (`Database.Access`) |
@@ -174,6 +213,26 @@ All keyed by logical name; the CDK injects the physical id as an env var the fac
 
 This local friction is a real reason DynamoDB is the default. (See `cloud/local/README.md`.)
 
+### Managed engine: Aurora PostgreSQL-Compatible
+
+When a service does need relational, the managed engine is **Amazon Aurora PostgreSQL-Compatible**
+(not plain RDS-for-Postgres) — so the same CDK cluster construct and the same Postgres wire
+protocol / SQL / `pg` driver work in both environments.
+
+* **AWS** — real managed Aurora: Serverless v2 ACU autoscaling, reader replicas, Multi-AZ, Aurora
+  Global Database, optional RDS Data API.
+* **LocalStack (Pro)** — emulates the **cluster control plane** (`CreateDBCluster` with
+  `Engine = aurora-postgresql`, `CreateDBInstance`) and the **RDS Data API** (`rds-data`
+  `ExecuteStatement` / `BatchExecuteStatement`), **backed by a real PostgreSQL** process. You get a
+  cluster + endpoint and normal SQL behavior — enough to develop and integration-test the same
+  constructs.
+* **Stubbed locally — don't test these against LocalStack:** Serverless v2 **autoscaling / pause-resume**
+  (fixed local Postgres), and Aurora's **storage architecture, replicas/replication, Global Database,
+  and failover** behavior/timing. Local = "Aurora API shape over one real Postgres"; the elastic/HA
+  characteristics are AWS-only.
+* The **RDS Proxy** caveat above still applies locally — the `Database` facade's local branch uses
+  password auth + no TLS + no proxy (`DB_PASSWORD`), reserving IAM-via-Proxy for the cloud.
+
 ## Connections & auth
 
 - **DynamoDB** — **connectionless**: HTTPS calls signed with IAM. No pools, no exhaustion — ideal
@@ -192,6 +251,26 @@ This local friction is a real reason DynamoDB is the default. (See `cloud/local/
 - **Redis** — `MULTI/EXEC` + Lua are atomic on a node, but it's not a transactional SoR; don't rely
   on it for durability.
 
+### Read-after-write — "I POST then GET, is it there?"
+
+A successful write is **durably committed** in both stores; the catch is purely *which read sees it*.
+
+| Read | Read-after-write? |
+|---|---|
+| DynamoDB `GetItem` (default) | ❌ not guaranteed (eventually consistent — usually ms) |
+| DynamoDB `get(..., { consistent: true })` / `ConsistentRead` (base table) | ✅ guaranteed |
+| DynamoDB **GSI** query | ❌ *always* eventually consistent — `ConsistentRead` not allowed |
+| RDS read from the **writer** | ✅ guaranteed (ACID; sees committed data) |
+| RDS read from a **reader** (`Database.Access.READ`) | ❌ replication lag (usually ms) |
+
+So immediately after a write:
+- **Same item, by key, must be visible** → DynamoDB: `get(key, { consistent: true })`; RDS: read from the
+  **writer** (`Access.WRITE` / `ReadWrite`), not the reader.
+- **GET is a list/search** (DynamoDB GSI, or an OpenSearch projection) → you *can't* get strong
+  consistency; design for eventual.
+- **Best pattern regardless:** have the **POST return the created resource** in its response, so the
+  client needn't immediately re-GET — sidesteps the consistency window entirely.
+
 ## Backups & disaster recovery
 
 | | DynamoDB | RDS/Aurora | Redis |
@@ -206,14 +285,14 @@ Treat **Redis data as disposable** — design so a cold cache is a performance e
 
 ## Encryption
 
-- **DynamoDB** — **encrypted at rest by default** (AWS-owned key, or a CMK via cloud-spec `kmsKey`);
+- **DynamoDB** — **encrypted at rest by default** (AWS-owned key, or a CMK via cloud-manifest `kmsKey`);
   TLS in transit; IAM for access.
 - **RDS/Aurora** — at-rest encryption via **KMS, set at creation** (can't toggle on an existing
   instance without snapshot→restore — decide up front); TLS in transit (the facade enables it in
   cloud); IAM auth via Proxy.
 - **Redis** — at-rest (KMS) and in-transit (TLS) are **opt-in** on ElastiCache; enable both for
   anything sensitive; use the AUTH token / IAM.
-- Cross-cutting: encrypt with a **customer-managed KMS key** (cloud-spec `kmsKey` on the resource)
+- Cross-cutting: encrypt with a **customer-managed KMS key** (cloud-manifest `kmsKey` on the resource)
   when you need key rotation/audit control; use envelope encryption (`Kms.dataKey`) for
   application-level field encryption regardless of the store.
 

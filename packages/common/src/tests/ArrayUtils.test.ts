@@ -114,3 +114,23 @@ describe("ArrayUtils.removeAllSpaces", () => {
 });
 
 // eof
+describe('ArrayUtils.isValid / isPrimitive (moved from Validator)', () => {
+    test('isValid is true only for arrays', () => {
+        expect( ArrayUtils.isValid( [] ) ).toBe( true );
+        expect( ArrayUtils.isValid( [ 1, 2, 3 ] ) ).toBe( true );
+        expect( ArrayUtils.isValid( { food: 'bar' } ) ).toBe( false );
+        expect( ArrayUtils.isValid( 'array' ) ).toBe( false );
+        expect( ArrayUtils.isValid( null ) ).toBe( false );
+        expect( ArrayUtils.isValid( undefined ) ).toBe( false );
+        expect( ArrayUtils.isValid( new Date() ) ).toBe( false );
+    });
+    test('isPrimitive is true for non-empty primitive arrays', () => {
+        expect( ArrayUtils.isPrimitive( [ 1, 2, 3 ] ) ).toBe( true );
+        expect( ArrayUtils.isPrimitive( [ 'a', 'b' ] ) ).toBe( true );
+        expect( ArrayUtils.isPrimitive( [ true, false ] ) ).toBe( true );
+        expect( ArrayUtils.isPrimitive( [ { id: 1 } ] ) ).toBe( false );
+        expect( ArrayUtils.isPrimitive( [ new Date() ] ) ).toBe( false );
+        expect( ArrayUtils.isPrimitive( [] ) ).toBe( false );
+        expect( ArrayUtils.isPrimitive( 'not array' ) ).toBe( false );
+    });
+});

@@ -1,11 +1,11 @@
 //
 // Unit tests for the RestfulEndpoint -> ApiEndpointSpec adapter (pure mapping; no CDK).
 //
-import { apiEndpoints } from '../lib/endpoints';
-import { ApiEndpointSpec } from '@repo/cloud-spec';
+import { apiEndpoints } from '../src/lib/endpoints';
+import { ApiEndpointSpec } from '@repo/cloud-manifest';
 import { GetHealth, PostLogin } from '@repo/api';
 import { RestfulEndpoint, Access } from '@repo/endpoint';
-import { Network } from '@repo/common';
+import { NetworkUtils } from '@repo/common';
 
 describe('apiEndpoints', () => {
 
@@ -30,7 +30,7 @@ describe('apiEndpoints', () => {
     test('an internal, access-gated endpoint -> not public, authRequired, minRole set', () => {
         // toRoutes only reads method/uri/exposure/access — a minimal stand-in suffices.
         const secure = {
-            method   : Network.Method.GET,
+            method   : NetworkUtils.Method.GET,
             uri      : '/secure',
             exposure : RestfulEndpoint.Exposure.INTERNAL,
             access   : Access.AccountRole.USER,

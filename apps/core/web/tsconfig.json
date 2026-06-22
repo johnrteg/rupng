@@ -2,9 +2,37 @@
   "extends": "@repo/tsconfig/base.json",
   "compilerOptions": {
     "outDir": "./bin",
-    // react/web app - NOT node. Empty types excludes ambient @types/node (hoisted from sibling
-    // packages). Add react/jsx + dom lib + @types/react here when building out the UI.
-    "types": []
+    // `paths` are resolved relative to baseUrl. Set it explicitly so tsc, the editor TS server,
+    // and the bundler all honor these aliases identically.
+    "baseUrl": ".",
+    // react/web app - NOT node. `types: []` excludes ambient @types/node (hoisted from sibling
+    // packages); React/MUI types come in via import resolution, not ambient, so this is fine.
+    "types": [],
+    // React 17+ automatic JSX runtime (no `import React` needed); DOM libs for browser globals
+    // (window/document/Blob/MessageEvent). Bundler resolution so React 19 / MUI 9 `exports` maps resolve.
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "moduleResolution": "Bundler",
+    // NOTE: a child `paths` REPLACES the base's (extends does not merge), so the `@repo/*` source
+    // mappings from base.json must be re-declared here — with `../../../` (apps/core/web is three
+    // levels below the repo root, vs two for packages/tsconfig). Local app aliases follow.
+    "paths" : {
+      "@repo/common"     : ["../../../packages/common/src/index.ts"],
+      "@repo/system"     : ["../../../packages/system/src/index.ts"],
+      "@repo/endpoint"   : ["../../../packages/endpoint/src/index.ts"],
+      "@repo/api"        : ["../../../packages/api/src/index.ts"],
+      "@repo/services"   : ["../../../packages/services/src/index.ts"],
+      "@repo/cloud-manifest" : ["../../../packages/cloud-manifest/src/index.ts"],
+      "@repo/ai"         : ["../../../packages/ai/src/index.ts"],
+      "@repo/oauth"      : ["../../../packages/oauth/src/index.ts"],
+      "@api/*"    : ["src/api/*"],
+      "@model/*"  : ["src/model/*"],
+      "@common/*" : ["src/common/*"],
+      "@pages/*"  : ["src/pages/*"],
+      "@main/*"   : ["src/main/*"],
+      "@utils/*"  : ["src/utils/*"],
+      "@widgets/*": ["src/widgets/*"],
+    }
   },
   "include": ["src/**/*"]
 }

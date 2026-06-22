@@ -10,6 +10,15 @@ node_modules
 .turbo
 **/.turbo
 
+# cdk synth output — lives INSIDE the build context (cloud/cdk.out), so CDK's Docker-asset staging
+# would copy it into itself recursively → ENAMETOOLONG. Must be excluded from the build context.
+cdk.out
+**/cdk.out
+
+# claude code workspace (not part of any image)
+.claude
+**/.logs
+
 # environment files
 .env
 .env.*

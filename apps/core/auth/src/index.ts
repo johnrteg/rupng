@@ -1,5 +1,5 @@
 //
-import { Application, Trace } from "@repo/services";
+import { Application, Trace, Register } from "@repo/services";
 
 import AuthService from "./services/AuthService";
 import AuthReaderService from "./services/AuthReaderService";
@@ -30,7 +30,7 @@ if( factory !== undefined )
 }
 else
 {
-    const log : Trace = new Trace( [ AuthService.ID, 'index' ].join( Application.ID_DIVIDER ), "" );
+    const log : Trace = new Trace( [ Register.Service.AUTH, 'index' ].join( Application.ID_DIVIDER ), "" );
     log.error( `Unknown ROLE: ${role}` );
     process.exit( 1 );
 }

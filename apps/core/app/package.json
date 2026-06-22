@@ -1,0 +1,34 @@
+{
+    "name": "app",
+    "version": "1.0.3",
+    "private": true,
+    "main": "./bin/index.js",
+    "exports": {
+        ".": "./bin/index.js",
+        "./manifest": "./src/CloudManifest.ts"
+    },
+    "scripts": {
+        "build": "rup-bundle && rup-bundle src/jobs/AppTicketJob.ts bin/jobs/AppTicketJob.js && rup-bundle src/jobs/AppTelemetryJob.ts bin/jobs/AppTelemetryJob.js && rup-bundle src/jobs/AppCacheInvalidationJob.ts bin/jobs/AppCacheInvalidationJob.js",
+        "dev": "tsx watch src/index.ts",
+        "typecheck": "tsc --noEmit",
+        "docker:build": "docker build --build-arg APP_NAME=app --build-arg APP_PATH=core/app -t rupapp-app:local ../../..",
+        "docker:main": "docker run --rm -e SERVICE_ROLE=main -e PORT=8100 -e HOST=0.0.0.0 -p 8100:8100 --name rupapp-app-main rupapp-app:local",
+        "docker:public": "docker run --rm -e SERVICE_ROLE=public -e PORT=8101 -e HOST=0.0.0.0 -p 8101:8101 --name rupapp-app-public rupapp-app:local",
+        "docker:up": "docker compose up --build",
+        "docker:down": "docker compose down"
+    },
+    "dependencies": {
+        "@repo/api": "*",
+        "@repo/cloud-manifest": "*",
+        "@repo/common": "*",
+        "@repo/endpoint": "*",
+        "@repo/system": "*",
+        "@repo/services": "*"
+    },
+    "devDependencies": {
+        "@repo/build": "*",
+        "@repo/tsconfig": "*",
+        "@types/node": "26.0.0",
+        "tsx": "4.22.4"
+    }
+}

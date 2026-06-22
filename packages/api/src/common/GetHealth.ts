@@ -1,5 +1,5 @@
 //
-import { Network } from "@repo/common";
+import { NetworkUtils } from "@repo/common";
 import { RestfulEndpoint, Access } from "@repo/endpoint";
 
 /*
@@ -21,10 +21,10 @@ import { RestfulEndpoint, Access } from "@repo/endpoint";
 export class GetHealth extends RestfulEndpoint<GetHealth.Query, undefined>
 {
     public readonly uri      : string = "/health";
-    public readonly method   : Network.Method = Network.Method.GET;
+    public readonly method   : NetworkUtils.Method = NetworkUtils.Method.GET;
     public readonly access   : Access.Role | undefined = undefined;   // non-authenticated
     public readonly timeout  : number | undefined = undefined;        // default
-    public readonly exposure : RestfulEndpoint.Exposure = RestfulEndpoint.Exposure.PUBLIC;
+    public readonly audience : RestfulEndpoint.Audience = RestfulEndpoint.Audience.APP;   // edge-reachable, not a published dev API
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     constructor( query? : GetHealth.Query )
@@ -73,8 +73,8 @@ export namespace GetHealth
     // possible error type
     export enum Error
     {
-        BAD_REQUEST = Network.Status.BAD_REQUEST,
-        INTERNAL_SERVER_ERROR = Network.Status.INTERNAL_SERVER_ERROR,
+        BAD_REQUEST = NetworkUtils.Status.BAD_REQUEST,
+        INTERNAL_SERVER_ERROR = NetworkUtils.Status.INTERNAL_SERVER_ERROR,
     }
 
 }

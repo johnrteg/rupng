@@ -1,39 +1,48 @@
 //
-import * as os from 'os';
-
+// Service — the request-driven Daemon: a long-running Fastify HTTP server (the "serves" role).
+// It blocks on an HTTP listener and reacts to inbound requests. The long-running lifecycle
+// (OS signals, graceful drain, fatal-boot, process.exit) lives on `Daemon`; Service adds only
+// the HTTP server + routing.
+//
 import fastify          from 'fastify';
-import fastifyStatic    from '@fastify/static';
-import proxy            from '@fastify/http-proxy';
 import formbody         from '@fastify/formbody';
 import { FastifyInstance, FastifyReply, FastifyRequest, FastifyError, FastifyListenOptions, HTTPMethods } from 'fastify';
 
 import { randomUUID } from 'crypto';
 
 import { RestfulEndpoint } from '@repo/endpoint';
-import { Network } from '@repo/common';
+import { NetworkUtils } from '@repo/common';
 
-import { Application } from './Application';
+import { Daemon } from './Daemon';
+import type { Register } from '@repo/system';
 import { GetHealthImpl } from './endpoints/GetHealthImpl';
+import { fastifyLogger } from './FastifyLog';
 
 
 
-export class Service extends Application
+export class Service extends Daemon
 {
     protected server    : FastifyInstance | null;
     private log_server  : boolean;
     private port        : number = 8000;
     private host        : string = 'localhost';
-    private shuttingDown : boolean = false;
 
-    // max time to wait for aboutToQuit() before forcing the process to exit
-    private static readonly SHUTDOWN_TIMEOUT_MS : number = 10_000;
-
-    ////////////////////////////////////////////////////////////////////////
-    constructor( name : string, port ? : number )
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * @param service the canonical service id (`Register.Service.*`).
+     * @param role    optional role distinguishing instances (`main`/`public`, `reader`/`writer`) → name `service:role`.
+     * @param port    default local-dev port (from `Ports.*`); a deploy's env `PORT` always overrides it.
+     */
+    constructor( service : Register.Service, role ? : string, port ? : number )
     {
-        super( name );
+        super( service, role );
         this.server     = null;
-        this.port       = port ?? parseInt( process.env.PORT ?? "8000" );
+
+        // Port precedence: env PORT (a deploy/container injects it — it MUST win) → the
+        // service's own default (`port`) → 8000. A non-numeric env PORT falls through to the default.
+        const env_port  : number = parseInt( process.env.PORT ?? "" );
+        this.port       = Number.isNaN( env_port ) ? ( port ?? 8000 ) : env_port;
+
         this.host       = process.env.HOST ?? '0.0.0.0';            // inside container host
         this.log_server = true;
     }
@@ -41,75 +50,10 @@ export class Service extends Application
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
     protected bindCallbacks() : void
     {
+        // Daemon binds the OS-signal handler; Service adds its Fastify error handler.
         super.bindCallbacks();
 
-        this.onSignalShutdown   = this.onSignalShutdown.bind( this );
-        this.processError       = this.processError.bind( this );
-    }
-
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    protected async init() : Promise<void>
-    {
-        await super.init();
-
-        // a long-running service owns its process lifecycle, so it listens for OS shutdown signals
-        this.registerSignals();
-
-        //this.get( "/health", this.getHealth );
-
-
-    }
-
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    private registerSignals() : void
-    {
-        process.on( 'SIGINT', this.onSignalShutdown );
-        process.on( 'SIGTERM', this.onSignalShutdown );
-    }
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    private onSignalShutdown() : void
-    {
-        // ignore repeated signals (e.g. double Ctrl-C) so shutdown only runs once
-        if( this.shuttingDown )
-        {
-            this.log.warn('Service::onSignalShutdown ignored - shutdown already in progress');
-            return;
-        }
-        this.shuttingDown = true;
-
-        this.log.info('Service::onSignalShutdown (SIGINT or SIGTERM)');
-
-        // safety net: if aboutToQuit() hangs, force the process to exit
-        const force = setTimeout( () => {
-            this.log.error('Service::onSignalShutdown timed out - forcing exit');
-            process.exit( 1 );
-        }, Service.SHUTDOWN_TIMEOUT_MS );
-        force.unref();
-
-        this.doShutdown();
-    }
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    private async doShutdown() : Promise<void>
-    {
-        try
-        {
-            await this.aboutToQuit();
-            this.stop( 0 );
-        }
-        catch( err : any )
-        {
-            this.log.error("Error during shutdown", err );
-            this.stop( 1 );
-        }
-    }
-
-    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    private stop( code : number ) : void
-    {
-        this.log.info( "Service shutting down", { code: code } );
-        process.exit( code );
+        this.processError = this.processError.bind( this );
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -145,7 +89,7 @@ export class Service extends Application
             }
             catch( err : any )
             {
-                reply.code( Network.Status.BAD_REQUEST ).send( { message: String( err?.message ?? err ) } );
+                reply.code( NetworkUtils.Status.BAD_REQUEST ).send( { message: String( err?.message ?? err ) } );
                 return;
             }
 
@@ -161,7 +105,7 @@ export class Service extends Application
                 // verify who is asking has access to this endpoint (role)
 
                 // if not, return error
-                // Network.Status.UNAUTHORIZED
+                // NetworkUtils.Status.UNAUTHORIZED
             }
 
             //
@@ -172,14 +116,14 @@ export class Service extends Application
             //
             // reply to client
             //
-            reply.header( Network.HeaderType.CONTENT, Network.MimeType.JSON )
+            reply.header( NetworkUtils.HeaderType.CONTENT, NetworkUtils.MimeType.JSON )
                  .code( response.status )
                  .send( response.data );
         }
         catch( err : any )
         {
             this.log.error( "processEndpoint:exception", err );
-            reply.code( Network.Status.INTERNAL_SERVER_ERROR ).send('server exception');
+            reply.code( NetworkUtils.Status.INTERNAL_SERVER_ERROR ).send('server exception');
         }
     }
 
@@ -239,7 +183,7 @@ export class Service extends Application
             // todo
 
             // todo: make const enum reference for content types
-            reply.header( Network.HeaderType.CONTENT, Network.MimeType.JSON )
+            reply.header( NetworkUtils.HeaderType.CONTENT, NetworkUtils.MimeType.JSON )
                  .header( RestfulEndpoint.RestfulHeaders.TRANSACTION_ID, transaction_id )      // always give it back
                  .header( RestfulEndpoint.RestfulHeaders.STATS, JSON.stringify( stats ) )      // always give it back
                  .code( got.status )
@@ -248,7 +192,7 @@ export class Service extends Application
         catch( err: any )
         {
             this.log.error( "Service::processRequestAsync: exception", err );
-            reply.code( Network.Status.INTERNAL_SERVER_ERROR ).send('Service::processRequestAsync exception');
+            reply.code( NetworkUtils.Status.INTERNAL_SERVER_ERROR ).send('Service::processRequestAsync exception');
         }
     }
 
@@ -269,29 +213,32 @@ export class Service extends Application
     private processError( error: FastifyError, request: FastifyRequest, reply: FastifyReply ) : void
     {
         this.log.error( "processError", { error: error, url: request.url, method: request.method } );
-        reply.status( Network.Status.INTERNAL_SERVER_ERROR ).send( error );
+        reply.status( NetworkUtils.Status.INTERNAL_SERVER_ERROR ).send( error );
         //this.stop( 1 );
     }
 
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // start() is the Application lifecycle's final boot step. For a Service it stands up Fastify and
+    // begins listening; the open socket keeps the process alive (the Daemon owns signals/shutdown).
     protected async start() : Promise<void>
     {
         this.log.info("startServer", { port : this.port, host: this.host } );
 
-        //this.serviceAboutToStart();
-
+        // Route Fastify's own logs through our Trace (one record format) via `loggerInstance` rather
+        // than letting it spin up its own Pino → stdout. When log_server is off, disable logging.
         // https://fastify.dev/docs/latest/Reference/Server/#logger
-        this.server = fastify({ logger                  : this.log_server,
-                                disableRequestLogging   : true,
-                                routerOptions           : {
-                                                            ignoreTrailingSlash     : true,
-                                                            ignoreDuplicateSlashes  : true,
-                                                            caseSensitive           : false,
-                                                            maxParamLength          : 100
-                                                        }
-                                });
-        
+        const routerOptions = {
+            ignoreTrailingSlash     : true,
+            ignoreDuplicateSlashes  : true,
+            caseSensitive           : false,
+            maxParamLength          : 100
+        };
+
+        this.server = this.log_server
+            ? fastify({ loggerInstance: fastifyLogger( this.log ), disableRequestLogging: true, routerOptions })
+            : fastify({ logger: false, disableRequestLogging: true, routerOptions });
+
         this.server.setErrorHandler( this.processError );
 
         this.addServerRegister();
@@ -310,23 +257,7 @@ export class Service extends Application
             this.log.error( "startServer exception", err );
             process.exit( 1 );
         }
-        
-    }
 
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // A long-running service cannot continue without a successful boot, so a failed run()
-    // is fatal: log and exit non-zero. (process.exit lives here, not in Application.)
-    public async run() : Promise<void>
-    {
-        try
-        {
-            await super.run();
-        }
-        catch( err : any )
-        {
-            this.log.error( "Service::run boot failed - exiting", { code: 1 } );
-            process.exit( 1 );
-        }
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -337,10 +268,15 @@ export class Service extends Application
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // allow inherited servies to perform clean up on exit
-    // like cleaning up database connections
+    // gracefully close the HTTP server (stop accepting + drain in-flight) before the Daemon exits.
     protected async aboutToQuit() : Promise<void>
     {
+        if( this.server )
+        {
+            try { await this.server.close(); }
+            catch( err : any ) { this.log.error( "Service::aboutToQuit server.close failed", err ); }
+        }
+        await super.aboutToQuit();
     }
 
 }

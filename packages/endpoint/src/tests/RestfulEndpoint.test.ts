@@ -1,5 +1,5 @@
 //
-import { Network } from '@repo/common';
+import { NetworkUtils } from '@repo/common';
 import { Schema } from 'ajv';
 import { RestfulEndpoint } from '../RestfulEndpoint';
 import Access from '../Access';
@@ -14,7 +14,7 @@ import Access from '../Access';
 class GetByIdEndpoint extends RestfulEndpoint<{ id: string }, undefined>
 {
   public readonly uri     : string = '/sample/:id';
-  public readonly method  : Network.Method = Network.Method.GET;
+  public readonly method  : NetworkUtils.Method = NetworkUtils.Method.GET;
   public readonly access  : Access.Role | undefined = Access.AccountRole.USER;
   public readonly timeout : number | undefined = undefined;
 
@@ -35,7 +35,7 @@ class GetByIdEndpoint extends RestfulEndpoint<{ id: string }, undefined>
 class PostEndpoint extends RestfulEndpoint<{ id: string }, { color: string; count: number }>
 {
   public readonly uri     : string = '/sample/:id';
-  public readonly method  : Network.Method = Network.Method.POST;
+  public readonly method  : NetworkUtils.Method = NetworkUtils.Method.POST;
   public readonly access  : Access.Role | undefined = Access.AccountRole.USER;
   public readonly timeout : number | undefined = undefined;
 
@@ -64,7 +64,7 @@ class PostEndpoint extends RestfulEndpoint<{ id: string }, { color: string; coun
 class NumQueryEndpoint extends RestfulEndpoint<{ n: number }, undefined>
 {
   public readonly uri     : string = '/n';
-  public readonly method  : Network.Method = Network.Method.GET;
+  public readonly method  : NetworkUtils.Method = NetworkUtils.Method.GET;
   public readonly access  : Access.Role | undefined = Access.AccountRole.USER;
   public readonly timeout : number | undefined = undefined;
 
@@ -85,7 +85,7 @@ class NumQueryEndpoint extends RestfulEndpoint<{ n: number }, undefined>
 class OptionalEndpoint extends RestfulEndpoint<{ id?: string }, undefined>
 {
   public readonly uri     : string = '/users/:id?';
-  public readonly method  : Network.Method = Network.Method.GET;
+  public readonly method  : NetworkUtils.Method = NetworkUtils.Method.GET;
   public readonly access  : Access.Role | undefined = Access.AccountRole.USER;
   public readonly timeout : number | undefined = undefined;
 
@@ -106,7 +106,7 @@ class OptionalEndpoint extends RestfulEndpoint<{ id?: string }, undefined>
 class MultiParamEndpoint extends RestfulEndpoint<{ a: string; b: string }, undefined>
 {
   public readonly uri     : string = '/u/:a/:b';
-  public readonly method  : Network.Method = Network.Method.GET;
+  public readonly method  : NetworkUtils.Method = NetworkUtils.Method.GET;
   public readonly access  : Access.Role | undefined = Access.AccountRole.USER;
   public readonly timeout : number | undefined = undefined;
 
@@ -135,7 +135,7 @@ class MultiParamEndpoint extends RestfulEndpoint<{ a: string; b: string }, undef
 class HeaderEndpoint extends RestfulEndpoint<{ SessionId: string }, undefined>
 {
   public readonly uri     : string = '/h';
-  public readonly method  : Network.Method = Network.Method.GET;
+  public readonly method  : NetworkUtils.Method = NetworkUtils.Method.GET;
   public readonly access  : Access.Role | undefined = Access.AccountRole.USER;
   public readonly timeout : number | undefined = undefined;
 
@@ -156,7 +156,7 @@ class HeaderEndpoint extends RestfulEndpoint<{ SessionId: string }, undefined>
 class QueryParamEndpoint extends RestfulEndpoint<{ q: string }, undefined>
 {
   public readonly uri     : string = '/search';
-  public readonly method  : Network.Method = Network.Method.GET;
+  public readonly method  : NetworkUtils.Method = NetworkUtils.Method.GET;
   public readonly access  : Access.Role | undefined = Access.AccountRole.USER;
   public readonly timeout : number | undefined = undefined;
 
@@ -177,7 +177,7 @@ class QueryParamEndpoint extends RestfulEndpoint<{ q: string }, undefined>
 class TrailingSlashEndpoint extends RestfulEndpoint<{}, undefined>
 {
   public readonly uri     : string = '/thing/';
-  public readonly method  : Network.Method = Network.Method.GET;
+  public readonly method  : NetworkUtils.Method = NetworkUtils.Method.GET;
   public readonly access  : Access.Role | undefined = Access.AccountRole.USER;
   public readonly timeout : number | undefined = undefined;
 

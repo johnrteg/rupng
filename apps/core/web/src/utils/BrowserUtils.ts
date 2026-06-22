@@ -1,6 +1,6 @@
 //
 import { useMediaQuery, useTheme } from '@mui/material';
-import { StringUtils, Network } from '@repo/common';
+import { StringUtils, NetworkUtils } from '@repo/common';
 import { RestfulService } from '@repo/endpoint';
 
 export default class BrowserUtils
@@ -97,7 +97,7 @@ export default class BrowserUtils
     /**
      * Open the given URL in a new browser tab/window if it appears to be an absolute URL.
      *
-     * @param url - The URL to open. Should include a protocol (e.g. "https://example.com") or otherwise contain Network.PROTOCOL_SEPARATOR (typically "://").
+     * @param url - The URL to open. Should include a protocol (e.g. "https://example.com") or otherwise contain NetworkUtils.PROTOCOL_SEPARATOR (typically "://").
      *                Empty strings or relative URLs will be ignored.
      *
      * @example
@@ -105,7 +105,7 @@ export default class BrowserUtils
      */
     public static open( url : string ): void
     {
-        if( url !== "" && url.indexOf( Network.PROTOCOL_SEPARATOR ) > 0 )window.open( url, "_blank" );
+        if( url !== "" && url.indexOf( NetworkUtils.PROTOCOL_SEPARATOR ) > 0 )window.open( url, "_blank" );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -114,70 +114,6 @@ export default class BrowserUtils
         let link : string = StringUtils.format( "mailto:{0}", email );
         if( subject !== undefined )link += StringUtils.format( "?subject={0}", subject );
         window.open( link, "_blank" );
-    }
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    /**
-     * Whether the current viewport matches the "mobile" breakpoint.
-     *
-     * This uses the theme's "tablet" breakpoint as the threshold: returns true when
-     * the viewport width is below the tablet breakpoint (i.e. considered mobile).
-     *
-     * @returns {boolean} True when current screen width is less than the theme's tablet breakpoint.
-     *
-     * @example
-     * if (BrowserUtils.isMobile) { ... }
-     */
-    public static get isMobile() : boolean
-    {
-        // is mobile if current screen width is < tablet threshold
-        return useMediaQuery( useTheme().breakpoints.down('tablet') );
-    }
-    
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-   /**
-     * Whether the current viewport matches the "tablet" breakpoint.
-     *
-     * Uses the theme's breakpoint utilities; returns true when the viewport width
-     * matches the tablet breakpoint (i.e. considered tablet).
-     *
-     * @returns {boolean} True when the current screen width matches the tablet breakpoint.
-     *
-     * @example
-     * if (BrowserUtils.isTablet) { ...}
-     */
-    public static get isTablet() : boolean
-    {
-        // is tablet if current screen width is > desktop threshold
-        return useMediaQuery( useTheme().breakpoints.up('tablet') );
-    }
-    
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-     /**
-     * Whether the current viewport matches the "desktop" breakpoint.
-     *
-     * Uses the theme's breakpoint utilities; returns true when the viewport width
-     * is greater than or equal to the desktop breakpoint.
-     *
-     * @returns {boolean} True when the current screen width is at or above the desktop breakpoint.
-     *
-     * @example
-     * if (BrowserUtils.isDesktop) { ... }
-     */
-    public static get isDesktop() : boolean
-    {
-        //console.log( theme.breakpoints );
-        // is desktop if current screen width is > tablet threshold
-        return useMediaQuery( useTheme().breakpoints.up('tablet') );
-    }
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //  when below this width
-    public static get isNarrow() : boolean
-    {
-        //console.log( theme.breakpoints );
-        // is desktop if current screen width is > tablet threshold
-        return useMediaQuery( useTheme().breakpoints.down('tablet') );
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -745,16 +681,16 @@ export default class BrowserUtils
      * using a temporary anchor element. The filename is sanitized to remove invalid characters.
      *
      * @param data - The raw string data to download. Can be text, JSON, CSV, or other string-based content.
-     * @param mime - The MIME type for the file (e.g. Network.MimeType.TEXT_PLAIN, Network.MimeType.APPLICATION_JSON).
+     * @param mime - The MIME type for the file (e.g. NetworkUtils.MimeType.TEXT_PLAIN, NetworkUtils.MimeType.APPLICATION_JSON).
      * @param default_name - The default filename for the download. Invalid characters will be replaced with underscores.
      * @returns A Promise that resolves when the download is initiated.
      *
      * @example
-     * await BrowserUtils.downloadRaw('Hello World', Network.MimeType.TEXT_PLAIN, 'hello.txt');
-     * await BrowserUtils.downloadRaw(JSON.stringify(data), Network.MimeType.APPLICATION_JSON, 'data.json');
+     * await BrowserUtils.downloadRaw('Hello World', NetworkUtils.MimeType.TEXT_PLAIN, 'hello.txt');
+     * await BrowserUtils.downloadRaw(JSON.stringify(data), NetworkUtils.MimeType.APPLICATION_JSON, 'data.json');
      */
     public static async downloadRaw(    data : string, // | ArrayBuffer | Uint8Array,
-                                        mime : Network.MimeType,
+                                        mime : NetworkUtils.MimeType,
                                         default_name : string ) : Promise<void>
     {
         let blob : Blob = new Blob([ data as string ], { type: mime });

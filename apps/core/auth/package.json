@@ -1,6 +1,6 @@
 {
     "name": "auth",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "private": true,
     "main": "./bin/index.js",
     "scripts": {
@@ -17,7 +17,7 @@
     "devDependencies": {
         "@repo/build": "*",
         "@repo/tsconfig": "*",
-        "@types/node": "25.9.1",
+        "@types/node": "26.0.0",
         "tsx": "4.22.4"
     }
 }

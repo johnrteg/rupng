@@ -1,6 +1,6 @@
 {
     "name": "@repo/api",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "private": true,
     "main": "./bin/index.js",
     "types": "./bin/index.d.ts",
@@ -14,6 +14,6 @@
     },
     "devDependencies": {
         "@repo/tsconfig": "*",
-        "@types/node": "25.9.1"
+        "@types/node": "26.0.0"
     }
 }
