@@ -1,41 +1,58 @@
 //
-import { Endpoint } from "@repo/endpoint";
+import { RestfulEndpoint, Access } from "@repo/endpoint";
 import { Network } from "@repo/common";
 
 /*
     client:
-    const endpt : GetHealth = new GetHealth( {} );
+    const endpt : PostLogin = new PostLogin( { account, password } );
     const response : Restful.Response = await appdata.server.fetch( endpt );
-    if( response.ok )
-    {
-        const reply : GetHealth.Response = response.data;
-    }
 
     server:
     // register
-    server.register( new GetHealth(), callback );
+    server.register( new PostLogin(), callback );
 
     // respond
-    const Endpoint.Response : resp = await GetHeath.execute( auth );
+    const RestfulEndpoint.Response : resp = await PostLogin.execute( auth );
 */
-export class PostLogin extends Endpoint
+export class PostLogin extends RestfulEndpoint<{}, PostLogin.Body>
 {
-    protected request? : PostLogin.Request;
+    public readonly uri      : string = PostLogin.URI;
+    public readonly method   : Network.Method = Network.Method.POST;
+    public readonly access   : Access.Role | undefined = undefined;   // non-authenticated
+    public readonly timeout  : number | undefined = undefined;
+    public readonly exposure : RestfulEndpoint.Exposure = RestfulEndpoint.Exposure.PUBLIC;
 
-    constructor( request? : PostLogin.Request )
+    constructor( body? : PostLogin.Body )
     {
-        super( Network.Method.POST, PostLogin.URI );
-        this.request = request;
+        super( {}, body );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    protected getMappings(): Array<Endpoint.FieldMapping>
+    public getMappings(): Array<RestfulEndpoint.FieldMap>
     {
-        return [ { field : "account", location: Endpoint.AttrLocation.BODY, required: true, type : "string" },
-                 { field : "password", location: Endpoint.AttrLocation.BODY, required: true, type : "string" }
-                ];
+        // account & password travel in the JSON body, validated by getBodySchema()
+        return [];
     }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    public getQuerySchema(): RestfulEndpoint.Schema | null
+    {
+        return null;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    public getBodySchema(): RestfulEndpoint.SchemaFor<PostLogin.Body> | null
+    {
+        return {
+            type: 'object',
+            properties: {
+                account:  { type: 'string' },
+                password: { type: 'string' }
+            },
+            required: ['account', 'password'],
+            additionalProperties: false
+        };
+    }
 }
 
 
@@ -43,7 +60,7 @@ export namespace PostLogin
 {
     export const URI : string = "/login";
 
-    export interface Request extends Endpoint.NonAuthRequest
+    export interface Body extends RestfulEndpoint.NonAuthRequest
     {
         account : string;
         password : string;

@@ -1,11 +1,11 @@
-   {
+{
     "name": "@repo/endpoint",
     "version": "1.0.0",
     "private": true,
     "main": "./bin/index.js",
     "types": "./bin/index.d.ts",
     "scripts": {
-        "build": "tsc",
+        "build": "tsc -p tsconfig.build.json",
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {
@@ -14,6 +14,8 @@
         "ajv-formats": "3.0.1"
     },
     "devDependencies": {
-        "axios": "^1.16.1"
+        "@repo/tsconfig": "*",
+        "@types/node": "25.9.1",
+        "axios": "1.16.1"
     }
 }

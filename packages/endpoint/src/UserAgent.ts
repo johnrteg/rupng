@@ -1,5 +1,33 @@
 
 
+//
+// Compiled once at module load rather than on every parse() call.
+//
+const SEARCH_ENGINES : RegExp = /googlebot|bingbot|yandexbot|baiduspider|duckduckbot|slurp|ia_archiver/i;
+const DEV_TOOLS      : RegExp = /curl|wget|axios|postman|insomnia|go-http-client|python-requests|node-fetch/i;
+const SCRAPERS       : RegExp = /headlesschrome|selenium|playwright|puppeteer|semrushbot|dotbot|ahrefsbot/i;
+
+const TABLET_RE : RegExp = /tablet|ipad|playbook|silk/i;
+const MOBILE_RE : RegExp = /mobile|iphone|ipod|android|blackberry|iemobile/i;
+
+const IOS_DEVICE_RE : RegExp = /iPhone|iPad|iPod/i;
+const MAC_RE        : RegExp = /Macintosh/i;
+const WINDOWS_RE    : RegExp = /Windows/i;
+const ANDROID_RE    : RegExp = /Android/i;
+const LINUX_RE      : RegExp = /Linux/i;
+
+const MAC_VERSION_RE     : RegExp = /Mac OS X (\d+[._]\d+[._]\d+)/i;
+const WINDOWS_VERSION_RE : RegExp = /Windows NT (\d+\.\d+)/i;
+const IOS_VERSION_RE     : RegExp = /OS (\d+[._]\d+(?:[._]\d+)?)/i;
+const ANDROID_VERSION_RE : RegExp = /Android (\d+(\.\d+)?)/i;
+
+const EDGE_RE          : RegExp = /Edg\/(\d+\.\d+\.\d+\.\d+)/i;
+const CHROME_RE        : RegExp = /Chrome\/(\d+\.\d+\.\d+\.\d+)/i;
+const SAFARI_RE        : RegExp = /Safari/i;
+const SAFARI_VERSION_RE: RegExp = /Version\/(\d+\.\d+(\.\d+)?)/i;
+const FIREFOX_RE       : RegExp = /Firefox\/(\d+\.\d+)/i;
+
+
 export namespace UserAgent
 {
     export enum OS
@@ -57,7 +85,7 @@ export namespace UserAgent
     export function parse(uaString: string | undefined): Info
     {
         // Fallback defaults for missing or empty headers
-        let fallback: Info =
+        const fallback: Info =
         {
             os: UserAgent.OS.UNKNOWN,
             browser: UserAgent.Browser.UNKNOWN,
@@ -66,100 +94,95 @@ export namespace UserAgent
             browserVersion: "0.0.0",
         };
 
-        // Regex dictionaries for quick matching
-        const SEARCH_ENGINES : RegExp = /googlebot|bingbot|yandexbot|baiduspider|duckduckbot|slurp|ia_archiver/i;
-        const DEV_TOOLS : RegExp = /curl|wget|axios|postman|insomnia|go-http-client|python-requests|node-fetch/i;
-        const SCRAPERS : RegExp = /headlesschrome|selenium|playwright|puppeteer|semrushbot|dotbot|ahrefsbot/i;
-
-
         if( !uaString || uaString.trim() === "" ) return fallback;
 
-        // 0. bots
+        // 1. Evaluate bot signatures (match once, reuse the capture)
         let bot : BotInfo | undefined = undefined;
 
-        let isBot = false;
-        let botType = BotType.NOT_A_BOT;
-        let botName: string | null = null;
+        const searchMatch = uaString.match(SEARCH_ENGINES);
+        const devMatch    = uaString.match(DEV_TOOLS);
+        const scraperMatch = uaString.match(SCRAPERS);
 
-        // 1. Evaluate Bot Signatures
-        if (SEARCH_ENGINES.test(uaString))
+        if (searchMatch)
         {
-            bot = { type : BotType.SEARCH_ENGINE, name : uaString.match(SEARCH_ENGINES)?.[0] || "Unknown Search Bot" };
-
+            bot = { type : BotType.SEARCH_ENGINE, name : searchMatch[0] };
         }
-        else if (DEV_TOOLS.test(uaString))
+        else if (devMatch)
         {
-            bot = { type : BotType.DEVELOPER_TOOL, name : uaString.match(DEV_TOOLS)?.[0] || "Unknown Dev Tool" };
+            bot = { type : BotType.DEVELOPER_TOOL, name : devMatch[0] };
         }
-        else if (SCRAPERS.test(uaString))
+        else if (scraperMatch)
         {
-            bot = { type : BotType.SCRAPER, name : uaString.match(SCRAPERS)?.[0] || "Unknown Scraper" };
+            bot = { type : BotType.SCRAPER, name : scraperMatch[0] };
         }
 
-        // 2. Determine Device Type (Basic mobile/tablet heuristics)
+        // 2. Determine device type (basic mobile/tablet heuristics)
         let device = UserAgent.Device.DESKTOP;
-        if (/tablet|ipad|playbook|silk/i.test(uaString)) {
+        if (TABLET_RE.test(uaString)) {
             device = UserAgent.Device.TABLET;
-        } else if (/mobile|iphone|ipod|android|blackberry|iemobile/i.test(uaString)) {
+        } else if (MOBILE_RE.test(uaString)) {
             device = UserAgent.Device.MOBILE;
         }
 
-        // 3. Parse Operating System & OS Version
+        // 3. Parse operating system & OS version.
+        // iOS devices are checked before Macintosh because they're unambiguous. Note: iPadOS in
+        // desktop mode reports "Macintosh" with no iPad token, so those iPads fall through to MACOS.
         let os = UserAgent.OS.UNKNOWN;
         let osVersion = "0.0.0";
 
-        if (/Macintosh/i.test(uaString))
-        {
-            os = UserAgent.OS.MACOS;
-            const match = uaString.match(/Mac OS X (\d+[._]\d+[._]\d+)/i);
-            osVersion = match ? match[1].replace(/_/g, ".") : "10.0.0";
-        } else if (/Windows/i.test(uaString))
-        {
-            os = UserAgent.OS.WINDOWS;
-            const match = uaString.match(/Windows NT (\d+\.\d+)/i);
-            osVersion = match ? match[1] : "10.0";
-        } else if (/iPhone|iPad|iPod/i.test(uaString))
+        if (IOS_DEVICE_RE.test(uaString))
         {
             os = UserAgent.OS.IOS;
-            const match = uaString.match(/OS (\d+[._]\d+(?:[._]\d+)?)/i);
+            const match = uaString.match(IOS_VERSION_RE);
             osVersion = match ? match[1].replace(/_/g, ".") : "0.0.0";
-        } else if (/Android/i.test(uaString))
+        } else if (MAC_RE.test(uaString))
+        {
+            os = UserAgent.OS.MACOS;
+            const match = uaString.match(MAC_VERSION_RE);
+            osVersion = match ? match[1].replace(/_/g, ".") : "10.0.0";
+        } else if (WINDOWS_RE.test(uaString))
+        {
+            os = UserAgent.OS.WINDOWS;
+            const match = uaString.match(WINDOWS_VERSION_RE);
+            osVersion = match ? match[1] : "10.0";
+        } else if (ANDROID_RE.test(uaString))
         {
             os = UserAgent.OS.ANDROID;
-            const match = uaString.match(/Android (\d+(\.\d+)?)/i);
+            const match = uaString.match(ANDROID_VERSION_RE);
             osVersion = match ? match[1] : "0.0.0";
-        } else if (/Linux/i.test(uaString))
+        } else if (LINUX_RE.test(uaString))
         {
             os = UserAgent.OS.LINUX;
         }
 
-        // 4. Parse Browser Engine & Browser Version
+        // 4. Parse browser & browser version (match once per candidate).
         let browser = UserAgent.Browser.UNKNOWN;
         let browserVersion = "0.0.0";
 
-        // Check Edge first (since it includes Chrome/Safari keywords)
-        if (/Edg\/(\d+\.\d+\.\d+\.\d+)/i.test(uaString))
+        const edgeMatch    = uaString.match(EDGE_RE);
+        const chromeMatch  = uaString.match(CHROME_RE);
+        const firefoxMatch = uaString.match(FIREFOX_RE);
+
+        // Check Edge first (its UA also includes Chrome/Safari tokens), then Chrome (includes Safari).
+        if (edgeMatch)
         {
             browser = UserAgent.Browser.EDGE;
-            browserVersion = uaString.match(/Edg\/(\d+\.\d+\.\d+\.\d+)/i)?.[1] || "0.0.0";
-        } 
-        // Check Chrome (includes Safari keyword)
-        else if (/Chrome\/(\d+\.\d+\.\d+\.\d+)/i.test(uaString))
+            browserVersion = edgeMatch[1];
+        }
+        else if (chromeMatch)
         {
             browser = UserAgent.Browser.CHROME;
-            browserVersion = uaString.match(/Chrome\/(\d+\.\d+\.\d+\.\d+)/i)?.[1] || "0.0.0";
-        } 
-        // Check Safari (standalone)
-        else if (/Safari/i.test(uaString) && !/Chrome/i.test(uaString))
+            browserVersion = chromeMatch[1];
+        }
+        else if (SAFARI_RE.test(uaString) && !CHROME_RE.test(uaString))
         {
             browser = UserAgent.Browser.SAFARI;
-            browserVersion = uaString.match(/Version\/(\d+\.\d+(\.\d+)?)/i)?.[1] || "0.0.0";
-        } 
-        // Check Firefox
-        else if (/Firefox\/(\d+\.\d+)/i.test(uaString))
+            browserVersion = uaString.match(SAFARI_VERSION_RE)?.[1] || "0.0.0";
+        }
+        else if (firefoxMatch)
         {
             browser = UserAgent.Browser.FIREFOX;
-            browserVersion = uaString.match(/Firefox\/(\d+\.\d+)/i)?.[1] || "0.0.0";
+            browserVersion = firefoxMatch[1];
         }
 
         return { os: os, browser : browser, device : device, osVersion : osVersion, browserVersion: browserVersion, bot : bot };
