@@ -60,6 +60,10 @@ export namespace Type
         timeZone : TimeZone;        // e.g. "America/New_York"
     }
 
+    /** Who + when — a compact audit stamp. `at` is a UTC instant ({@link ISODateTime}); `by` is the
+     *  actor's {@link ID}. Common across entities ({created,updated}, last-modified, etc.). */
+    export interface Stamp { at : ISODateTime; by : ID; }
+
     /** RFC-5322 email address. */
     export type Email = string;
 
@@ -113,4 +117,20 @@ export namespace Type
     // carried over Kafka (inter-service), the WebSocket push frame (server → client), and outbound webhooks.
     // It lives there (not here) because it's typed by `Events.Object` / `Events.Verb`; `@repo/common` stays
     // dependency-free. (The old PII-light `MessageEnvelope` `{ type, data }` is superseded by it.)
+
+    export interface GlobalPosition
+    {
+        lat?    : number;
+        lng?    : number;
+    }
+
+    export interface Address
+    {
+        street1 : string;
+        street2 : string;
+        city    : string;
+        state   : string;
+        country : string;
+        location? : GlobalPosition;
+    }
 }

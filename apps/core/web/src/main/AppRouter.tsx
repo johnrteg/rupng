@@ -2,45 +2,6 @@
 import React, { Suspense } from 'react';
 import { JSX } from "react";
 
-//import ReactGA from "react-ga4";
-
-/*
-import Analytics                            from '@common/utils/Analytics';
-import PubSub                               from '@common/data/PubSub';
-
-import Subscriber                           from '../app/widgets/Subscriber';
-import PageWaiting                          from '../app/pages/PageWaiting';
-
-// Critical pages (loaded immediately)
-import ErrorPage                            from "../app/pages/ErrorPage";
-import Login                                from "../app/pages/login/Login";
-import Dashboard                            from "../app/pages/dashboard/Dashboard";
-*/
-
-// Lazy-loaded pages (loaded on demand)
-/*
-const SignUp            : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/register/SignUp"));
-const Reports           : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/reports/Reports"));
-const ForgotPassword    : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/login/ForgotPassword"));
-const Conversations     : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/conversations/Conversations"));
-const Contacts          : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/contacts/Contacts"));
-const Tools             : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/tools/Tools"));
-const Projects          : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/projects/Projects"));
-const Profile           : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/profile/Profile"));
-const Admins            : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/account/admins/AccountAdmins"));
-const Billing           : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/account/billing/Billing"));
-const AccountInfo       : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/account/info/AccountInfo"));
-const Registry          : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/registry/Registry"));
-const Teams             : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/teams/Teams"));
-const Kitchen           : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/kitchen/Kitchen"));
-const Optin             : React.LazyExoticComponent<React.ComponentType<{id: string}>>  = React.lazy(() => import('@pages/optin/Optin'));
-const OptinSample       : React.LazyExoticComponent<React.ComponentType<{id: string}>>  = React.lazy(() => import('@pages/optin/OptinSample'));
-const Send              : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import('@pages/send/Send'));
-const AccountStatus     : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import('@pages/dashboard/AccountStatus'));
-const ResetPassword     : React.LazyExoticComponent<React.ComponentType<{token:string}>> = React.lazy(() => import('@pages/login/ResetPassword'));
-const AccountCancelled     : React.LazyExoticComponent<React.ComponentType<{token:string}>> = React.lazy(() => import('@pages/account/info/AccountCancelled'));
-*/
-
 
 
 // others
@@ -49,6 +10,8 @@ import PubSubService    from '@model/service/PubSubService';
 import PageWaiting      from '@pages/common/PageWaiting';
 import { Dashboard }    from '@pages/dashboard/Dashboard';
 import { Login }        from '@pages/login/Login';
+import { Register }     from '@pages/register/Register';
+import { ForgotPassword }   from '@pages/login/ForgotPassword';
 import Subscriber       from '@widgets/core/Subscriber';
 import ErrorPage        from '@pages/common/ErrorPage';
 
@@ -120,91 +83,9 @@ export function AppRouter( props : AppRouter.Props ) : JSX.Element
         //new_routes.push( { path: AppRouter.Route.REGISTER , component: withLazyWrapper(SignUp) } );
         //new_routes.push( { path: AppRouter.Route.FORGOT   , component: withLazyWrapper(ForgotPassword) } );
         new_routes.push( { path: AppRouter.Route.LOGIN    , component: ( params : Login.Props ) => <Login {...params} /> } );
+        new_routes.push( { path: AppRouter.Route.REGISTER , component: () => <Register /> } );
+        new_routes.push( { path: AppRouter.Route.FORGOT_PASSWORD , component: () => <ForgotPassword /> } );
         //new_routes.push( { path: AppRouter.Route.REGISTRY , component: withLazyWrapper(Registry) } );
-
-/*
-        // conversations (lazy loaded)
-        new_routes.push( { path: AppRouter.Route.CONVERSATIONS + "/:cid", component: withLazyWrapper(Conversations) } );
-        new_routes.push( { path: AppRouter.Route.CONVERSATIONS + "/:cid/:project", component: withLazyWrapper(Conversations) } );
-        new_routes.push( { path: AppRouter.Route.CONVERSATIONS, component: withLazyWrapper(Conversations) } );
-
-        // send (lazy loaded)
-        new_routes.push( { path: AppRouter.Route.SEND + "/:cid", component: withLazyWrapper(Send) } );
-        new_routes.push( { path: AppRouter.Route.SEND + "/:cid/:project", component: withLazyWrapper(Send) } );
-        new_routes.push( { path: AppRouter.Route.SEND , component: withLazyWrapper(Send) } );
-
-        // projects (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.PROJECTS ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.ACTIONS + "/:cid", component: withLazyWrapper(Projects) } );
-            new_routes.push( { path: AppRouter.Route.ACTIONS + "/:cid/:project", component: withLazyWrapper(Projects) } );
-            new_routes.push( { path: AppRouter.Route.ACTIONS , component: withLazyWrapper(Projects) } );
-            new_routes.push( { path: AppRouter.Route.PROJECTS , component: withLazyWrapper(Projects) } );
-        //}
-
-        // contacts (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.CONTACTS ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.CONTACTS + "/:tab", component: withLazyWrapper(Contacts) } );
-            new_routes.push( { path: AppRouter.Route.CONTACTS , component: withLazyWrapper(Contacts) } );
-        //}
-
-        // tools (lazy loaded)
-        new_routes.push( { path: AppRouter.Route.TOOLS + "/:tool", component: withLazyWrapper(Tools) } );
-        new_routes.push( { path: AppRouter.Route.TOOLS , component: withLazyWrapper(Tools) } );
-
-        // reports (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.REPORTS ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.REPORTS + "/:tab", component: withLazyWrapper(Reports) } );
-            new_routes.push( { path: AppRouter.Route.REPORTS , component: withLazyWrapper(Reports) } );
-        //}
-
-        // profile (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.ACCOUNT, AccountLogin.RoleType.TEXTER ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.PROFILE + "/:tab", component: withLazyWrapper(Profile) } );
-            new_routes.push( { path: AppRouter.Route.PROFILE , component: withLazyWrapper(Profile) } );
-        //}
-
-        // admin (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.ACCOUNT ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.ADMINS , component: withLazyWrapper(Admins) } );
-        //}
-
-        // billing (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.BILLING ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.BILLING , component: withLazyWrapper(Billing) } );
-        //}
-
-        // account info (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.ACCOUNT ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.INFORMATION + "/:section", component: withLazyWrapper(AccountInfo) } );
-            new_routes.push( { path: AppRouter.Route.INFORMATION , component: withLazyWrapper(AccountInfo) } );
-        //}
-
-        // teams (lazy loaded)
-        new_routes.push( { path: AppRouter.Route.TEAMS + "/:tab", component: withLazyWrapper(Teams) } );
-        new_routes.push( { path: AppRouter.Route.TEAMS , component: withLazyWrapper(Teams) } );
-
-        // optin (lazy loaded)
-        new_routes.push( { path: AppRouter.Route.OPTIN + "/:id", component: withLazyWrapper(Optin) } );
-        new_routes.push( { path: AppRouter.Route.OPTINSAMPLE + "/:id", component: withLazyWrapper(OptinSample) } );
-
-        
-
-        // optin (lazy loaded)
-        new_routes.push( { path: AppRouter.Route.RESET_PWD, component: withLazyWrapper(ResetPassword) } );
-
-        new_routes.push( { path: AppRouter.Route.DISABLED, component: () => <AccountStatus /> } );
-
-        new_routes.push( { path: AppRouter.Route.CANCEL, component: withLazyWrapper(AccountCancelled) } );
-
-        new_routes.push( { path: AppRouter.Route.KITCHEN , component: withLazyWrapper(Kitchen) } );
-        */
 
         setRoutes( new_routes );
     }
@@ -333,6 +214,8 @@ export namespace AppRouter
     {
         ROOT            = `/`,
         LOGIN           = `/signin`,
+        REGISTER        = `/register`,
+        FORGOT_PASSWORD = `/forgot-password`,
         DASHBOARD       = `/dashboard`,
     }
 

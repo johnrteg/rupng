@@ -10,7 +10,7 @@
             "name": "production",
             "target": "https://app.rumbleup.com",
             "ws": "/account/ws",
-            "prefixes": ["/rup", "/auth", "/account", "/passkey", "/login", "/verify", "/vcf", "/optin", "/uc"]
+            "prefixes": ["/api"]
         }
     ]
 }

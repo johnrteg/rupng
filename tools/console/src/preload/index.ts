@@ -4,13 +4,18 @@ import {
     IPC,
     type ClaudeApprovalRequest, type ClaudeMessage, type ClaudeMode, type ClaudeSessionState,
     type ApiGwInfo, type CloudGraph, type CloudHealth, type ContainerInfo, type EcsServiceState,
-    type VpcLinkDiagnosis, type ProxyConfig, type RepoStatus, type RepoBranches, type NpmOutdated, type VersionConflict, type BumpKind,
+    type VpcLinkDiagnosis, type ProxyConfig, type ProxyRoute, type RepoStatus, type RepoBranches, type NpmOutdated, type VersionConflict, type BumpKind,
     type HealthResult, type InvokeResult, type JobInfo, type LambdaFn,
     type LocalStackState, type LogEvent, type LogLine, type LogStream, type S3Listing,
     type Target, type TargetInfo,
     type ApiEndpointDef, type ApiRequestSpec, type ApiResponse, type SavedRequest,
-    type PipelineRequest, type PipelineResult, type ProcState, type ServiceInfo, type StageState,
-    type DeployRequest, type DeployResult, type DeployEnvConfig, type DeployEnvName, type DeployMap, type DeployState, type AuditEntry
+    type ServiceConfigTree, type ConfigContent, type ConfigSaveResult,
+    type DynamoTable, type DynamoKeySchema, type DynamoScanResult, type DynamoSaveResult,
+    type CognitoPool, type CognitoUser, type CognitoResult,
+    type PipelineRequest, type PipelineResult, type ProcState, type ServiceInfo, type StageId, type StageState,
+    type DeployRequest, type DeployResult, type DeployEnvConfig, type DeployEnvName, type DeployMap, type DeployState, type AuditEntry,
+    type BrowserState, type BuildSettings, type BuildQueue, type ManifestDrift,
+    type MonitorState, type MonitorEvent, type MonitorSync
 } from "../shared/types";
 
 //
@@ -77,6 +82,27 @@ const api =
     targetGet   : () : Promise<TargetInfo> => ipcRenderer.invoke( IPC.targetGet ),
     targetSet   : ( target : Target ) : Promise<TargetInfo> => ipcRenderer.invoke( IPC.targetSet, target ),
     // api tester
+    // appconfig (the Config tab)
+    configProfiles : ( service : string ) : Promise<ServiceConfigTree> => ipcRenderer.invoke( IPC.configProfiles, service ),
+    configGet      : ( applicationId : string, profileId : string ) : Promise<ConfigContent> => ipcRenderer.invoke( IPC.configGet, applicationId, profileId ),
+    configSave     : ( applicationId : string, profileId : string, environmentId : string, content : string, contentType : string ) : Promise<ConfigSaveResult> => ipcRenderer.invoke( IPC.configSave, applicationId, profileId, environmentId, content, contentType ),
+
+    // dynamodb (the Data tab)
+    dynamoTables    : ( service : string ) : Promise<{ tables : DynamoTable[]; error? : string }> => ipcRenderer.invoke( IPC.dynamoTables, service ),
+    dynamoTableInfo : ( table : string ) : Promise<{ keySchema? : DynamoKeySchema; error? : string }> => ipcRenderer.invoke( IPC.dynamoTableInfo, table ),
+    dynamoScan      : ( table : string, startKey? : Record<string, unknown> ) : Promise<DynamoScanResult> => ipcRenderer.invoke( IPC.dynamoScan, table, startKey ),
+    dynamoPut       : ( table : string, item : Record<string, unknown> ) : Promise<DynamoSaveResult> => ipcRenderer.invoke( IPC.dynamoPut, table, item ),
+    dynamoDelete    : ( table : string, key : Record<string, unknown> ) : Promise<DynamoSaveResult> => ipcRenderer.invoke( IPC.dynamoDelete, table, key ),
+
+    // cognito (the Cognito tab)
+    cognitoPools       : ( service : string ) : Promise<{ pools : CognitoPool[]; error? : string }> => ipcRenderer.invoke( IPC.cognitoPools, service ),
+    cognitoUsers       : ( poolId : string, filter? : string ) : Promise<{ users : CognitoUser[]; error? : string }> => ipcRenderer.invoke( IPC.cognitoUsers, poolId, filter ),
+    cognitoCreateUser  : ( poolId : string, username : string, attributes : Record<string, string>, tempPassword? : string ) : Promise<CognitoResult> => ipcRenderer.invoke( IPC.cognitoCreateUser, poolId, username, attributes, tempPassword ),
+    cognitoUpdateUser  : ( poolId : string, username : string, attributes : Record<string, string> ) : Promise<CognitoResult> => ipcRenderer.invoke( IPC.cognitoUpdateUser, poolId, username, attributes ),
+    cognitoSetEnabled  : ( poolId : string, username : string, enabled : boolean ) : Promise<CognitoResult> => ipcRenderer.invoke( IPC.cognitoSetEnabled, poolId, username, enabled ),
+    cognitoDeleteUser  : ( poolId : string, username : string ) : Promise<CognitoResult> => ipcRenderer.invoke( IPC.cognitoDeleteUser, poolId, username ),
+    cognitoSetPassword : ( poolId : string, username : string, password : string, permanent : boolean ) : Promise<CognitoResult> => ipcRenderer.invoke( IPC.cognitoSetPassword, poolId, username, password, permanent ),
+
     apiDiscover    : ( service : string ) : Promise<ApiEndpointDef[]> => ipcRenderer.invoke( IPC.apiDiscover, service ),
     apiSend        : ( spec : ApiRequestSpec ) : Promise<ApiResponse> => ipcRenderer.invoke( IPC.apiSend, spec ),
     apiSavedList   : ( service : string ) : Promise<SavedRequest[]> => ipcRenderer.invoke( IPC.apiSavedList, service ),
@@ -95,6 +121,10 @@ const api =
     openExternal     : ( url : string ) : Promise<void> => ipcRenderer.invoke( IPC.openExternal, url ),
     devStart         : ( service : string ) : Promise<void> => ipcRenderer.invoke( IPC.devStart, service ),
     devStop          : ( service : string ) : Promise<void> => ipcRenderer.invoke( IPC.devStop, service ),
+    tailDeployedStart : ( service : string ) : Promise<void> => ipcRenderer.invoke( IPC.tailDeployedStart, service ),
+    tailDeployedStop  : ( service : string ) : Promise<void> => ipcRenderer.invoke( IPC.tailDeployedStop, service ),
+    deployedPorts     : ( service : string ) : Promise<Record<number, number>> => ipcRenderer.invoke( IPC.deployedPorts, service ),
+    manifestDrift     : ( service : string ) : Promise<ManifestDrift> => ipcRenderer.invoke( IPC.manifestDrift, service ),
     proxyStart       : ( port? : number ) : Promise<void> => ipcRenderer.invoke( IPC.proxyStart, port ),
     proxyStop        : () : Promise<void> => ipcRenderer.invoke( IPC.proxyStop ),
     proxyRestart     : ( port? : number ) : Promise<void> => ipcRenderer.invoke( IPC.proxyRestart, port ),
@@ -104,6 +134,7 @@ const api =
     proxyConfigSave  : ( name : string, config : ProxyConfig ) : Promise<{ ok : boolean; error? : string }> => ipcRenderer.invoke( IPC.proxyConfigSave, name, config ),
     proxyApply       : ( config : ProxyConfig ) : Promise<{ ok : boolean; error? : string }> => ipcRenderer.invoke( IPC.proxyApply, config ),
     proxyGatewayTargets : () : Promise<{ prefixes : Record<string, string>; error? : string }> => ipcRenderer.invoke( IPC.proxyGatewayTargets ),
+    proxyLocalRoutes : () : Promise<ProxyRoute[]> => ipcRenderer.invoke( IPC.proxyLocalRoutes ),
 
     // repo (git check-out / check-in)
     repoStatus    : () : Promise<RepoStatus> => ipcRenderer.invoke( IPC.repoStatus ),
@@ -121,6 +152,11 @@ const api =
     watchSyncStart   : ( service : string ) : Promise<{ ok : boolean; error? : string }> => ipcRenderer.invoke( IPC.watchSyncStart, service ),
     watchSyncStop    : ( service : string ) : Promise<void> => ipcRenderer.invoke( IPC.watchSyncStop, service ),
     watchSyncState   : ( service : string ) : Promise<boolean> => ipcRenderer.invoke( IPC.watchSyncState, service ),
+    buildConfigure   : ( settings : Record<string, BuildSettings> ) : Promise<void> => ipcRenderer.invoke( IPC.buildConfigure, settings ),
+    buildQueueGet    : () : Promise<BuildQueue> => ipcRenderer.invoke( IPC.buildQueueGet ),
+    buildRunStep     : ( service : string, step : StageId ) : Promise<void> => ipcRenderer.invoke( IPC.buildRunStep, service, step ),
+    buildRunNow      : ( service : string ) : Promise<void> => ipcRenderer.invoke( IPC.buildRunNow, service ),
+    buildAll         : ( ids : string[], runId? : string ) : Promise<void> => ipcRenderer.invoke( IPC.buildAll, ids, runId ),
 
     // deploy (git → real AWS environment)
     deployRefs        : () : Promise<{ branches : string[]; tags : string[]; current : string }> => ipcRenderer.invoke( IPC.deployRefs ),
@@ -133,6 +169,22 @@ const api =
     deployProposeTag  : ( ref : string ) : Promise<string | undefined> => ipcRenderer.invoke( IPC.deployProposeTag, ref ),
     deployOpenLine    : () : Promise<{ ok : boolean; line? : string; error? : string }> => ipcRenderer.invoke( IPC.deployOpenLine ),
 
+    // in-app browser window (console captured to the Trace view)
+    browserOpen       : ( url : string ) : Promise<{ ok : boolean; url : string }> => ipcRenderer.invoke( IPC.browserOpen, url ),
+    browserClose      : () : Promise<void> => ipcRenderer.invoke( IPC.browserClose ),
+    browserReload     : () : Promise<void> => ipcRenderer.invoke( IPC.browserReload ),
+    browserBack       : () : Promise<void> => ipcRenderer.invoke( IPC.browserBack ),
+    browserForward    : () : Promise<void> => ipcRenderer.invoke( IPC.browserForward ),
+    browserResize     : ( width : number, height : number ) : Promise<void> => ipcRenderer.invoke( IPC.browserResize, width, height ),
+    browserState      : () : Promise<BrowserState> => ipcRenderer.invoke( IPC.browserState ),
+
+    // kafka monitor (Events sub-tab)
+    monitorStart     : () : Promise<MonitorState> => ipcRenderer.invoke( IPC.monitorStart ),
+    monitorStop      : () : Promise<void> => ipcRenderer.invoke( IPC.monitorStop ),
+    monitorState     : () : Promise<MonitorState> => ipcRenderer.invoke( IPC.monitorState ),
+    monitorSetTtl    : ( ms : number ) : Promise<void> => ipcRenderer.invoke( IPC.monitorSetTtl, ms ),
+    monitorClear     : () : Promise<void> => ipcRenderer.invoke( IPC.monitorClear ),
+
     // live events
     onLog            : ( h : ( line : LogLine ) => void ) : () => void => on( IPC.onLog, h ),
     onProc           : ( h : ( state : ProcState ) => void ) : () => void => on( IPC.onProc, h ),
@@ -140,7 +192,11 @@ const api =
     onLocalStack     : ( h : ( state : LocalStackState ) => void ) : () => void => on( IPC.onLocalStack, h ),
     onClaudeMessage  : ( h : ( msg : ClaudeMessage ) => void ) : () => void => on( IPC.onClaudeMessage, h ),
     onClaudeApproval : ( h : ( req : ClaudeApprovalRequest ) => void ) : () => void => on( IPC.onClaudeApproval, h ),
-    onClaudeState    : ( h : ( state : ClaudeSessionState ) => void ) : () => void => on( IPC.onClaudeState, h )
+    onClaudeState    : ( h : ( state : ClaudeSessionState ) => void ) : () => void => on( IPC.onClaudeState, h ),
+    onBrowser        : ( h : ( s : BrowserState ) => void ) : () => void => on( IPC.onBrowser, h ),
+    onBuildQueue     : ( h : ( q : BuildQueue ) => void ) : () => void => on( IPC.onBuildQueue, h ),
+    onMonitorEvent   : ( h : ( e : MonitorEvent ) => void ) : () => void => on( IPC.onMonitorEvent, h ),
+    onMonitorSync    : ( h : ( s : MonitorSync ) => void ) : () => void => on( IPC.onMonitorSync, h )
 };
 
 export type ConsoleApi = typeof api;

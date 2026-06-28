@@ -50,6 +50,7 @@ function buildInfo( id : string ) : ServiceInfo
     const isFrontend : boolean = entry?.frontend === true;
     const hasBuild   : boolean = Boolean( pkg?.scripts?.build );
     const hasCompose : boolean = existsSync( join( dir, "docker-compose.yml" ) ) || existsSync( join( dir, "docker-compose.yaml" ) );
+    const hasManifest : boolean = existsSync( join( dir, "src", "CloudManifest.ts" ) );   // → its own cloud stack
 
     const roles    : ServiceRole[] = rolesFor( id, entry );
     const hasPort  = roles.some( r => r.port > 0 );
@@ -69,6 +70,7 @@ function buildInfo( id : string ) : ServiceInfo
             canImage   : scaffolded && hasRootDockerfile && !isFrontend,
             canCompose : hasCompose,
             canHealth  : scaffolded && hasPort && !isFrontend,
+            canDeploy  : scaffolded && hasManifest,
             isFrontend
         }
     };

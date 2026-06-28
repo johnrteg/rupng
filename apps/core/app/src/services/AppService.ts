@@ -1,5 +1,6 @@
 //
-import { Application, Service, Ports, Register } from "@repo/services";
+import { Application, Service, Ports, Register, Kafka } from "@repo/services";
+import { GetBootstrap } from "@repo/api";
 
 //
 // common app (BFF) server base — the domain base every concrete app role extends.
@@ -11,6 +12,11 @@ export class AppService extends Service
 {
     // name/version of this app, read from apps/core/app/package.json at startup
     //protected pkg : Application.PackageInfo;
+
+    // Kafka facade — the app BFF consumes upstream entity events (account.account, auth.user) to keep
+    // its read models / caches warm. Lazy + cached.
+    private _kafka? : Kafka;
+    public get kafka() : Kafka { return this._kafka ??= new Kafka( this.cloud ); }
 
     ///////////////////////////////////////////////////////////////////////////////////////
     constructor( role : AppService.Role )
@@ -33,6 +39,21 @@ export class AppService extends Service
     {
         super.init();
     }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * The PUBLIC bootstrap blob (`GetBootstrap.Config`) — read live from AppConfig (profile "web").
+     * Falls back to `GetBootstrap.SEED` if it isn't deployed yet / is unreadable. Live read for now;
+     * a Redis cache will front this later. This is the WEB config — distinct from the (authed) AppService
+     * config wired later.
+     */
+    public async getWebConfig() : Promise<GetBootstrap.Config>
+    {
+        const result = await this.appConfig.json<GetBootstrap.Config>( "config", "web" );
+        if ( result.ok && result.data !== undefined ) return result.data;
+        if ( !result.ok ) this.log.warn( "web config read failed — serving SEED", { error: result.error } );
+        return GetBootstrap.SEED;
+    }
 }
 
 export namespace AppService
@@ -53,10 +74,9 @@ export namespace AppService
 
     export interface Config
     {
-        maxUploadSize : { texting : number };
     }
 
-    export const InitConfig : Config = { maxUploadSize : { texting : 750_000 } };
+    export const InitConfig : Config = {};
 }
 
 export default AppService;

@@ -129,7 +129,11 @@ export function ProxyPanel()
     const apply = async ( restart : boolean ) : Promise<void> =>
     {
         if ( !cfg || !guard() ) return;
-        const r = await api.proxyApply( effective( cfg, isLocal, modes ) );
+        const built : ProxyConfig = effective( cfg, isLocal, modes );
+        // LOCAL: generate the per-endpoint route table from the endpoint→role bindings so /api/{service}
+        // dispatches to the right role port (mirrors the gateway). REMOTE: cloud does the dispatch.
+        if ( isLocal ) built.routes = await api.proxyLocalRoutes();
+        const r = await api.proxyApply( built );
         if ( !r.ok ) { setErr( r.error ); return; }
         if ( restart ) void api.proxyRestart( port ); else void api.proxyStart( port );
     };
@@ -186,6 +190,10 @@ export function ProxyPanel()
                         <>
                             <Typography variant="caption" sx={{ color: "text.disabled", display: "block", mb: 0.75 }}>
                                 Per service: <b>Outside</b> = run it locally · <b>Inside</b> = leave it deployed in LocalStack
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: "text.disabled", display: "block", mb: 0.75 }}>
+                                <b>/api</b> is auto-dispatched per endpoint to the role-service that owns it (generated from the
+                                endpoint→role bindings on Apply) — so a service can split into more roles without changing any URL.
                             </Typography>
                             {cfg.upstreams.map( ( u ) =>
                             {

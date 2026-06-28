@@ -10,7 +10,7 @@
 //
 import * as cdk from "aws-cdk-lib";
 import { Environment, ResourceManifest, PlatformManifest } from "@repo/cloud-manifest";
-import { ServiceStack } from "./lib/ServiceStack";
+import { ServiceStack, type GatewayRegistry } from "./lib/ServiceStack";
 import { PlatformStack } from "./lib/PlatformStack";
 import { isLocal, DestroyAll } from "./lib/local";
 
@@ -18,16 +18,48 @@ import { isLocal, DestroyAll } from "./lib/local";
 // ║  ADD A NEW SERVICE — STEP 1 of 2: import its manifest from the `<svc>/manifest`     ║
 // ║  subpath. (Also add the service to cloud/package.json deps, then `npm install`.)    ║
 // ╚══════════════════════════════════════════════════════════════════════════════════╝
-import { manifest as appManifest } from "app/manifest";   // apps/core/app/src/CloudManifest.ts
-import { manifest as webManifest } from "web/manifest";   // apps/core/web/src/CloudManifest.ts (S3+CloudFront / Amplify)
+import { manifest as appManifest } from "app/manifest";       // apps/core/app/src/CloudManifest.ts
+import { manifest as authManifest } from "auth/manifest";     // apps/core/auth/src/CloudManifest.ts
+import { manifest as accountManifest } from "account/manifest"; // apps/core/account/src/CloudManifest.ts
+import { manifest as webManifest } from "web/manifest";       // apps/core/web/src/CloudManifest.ts (S3+CloudFront / Amplify)
 // import { manifest as contactManifest } from "contact/manifest";
 
 // Generate the API Gateway routes from the service's public RestfulEndpoint defs (same defs the web
-// client + server share), so the gateway can't drift from the contract. See cloud/src/lib/endpoints.
+// client + server share), so the gateway can't drift from the contract — the endpoints carry their own
+// versioned /api/{service}/v{N}/... paths (see @repo/endpoint apiPath). Appended to whatever the
+// manifest already declares (e.g. the root /version + /health probes), never replacing it.
 import { apiEndpoints } from "./lib/endpoints";
-import { GetBootstrap } from "@repo/api";
+import {
+    GetBootstrap, GetAccount,
+    PostLogin, PostLoginIdentify, PostLoginChallenge, PostLoginChallengeResend,
+    PostRegister, PostRegisterVerify, PostVerifyResend, PostVerifyPhone,
+    GetUsers, GetUserExists, GetUserMeta, PostUserMeta, DeleteUserMeta,
+    GetSession, DeleteSession, PostPasswordForgot, PostPasswordReset,
+    PostSessionRefresh, PostSessionSwitch, GetSessions, DeleteSessionById, PostSessionsRevokeAll, GetAccounts,
+    PostPasskeyRegisterOptions, PostPasskeyRegisterVerify, PostLoginPasskeyOptions, PostLoginPasskeyVerify,
+    GetPasskeys, DeletePasskey
+} from "@repo/api";
 if( appManifest.owns.api )
-    appManifest.owns.api.endpoints = apiEndpoints( [ new GetBootstrap() ] );
+    appManifest.owns.api.endpoints = [ ...( appManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetBootstrap() ] ) ];
+if( authManifest.owns.api )
+    authManifest.owns.api.endpoints = [ ...( authManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        new PostLogin(),
+        // stepped sign-in
+        new PostLoginIdentify(), new PostLoginChallenge(), new PostLoginChallengeResend(),
+        // sign-up + verification
+        new PostRegister(), new PostRegisterVerify(), new PostVerifyResend(), new PostVerifyPhone(),
+        // user lookup + metadata
+        new GetUsers(), new GetUserExists(), new GetUserMeta(), new PostUserMeta(), new DeleteUserMeta(),
+        // sessions + password reset
+        new GetSession(), new DeleteSession(), new PostPasswordForgot(), new PostPasswordReset(),
+        // session management + acting context
+        new PostSessionRefresh(), new PostSessionSwitch(), new GetSessions(), new DeleteSessionById(), new PostSessionsRevokeAll(), new GetAccounts(),
+        // passkeys (WebAuthn)
+        new PostPasskeyRegisterOptions(), new PostPasskeyRegisterVerify(), new PostLoginPasskeyOptions(), new PostLoginPasskeyVerify(),
+        new GetPasskeys(), new DeletePasskey()
+    ] ) ];
+if( accountManifest.owns.api )
+    accountManifest.owns.api.endpoints = [ ...( accountManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetAccount() ] ) ];
 
 // ── Resolve environment from CDK context: `cdk synth -c env=staging` (default dev) ──
 //    Local cloud dev: `cdklocal deploy -c env=local` (deploys to LocalStack). See cloud/local/.
@@ -65,9 +97,15 @@ const platform : PlatformStack = new PlatformStack( app, `platform-${deployEnv}`
 // ╚══════════════════════════════════════════════════════════════════════════════════╝
 const manifests : Array<ResourceManifest> = [
     appManifest,
+    authManifest,
+    accountManifest,
     webManifest,
     // contactManifest,
 ];
+
+// Shared gateway registry: each ServiceStack publishes its API Gateway(s) here and a CDN (web) reads
+// them to route API prefixes cross-stack. Producers must precede consumers in `manifests` (app → web).
+const gateways : GatewayRegistry = new Map();
 
 for( const manifest of manifests )
 {
@@ -75,6 +113,7 @@ for( const manifest of manifests )
         manifest,
         deployEnv,                                   // our deployment environment
         vpc       : platform.vpc,                    // shared VPC for RDS / ECS / ElastiCache
+        gateways,                                    // cross-stack gateway routing (web CDN → app gateway)
         stackName : `${manifest.service}-${deployEnv}`,
         env       : { account, region },             // the AWS account/region (cdk.StackProps)
     } );

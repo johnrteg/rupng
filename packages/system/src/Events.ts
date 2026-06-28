@@ -130,6 +130,7 @@ export namespace Events
         AUTH_APIKEY           = "auth.apikey",
         AUTH_IMPERSONATION    = "auth.impersonation",
         AUTH_DATA             = "auth.data",
+        AUTH_USER             = "auth.user",      // identity lifecycle (registered / updated / deleted)
 
         // account
         ACCOUNT_ACCOUNT          = "account.account",
@@ -333,6 +334,7 @@ export namespace Events
         [ Object.AUTH_APIKEY ]:          { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.SECURITY }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.SECURITY } },
         [ Object.AUTH_IMPERSONATION ]:   { [ Verb.CREATED ]: { minAccess: Access.AppRole.APPLICATION, category: Category.SECURITY } },
         [ Object.AUTH_DATA ]:            { [ Verb.ACCESSED ]: { minAccess: Access.AppRole.APPLICATION, category: Category.COMPLIANCE } },
+        [ Object.AUTH_USER ]:            { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT } },
 
         // account
         [ Object.ACCOUNT_ACCOUNT ]:          { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.PURGED ]: { minAccess: Access.AppRole.APPLICATION, category: Category.COMPLIANCE } },

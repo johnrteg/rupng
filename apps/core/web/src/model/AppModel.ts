@@ -2,6 +2,7 @@
 //
 //
 import { RestfulService } from "@repo/endpoint";
+import { GetBootstrap } from "@repo/api";
 
 import { DateUtils, NetworkUtils } from "@repo/common";
 
@@ -19,6 +20,9 @@ import LocaleService from "./service/LocaleService";
 export class AppModel
 {
     private static _instance : AppModel;
+
+    /** localStorage key for the persisted auth session token. */
+    private static readonly SESSION_KEY : string = "auth.session";
 
     public loaded               : boolean = false;    // to deal with duplicate load events
 
@@ -42,6 +46,8 @@ export class AppModel
     public auth : AuthService;
     public account : AccountService;
 
+    public config : GetBootstrap.Config;
+
     public pingTimer            : ReturnType<typeof setTimeout> | null = null;
 
 
@@ -49,7 +55,7 @@ export class AppModel
     constructor()
     {
         // determine the kind of host the client is running on
-        
+        this.config = GetBootstrap.SEED;
 
         // setup api service to backend server
         // must be first thing to allow other service to leverage backend API
@@ -61,6 +67,10 @@ export class AppModel
                                         null, //Cookie.Type.TZ,
                                         AppModel.ServerMonitor );
 
+        // re-apply a persisted session token (survives reload) as the Authorization bearer
+        const savedSession : string | null = window.localStorage.getItem( AppModel.SESSION_KEY );
+        if( savedSession ) this.server.setHeader( "Authorization", `Bearer ${savedSession}` );
+
         // init
         this.log        = new LogService();
         this.cache      = new CacheService();
@@ -70,6 +80,7 @@ export class AppModel
         this.auth       = new AuthService( this );
         this.ui         = new UiService( this );
         this.account    = new AccountService( this );
+
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -201,6 +212,22 @@ export class AppModel
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** Store the auth session token: send it as the `Authorization` bearer + persist it across reloads. */
+    public setSession( token : string ) : void
+    {
+        window.localStorage.setItem( AppModel.SESSION_KEY, token );
+        this.server.setHeader( "Authorization", `Bearer ${token}` );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** Clear the auth session token (sign-out). */
+    public clearSession() : void
+    {
+        window.localStorage.removeItem( AppModel.SESSION_KEY );
+        this.server.deleteHeader( "Authorization" );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     public async setLogin() : Promise<void>
     {
     }
@@ -238,6 +265,9 @@ export class AppModel
             // is there an active session?
             //
             await this.hasActiveSession();
+
+
+        
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -274,10 +304,21 @@ export class AppModel
     */
     public async initialize( main : Function ) : Promise<void>
     {
+        //
+        // get initial state of the application
+        //
+        const request : GetBootstrap = new GetBootstrap();
+        const response : RestfulService.Reply<GetBootstrap.Response> = await this.server.fetch( request );
+        if( response.ok )
+        {
+            this.log.info( "bootstrap", response.data );
+            this.config = response.data as GetBootstrap.Config;
+        }
+
         // do any initialization before running the app
         await this.refreshInit();
 
-        console.log('starting');
+        this.log.info('initialized');
 
         // start the app
         main();

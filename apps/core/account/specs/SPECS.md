@@ -143,18 +143,15 @@ Plan and Pricing
 4. `Public Plan vs Private Plan` is just a flag. Enterprise pricing isn't a special system — it's a Plan with visibility=private scoped to an accountId. Same model.
 
 
-## The lean core model (~6 entities)
-# Catalog (definitions, versioned):
-* `Feature` — key (the universal toggle the app checks), name. Pure capability. No price here.
-* `Plan` — name, visibility (public/private), accountId? (if private/enterprise), status, version.
-* `PlanFeature` — links `Plan` → `Feature`, carrying the entitlement (enabled, limit/quota/counter config) and 0–N `PriceComponents`.
-* `PriceComponent` — a small typed union (see below) attached to a `PlanFeature` (or to the Plan for a base fee).
-
-# Commercial relationship (instances):
-* `Subscription` — accountId, planId+version, status, start/end (effective-dated), and a priceSnapshot captured at subscribe time.
-* `Coupon`+ `SubscriptionCoupon` — discounts applied to a subscription (below).
-
-Feeding + output: UsageRecord (metered, from services) → Invoice (computed) + AuditLog (immutable).
+## The lean core model — ✅ migrated to code
+> **Migrated.** The concrete object + field definitions now live in **`@repo/api` → `Billing`**
+> ([`packages/api/src/account/Billing.ts`](../../../../packages/api/src/account/Billing.ts)) as the shared
+> contract — don't re-declare them here. Migrated: `Feature`, `Plan` (+ `PlanVisibility`/`PlanStatus`),
+> `PlanFeature`, `Entitlement`/`Limit`, the `PriceComponent` union (+ `PriceType`/`TierMode`/`PriceTier`),
+> `Subscription` (+ `PriceSnapshot`/`SubscriptionStatus`), `Coupon` (+ `CouponType`/`CouponScope`/
+> `PriceOverride`/`AppliedCoupon`), `UsageRecord`, `Invoice` (+ `InvoiceLineItem`/`InvoiceStatus`),
+> `AuditEvent`, and `ResolvedEntitlements`/`ResolvedFeature`. The sections below remain as **design
+> rationale** (the *why*), not field definitions.
 
 ## One abstraction covers all your charge types: PriceComponent
 Rather than separate models per charge type, make `PriceComponent` a typed union with parameters:

@@ -18,6 +18,7 @@ import GavelOutlinedIcon        from '@mui/icons-material/GavelOutlined';
 
 //
 import AppModel             from "@model/AppModel";
+import AppRouter            from "@main/AppRouter";
 import { ThemeMode }        from "@model/service/UiService";
 import PubSubService        from "@model/service/PubSubService";
 
@@ -37,6 +38,18 @@ import ButtonIcon           from "@widgets/core/ButtonIcon";
 import Show                 from "@widgets/core/Show";
 
 //
+import ArrowBackIcon        from '@mui/icons-material/ArrowBack';
+
+//
+import { EmailUtils } from "@repo/common";
+
+//
+import KeyOutlinedIcon      from '@mui/icons-material/KeyOutlined';
+import { startAuthentication, type PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/browser";
+import { PostLogin, PostLoginPasskeyOptions, PostLoginPasskeyVerify } from "@repo/api";
+import { RestfulService } from "@repo/endpoint";
+
+//
 import BrowserUtils         from "@utils/BrowserUtils";
 import AppDef               from '@model/AppDef';
 import ErrorMessage         from '@widgets/core/ErrorMessage';
@@ -47,7 +60,8 @@ export function Login( props : Login.Props ) : JSX.Element
 {
     const appmodel : AppModel = AppModel.instance();
 
-    // identifier method + credentials
+    // identifier method + credentials, advanced one step at a time (identifier → password → challenge)
+    const [step,setStep]            = React.useState< Login.Step >( Login.Step.IDENTIFIER );
     const [method,setMethod]        = React.useState< Login.Method >( Login.Method.EMAIL );
     const [email,setEmail]          = React.useState< string >( "" );
     const [phone,setPhone]          = React.useState< string >( "" );
@@ -63,6 +77,7 @@ export function Login( props : Login.Props ) : JSX.Element
 
     //
     React.useEffect( () => componentLoaded(), [] );
+    React.useEffect( prefillAccount, [ props.account ] );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // when this is loaded, it means all of its children have loaded already
@@ -74,28 +89,143 @@ export function Login( props : Login.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    async function onLogin() : Promise<void>
+    // ?account=<identifier> (from registration): detect whether it's an email or a phone, select the
+    // matching tab, and prefill the field. If it's neither (unverifiable), leave everything blank.
+    function prefillAccount() : void
     {
-        const identifier : string = method === Login.Method.EMAIL ? email : phone;
+        const account : string = ( props.account ?? "" ).trim();
+        if( account === "" ) return;
 
-        // TODO: wire to auth once the login endpoint exists — appmodel.auth.login( identifier, password )
-        //       (email-or-phone + password per apps/core/auth/specs/LOGIN.md). On success → goto dashboard.
-        console.log( "login", { method, identifier, password } );
+        if( EmailUtils.isValid( account ) )
+        {
+            setMethod( Login.Method.EMAIL );
+            setEmail( account );
+        }
+        else if( appmodel.ui.locale.phoneValid( account ) )
+        {
+            setMethod( Login.Method.PHONE );
+            setPhone( account );
+        }
+        // else: not a recognizable email or phone → fill nothing
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // real <form> submit (Sign In button / Enter key) — preventDefault keeps it an SPA submit (no reload)
+    async function onLogin() : Promise<void>
+    {
+        setError( "" );
+        const account : string = method === Login.Method.EMAIL ? email : phone;
+        try
+        {
+            const reply : RestfulService.Reply<PostLogin.Response> = await appmodel.server.fetch( new PostLogin( { account, password } ) );
+            if( reply.ok && reply.data?.complete && reply.data.sessionToken )
+            {
+                appmodel.setSession( reply.data.sessionToken );
+                appmodel.goto( AppRouter.Route.DASHBOARD );
+            }
+            else
+            {
+                setError( "Email or password is incorrect." );
+            }
+        }
+        catch( err )
+        {
+            appmodel.log.warn( "login", err );
+            setError( "Sign-in failed. Please try again." );
+        }
+    }
+
+    // "Continue" is enabled only when the email / phone is actually VALID (not merely non-empty).
+    // `identifierDisplay` is the human-readable form shown on the password step (phone is formatted).
+    const identifierValid : boolean = method === Login.Method.EMAIL ? EmailUtils.isValid( email ) : appmodel.ui.locale.phoneValid( phone );
+    const passwordValid : boolean   = password.trim().length > 0;
+
+    // TelephoneInput emits E.164 once valid; the locale pretty-prints it (country auto-detected).
+    const identifierDisplay : string = method === Login.Method.EMAIL ? email : appmodel.ui.locale.phone( phone );
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // step 1 "Continue" → reveal the password step (enabled once an email/phone is entered)
+    function onContinueIdentifier() : void
+    {
+        if( !identifierValid ) return;
+        setError( "" );
+        setStep( Login.Step.PASSWORD );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // "Change" → back to step 1 to edit the email/phone (clears the password)
+    function onChangeIdentifier() : void
+    {
+        setStep( Login.Step.IDENTIFIER );
+        setPassword( "" );
+        setError( "" );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // step 2 "Continue" → submit credentials. A future auth response may return a CHALLENGE (emailed/
+    // texted code, MFA app, …) → advance to Login.Step.CHALLENGE and render it. None are defined yet,
+    // so a successful password step simply logs the user in.
+    async function onContinuePassword() : Promise<void>
+    {
+        if( !passwordValid ) return;
+        setError( "" );
+        await onLogin();
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // real <form> submit (the active step's Continue / Enter key) — preventDefault keeps it SPA (no reload)
     function onSubmit( event : React.FormEvent<HTMLFormElement> ) : void
     {
         event.preventDefault();
-        onLogin();
+        if( step === Login.Step.IDENTIFIER )      onContinueIdentifier();
+        else if( step === Login.Step.PASSWORD )   void onContinuePassword();
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // create a new account
+    function onRegister() : void
+    {
+        appmodel.goto( AppRouter.Route.REGISTER );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // reset the PASSWORD for a known identifier. (There's no "forgot login" flow — sign-in is by email
+    // or phone, which users don't forget the way they would an opaque account name / username.)
     function onForgotPassword() : void
     {
-        // TODO: route to the forgot-password page once built (AppRouter.Route.FORGOT_PASSWORD).
-        console.log( "forgot password", { method, email, phone } );
+        appmodel.goto( AppRouter.Route.FORGOT_PASSWORD );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // passkey (WebAuthn) sign-in — get assertion options from auth, run the browser ceremony, verify,
+    // then route to the dashboard. Discoverable credential: the authenticator offers the right passkey.
+    async function onPasskey() : Promise<void>
+    {
+        setError( "" );
+        try
+        {
+            const optionsReply : RestfulService.Reply<PostLoginPasskeyOptions.Response> = await appmodel.server.fetch( new PostLoginPasskeyOptions() );
+            if( !optionsReply.ok || !optionsReply.data ) { setError( "Passkey sign-in is unavailable right now." ); return; }
+
+            const assertion = await startAuthentication( { optionsJSON: optionsReply.data.options as unknown as PublicKeyCredentialRequestOptionsJSON } );
+
+            const verifyReply : RestfulService.Reply<PostLoginPasskeyVerify.Response> = await appmodel.server.fetch(
+                new PostLoginPasskeyVerify( { ceremonyId: optionsReply.data.ceremonyId, response: assertion as unknown as Record<string, unknown> } ) );
+
+            if( verifyReply.ok && verifyReply.data?.complete )
+            {
+                if( verifyReply.data.sessionToken ) appmodel.setSession( verifyReply.data.sessionToken );
+                appmodel.goto( AppRouter.Route.DASHBOARD );
+            }
+            else
+            {
+                setError( "Passkey sign-in failed." );
+            }
+        }
+        catch( err )
+        {
+            appmodel.log.warn( "passkey", err );   // user cancelled the prompt, no passkey, etc.
+            setError( "Passkey sign-in was cancelled or unavailable." );
+        }
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -104,7 +234,7 @@ export function Login( props : Login.Props ) : JSX.Element
     {
         // TODO: kick off the OIDC/OAuth flow via auth + @repo/oauth (redirect to the provider,
         //       round-trip through auth's $connect/callback). See apps/core/auth/specs/LOGIN.md (SSO).
-        console.log( "sso", provider );
+        appmodel.log.info( "sso", provider );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -113,7 +243,7 @@ export function Login( props : Login.Props ) : JSX.Element
     {
         // TODO: identifier-first — prompt for work email → resolve account/IdP → redirect to the org SSO.
         //       Ties to the "SSO-only account" config (auth: SsoConnection.ssoOnly).
-        console.log( "enterprise sso" );
+        appmodel.log.info( "enterprise sso" );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -167,7 +297,7 @@ export function Login( props : Login.Props ) : JSX.Element
                                 maxHeight={ 80 }
                                 sx={{ alignSelf: "center" }} />
 
-                    <TextLabel variant="h5" align="center" value={ "hiii " + appmodel.label( "page.login.title" ) } />
+                    <TextLabel variant="h5" align="center" value={ "Testing " + appmodel.label( "page.login.title" ) } />
 
                     
 
@@ -176,69 +306,93 @@ export function Login( props : Login.Props ) : JSX.Element
                     <Box component="form" onSubmit={ onSubmit }>
                         <Stack direction="column" spacing={ 2 }>
 
-                            {/* sign in with email OR phone */}
-                            <ToggleButtonGroup exclusive
-                                               fullWidth
-                                               size="small"
-                                               value={ method }
-                                               onChange={ ( _e : React.MouseEvent, value : Login.Method | null ) => { if( value ) setMethod( value ); } }>
-                                <ToggleButton value={ Login.Method.EMAIL }>{ appmodel.label( "page.login.method.email" ) }</ToggleButton>
-                                <ToggleButton value={ Login.Method.PHONE }>{ appmodel.label( "page.login.method.phone" ) }</ToggleButton>
-                            </ToggleButtonGroup>
+                            {/* STEP 1 — identify with email OR phone; "Continue" enables once it's entered */}
+                            <Show show={ step === Login.Step.IDENTIFIER }>
+                                <ToggleButtonGroup exclusive
+                                                   fullWidth
+                                                   size="small"
+                                                   value={ method }
+                                                   onChange={ ( _e : React.MouseEvent, value : Login.Method | null ) => { if( value ) setMethod( value ); } }>
+                                    <ToggleButton value={ Login.Method.EMAIL }>{ appmodel.label( "page.login.method.email" ) }</ToggleButton>
+                                    <ToggleButton value={ Login.Method.PHONE }>{ appmodel.label( "page.login.method.phone" ) }</ToggleButton>
+                                </ToggleButtonGroup>
 
-                            <Show show={ method === Login.Method.EMAIL }>
-                                <EmailInput id="login-email"
-                                            label={ appmodel.label( "page.login.method.email" ) }
-                                            value={ email }
-                                            autoComplete="username"
-                                            onChange={ setEmail } />
-                            </Show>
-                            <Show show={ method === Login.Method.PHONE }>
-                                <TelephoneInput id="login-phone"
-                                                label={ appmodel.label( "page.login.method.phone" ) }
-                                                value={ phone }
-                                                fullWidth
+                                <Show show={ method === Login.Method.EMAIL }>
+                                    <EmailInput id="login-email"
+                                                label={ appmodel.label( "page.login.method.email" ) }
+                                                value={ email }
                                                 autoComplete="username"
-                                                onChange={ setPhone } />
+                                                onChange={ setEmail } />
+                                </Show>
+                                <Show show={ method === Login.Method.PHONE }>
+                                    <TelephoneInput id="login-phone"
+                                                    label={ appmodel.label( "page.login.method.phone" ) }
+                                                    value={ phone }
+                                                    fullWidth
+                                                    autoComplete="username"
+                                                    onChange={ setPhone } />
+                                </Show>
+
+                                <Button type="submit" variant="contained" fullWidth disabled={ !identifierValid }>Continue</Button>
                             </Show>
 
-                            <PasswordInput id="login-password"
-                                           label={ appmodel.label( "page.login.password" ) }
-                                           value={ password }
-                                           autoComplete="current-password"
-                                           onChange={ setPassword } />
+                            {/* STEP 2 — password; Back is pinned left, the identifier is CENTERED on the row
+                                (both vertically centered). Absolute Back keeps the label truly centered. */}
+                            <Show show={ step === Login.Step.PASSWORD }>
+                                <Box sx={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", minHeight: 40 }}>
+                                    <Button size="small" color="inherit" startIcon={ <ArrowBackIcon fontSize="small" /> } onClick={ onChangeIdentifier } sx={{ position: "absolute", left: 0 }}>Back</Button>
+                                    <TextLabel value={ identifierDisplay } />
+                                </Box>
 
-                            <Button type="submit" variant="contained" fullWidth>{ appmodel.label( "page.login.signin" ) }</Button>
+                                <PasswordInput id="login-password"
+                                               label={ appmodel.label( "page.login.password" ) }
+                                               value={ password }
+                                               autoComplete="current-password"
+                                               onChange={ setPassword } />
+
+                                <Button type="submit" variant="contained" fullWidth disabled={ !passwordValid }>Continue</Button>
+                            </Show>
 
                         </Stack>
                     </Box>
 
-                    {/* LinkButton is fullWidth with internal justifyContent:flex-start, so it fills the row
-                        and left-pins its text — override to flex-end to right-justify (textAlign can't move it) */}
-                    <LinkButton label={ appmodel.label( "page.login.forgot" ) } onClick={ onForgotPassword } sx={{ justifyContent: "flex-end" }} />
-
-                    {/* SSO — TODO: an SSO-only account hides the password form above and shows only this
-                        (resolve via the app-bootstrap / account config; auth: SsoConnection.ssoOnly) */}
-                    <Divider>{ appmodel.label( "page.login.sso.divider" ) }</Divider>
-
-                    <Stack direction="column" spacing={ 1 }>
-                        <Button fullWidth variant="outlined" startIcon={ <GoogleIcon /> }
-                                onClick={ () => onSso( Login.SsoProvider.GOOGLE ) }>
-                            { appmodel.label( "page.login.sso.google" ) }
-                        </Button>
-                        <Button fullWidth variant="outlined" startIcon={ <MicrosoftIcon /> }
-                                onClick={ () => onSso( Login.SsoProvider.MICROSOFT ) }>
-                            { appmodel.label( "page.login.sso.microsoft" ) }
-                        </Button>
-                        <Button fullWidth variant="outlined" startIcon={ <AppleIcon /> }
-                                onClick={ () => onSso( Login.SsoProvider.APPLE ) }>
-                            { appmodel.label( "page.login.sso.apple" ) }
-                        </Button>
-                        <Button fullWidth variant="text" startIcon={ <BusinessIcon /> }
-                                onClick={ onEnterpriseSso }>
-                            { appmodel.label( "page.login.sso.enterprise" ) }
-                        </Button>
+                    {/* Register (left) + "Forgot Password" (right, on the password step only — there's no
+                        "forgot login" flow: sign-in is by email/phone). (width:auto overrides LinkButton's fullWidth.) */}
+                    <Stack direction="row" spacing={ 1 } sx={{ justifyContent: "space-between", alignItems: "center" }}>
+                        <LinkButton label="Register" onClick={ onRegister } sx={{ width: "auto" }} />
+                        <Show show={ step === Login.Step.PASSWORD }>
+                            <LinkButton label="Forgot Password" onClick={ onForgotPassword } sx={{ width: "auto" }} />
+                        </Show>
                     </Stack>
+
+                    {/* SSO — only on the identifier step (hidden once you're entering a password).
+                        TODO: an SSO-only account shows only this (resolve via app-bootstrap / account config). */}
+                    <Show show={ step === Login.Step.IDENTIFIER }>
+                        <Button fullWidth variant="outlined" startIcon={ <KeyOutlinedIcon /> } onClick={ () => void onPasskey() }>
+                            Sign in with a passkey
+                        </Button>
+
+                        <Divider>{ appmodel.label( "page.login.sso.divider" ) }</Divider>
+
+                        <Stack direction="column" spacing={ 1 }>
+                            <Button fullWidth variant="outlined" startIcon={ <GoogleIcon /> }
+                                    onClick={ () => onSso( Login.SsoProvider.GOOGLE ) }>
+                                { appmodel.label( "page.login.sso.google" ) }
+                            </Button>
+                            <Button fullWidth variant="outlined" startIcon={ <MicrosoftIcon /> }
+                                    onClick={ () => onSso( Login.SsoProvider.MICROSOFT ) }>
+                                { appmodel.label( "page.login.sso.microsoft" ) }
+                            </Button>
+                            <Button fullWidth variant="outlined" startIcon={ <AppleIcon /> }
+                                    onClick={ () => onSso( Login.SsoProvider.APPLE ) }>
+                                { appmodel.label( "page.login.sso.apple" ) }
+                            </Button>
+                            <Button fullWidth variant="text" startIcon={ <BusinessIcon /> }
+                                    onClick={ onEnterpriseSso }>
+                                { appmodel.label( "page.login.sso.enterprise" ) }
+                            </Button>
+                        </Stack>
+                    </Show>
 
                     {/* theme + language */}
                     <Divider />
@@ -279,6 +433,14 @@ export function Login( props : Login.Props ) : JSX.Element
 
 export namespace Login
 {
+    // the login is entered one step at a time: identify yourself, then prove it, then any challenge
+    export enum Step
+    {
+        IDENTIFIER = "identifier",   // choose email/phone + enter it → Continue
+        PASSWORD   = "password",     // enter the password → Continue
+        CHALLENGE  = "challenge",    // future: emailed/texted code, MFA app, etc. (not yet implemented)
+    }
+
     export enum Method
     {
         EMAIL = "email",
@@ -295,6 +457,8 @@ export namespace Login
 
     export interface Props
     {
+        // ?account=<email|phone> — prefilled by registration; auto-selects the tab + fills the field
+        account? : string;
     }
 }
 // eof

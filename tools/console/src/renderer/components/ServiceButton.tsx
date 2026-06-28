@@ -7,13 +7,17 @@ import type { ServiceInfo } from "../../shared/types";
 import { serviceIcon } from "../icons";
 import { StatusDot, type DotState } from "./StatusDot";
 
+/** One indicator dot on a tile (a pipeline step). Backends show Build · Container · Deploy/Run; a
+ *  frontend (web) has no image, so it shows Build · Deploy/Run. */
+export interface ServiceDot { key : string; label : string; state : DotState; }
+
 //
-// A single service tile in the top bar: MUI icon, name underneath, and a running indicator.
-// Disabled-looking (faint) when the service is only planned (spec, not yet scaffolded).
+// A single service tile in the top bar: indicator dots on top, MUI icon, name underneath. Each dot is
+// a pipeline step — green done/running · yellow in process · red failed · grey idle · faint planned.
 //
 export function ServiceButton(
-    { service, selected, state, onSelect } :
-    { service : ServiceInfo; selected : boolean; state : DotState; onSelect : () => void }
+    { service, selected, dots, onSelect } :
+    { service : ServiceInfo; selected : boolean; dots : ServiceDot[]; onSelect : () => void }
 )
 {
     const Icon    : ReturnType<typeof serviceIcon> = serviceIcon( service.icon );
@@ -25,22 +29,26 @@ export function ServiceButton(
                 onClick={onSelect}
                 focusRipple
                 sx={{
-                    position     : "relative",
-                    flexDirection: "column",
-                    gap          : 0.4,
-                    width        : 78,
-                    py           : 0.9,
-                    borderRadius : 2,
-                    border       : "1px solid",
-                    borderColor  : selected ? "primary.main" : "divider",
-                    bgcolor      : selected ? "rgba(91,157,255,0.12)" : "background.paper",
-                    opacity      : planned ? 0.5 : 1,
-                    transition   : "border-color .15s, background-color .15s",
-                    "&:hover"    : { borderColor: selected ? "primary.main" : "text.disabled" }
+                    flexDirection : "column",
+                    alignItems    : "center",
+                    justifyContent: "center",
+                    gap           : 0.3,
+                    flexShrink    : 0,
+                    width         : 78,
+                    height        : 66,            // fixed → the row never collapses / drops the label
+                    py            : 0.6,
+                    borderRadius  : 2,
+                    border        : "1px solid",
+                    borderColor   : selected ? "primary.main" : "divider",
+                    bgcolor       : selected ? "rgba(91,157,255,0.12)" : "background.paper",
+                    opacity       : planned ? 0.5 : 1,
+                    transition    : "border-color .15s, background-color .15s",
+                    "&:hover"     : { borderColor: selected ? "primary.main" : "text.disabled" }
                 }}
             >
-                <Box sx={{ position: "absolute", top: 5, right: 5 }}>
-                    <StatusDot state={state} />
+                {/* one dot per pipeline step, centered above the icon (in flow → never crowds the label) */}
+                <Box sx={{ display: "flex", justifyContent: "center", gap: 0.75, mb: 0.5 }}>
+                    {dots.map( ( d ) => <StatusDot key={d.key} state={d.state} title={d.label} size={8} /> )}
                 </Box>
                 <Icon sx={{ fontSize: 24, color: selected ? "primary.main" : "text.secondary" }} />
                 <Typography

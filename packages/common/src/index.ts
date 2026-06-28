@@ -27,3 +27,7 @@ export { default as FileUtils } from './utils/FileUtils';
 export { default as ResultUtils } from './utils/ResultUtils';
 export { default as UserAgent } from './utils/UserAgent';
 
+// structured logger (shared by Node services + the browser web app) — named export preserves the
+// merged Trace namespace (Trace.Level / Trace.Data).
+export { Trace } from './Trace';
+

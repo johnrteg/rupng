@@ -1,6 +1,6 @@
 {
     "name": "cloud",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "private": true,
     "scripts": {
         "build": "tsc --noEmit",
@@ -32,6 +32,7 @@
         "@repo/cloud-manifest": "*",
         "@repo/endpoint": "*",
         "app": "*",
+        "auth": "*",
         "web": "*",
         "aws-cdk-lib": "2.260.0",
         "constructs": "10.6.0"

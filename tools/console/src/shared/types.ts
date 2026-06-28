@@ -26,6 +26,9 @@ export interface ServiceCapabilities
     canCompose : boolean;
     /** Backend service with at least one HTTP port → /health pings available. */
     canHealth : boolean;
+    /** Has its own `src/CloudManifest.ts` → a deployable cloud stack exists (the Deploy step works).
+     *  Services without one (e.g. auth, served through the app gateway) cannot be deployed on their own. */
+    canDeploy : boolean;
     /** Frontend (web SPA) — built/served differently; no container/health. */
     isFrontend : boolean;
 }
@@ -63,6 +66,82 @@ export const REPO_ID = "repo";
 
 /** Pseudo-service id the Deploy tab streams git/build/cdk output under. */
 export const DEPLOY_ID = "deploy";
+
+/** Pseudo-service id the in-app browser window streams its captured console (console.* / errors) under. */
+export const BROWSER_ID = "browser";
+
+/** Default edge port the webproxy listens on when started by the console (8080 is often already taken). */
+export const PROXY_DEFAULT_PORT = 9000;
+
+/** Live state of the in-app browser window (open + current URL + history availability). */
+export interface BrowserState
+{
+    open : boolean;
+    url : string;
+    canBack : boolean;
+    canForward : boolean;
+}
+
+//
+// Per-service run/build settings (persisted in the renderer; pushed to main to drive the orchestrator).
+// A TARGET says where the service runs:
+//   • "local"      — Build, then run it locally (npm run dev). The orchestrator (re)starts the local
+//                    process after a build (a frontend "runs" in the in-app browser window instead).
+//   • "localstack" — Build → Docker image → Deploy (cdklocal). The chain CASCADES: Docker needs Build;
+//                    Deploy needs Docker (backends) / Build (frontends — deploy = sync bin → bucket).
+// `build` applies to both; `docker`/`deploy` only matter under the LocalStack target.
+//
+export type BuildTarget = "local" | "localstack";
+
+export interface BuildSettings
+{
+    /** Where the service runs: locally (npm run dev) or deployed to LocalStack (cdklocal). */
+    target : BuildTarget;
+    /** Auto-run Build (turbo) on a change to this service's src OR a shared package it depends on. */
+    build : boolean;
+    /** [LocalStack] Auto-build the Docker image after Build (backends only; ignored for frontends). */
+    docker : boolean;
+    /** [LocalStack] Auto-deploy after the chain (frontend: sync bin→bucket + refresh; backend: cdklocal). */
+    deploy : boolean;
+}
+
+/** Deploy's prerequisite in the chain: an image first (backend) or just a build (frontend, no image). */
+export function deployPrereqMet( s : BuildSettings, isFrontend : boolean ) : boolean
+{
+    return isFrontend ? s.build : ( s.build && s.docker );
+}
+
+/** The auto-on pipeline STAGES to run, in order (build → image → deploy), per target + cascade.
+ *  (Local-target "run" is a lifecycle action the orchestrator does after build, not a stage here.)
+ *  `canDeploy` gates the deploy step — a service with no cloud stack can never deploy. */
+export function autoSteps( s : BuildSettings, isFrontend : boolean, canDeploy : boolean = true ) : StageId[]
+{
+    const steps : StageId[] = [];
+    if ( s.build ) steps.push( "build" );
+    if ( s.target === "localstack" )
+    {
+        if ( s.build && !isFrontend && s.docker ) steps.push( "image" );
+        if ( canDeploy && s.deploy && deployPrereqMet( s, isFrontend ) ) steps.push( "deploy" );
+    }
+    return steps;
+}
+
+/** Whether a service's CloudManifest changed since its last LocalStack deploy (→ redeploy to apply). */
+export interface ManifestDrift
+{
+    current : string;            // current manifest hash
+    deployed : string | null;    // hash recorded at the last deploy (null = never deployed via the console)
+    drifted : boolean;           // deployed != null && current != deployed
+}
+
+/** Live state of the sequential build queue — drives the progress bar under the service buttons. */
+export interface BuildQueue
+{
+    queue : string[];          // services still waiting
+    current : string | null;   // the one building now
+    done : number;             // completed in the current run
+    total : number;            // total in the current run
+}
 
 // ── Deploy (git → real AWS environment) ────────────────────────────────────────────────────────
 //
@@ -256,8 +335,15 @@ export interface ProxyUpstream
 export type RouteMode = "outside" | "inside";
 /** Static-SPA serving block of the webproxy config. */
 export interface ProxyWeb { root : string; index? : string; prefix? : string; spaFallback? : boolean; }
+/**
+ * One generated route in the LOCAL per-endpoint table (mounted on /api in the webproxy): an endpoint
+ * (method + path, with :params) → the role-service that registers it. Mirrors the production gateway's
+ * per-route dispatch, so /api/auth/v1/login can hit the writer while a read hits the reader — without
+ * the role ever appearing in the path. Generated from the endpoint→role bindings; never hand-written.
+ */
+export interface ProxyRoute { method : string; path : string; target : string; }
 /** A webproxy environment config file (apps/core/webproxy/src/config/<name>.json). */
-export interface ProxyConfig { web : ProxyWeb; upstreams : ProxyUpstream[]; }
+export interface ProxyConfig { web : ProxyWeb; upstreams : ProxyUpstream[]; routes? : ProxyRoute[]; }
 
 export type StageStatus = "idle" | "running" | "success" | "failed" | "skipped";
 
@@ -677,9 +763,13 @@ export interface ApiEndpointDef
 {
     name : string;       // the endpoint class, e.g. "GetBootstrap"
     method : string;     // GET / POST / …
-    path : string;       // e.g. "/app/bootstrap"
+    path : string;       // e.g. "/api/app/v1/bootstrap"
     group : string;      // api source folder: app | auth | common
     hasBody : boolean;   // method typically carries a body (POST/PUT/PATCH) — show the body editor
+    // Audience (RestfulEndpoint.Audience): INTERNAL = VPC-only inter-service · APP = first-party edge
+    // · PUBLIC = published dev API edge. Only APP/PUBLIC are edge-reachable (browser/proxy route table);
+    // INTERNAL is service-to-service only. Defaults to INTERNAL when the endpoint doesn't declare it.
+    audience? : "INTERNAL" | "APP" | "PUBLIC";
     // The service VARIANT (role) this endpoint is registered on + its port, captured from the
     // role-service's registerEndpoints() (e.g. AppPublicService → role "public" → :8101). Undefined
     // when it's registered on every role (e.g. /health via the base) or can't be resolved.
@@ -727,6 +817,99 @@ export interface SavedRequest
     headers : KeyVal[];
     query : KeyVal[];
     body? : string;
+}
+
+// ── AppConfig (the Config tab) ────────────────────────────────────────────────────────────────
+// A service maps to an AppConfig application; each profile is a sub-config (settings/web/flags/…).
+
+/** An AppConfig environment = an in-account deploy target (default "default"). */
+export interface ConfigEnvironment { id : string; name : string; state? : string; }
+
+/** A configuration profile = one sub-config. `type` is "AWS.Freeform" or "AWS.AppConfig.FeatureFlags". */
+export interface ConfigProfile { id : string; name : string; type : string; }
+
+/** The config tree for a service: its application + the profiles (sub-configs) and environments. */
+export interface ServiceConfigTree
+{
+    applicationId?   : string;
+    applicationName? : string;
+    environments     : ConfigEnvironment[];
+    profiles         : ConfigProfile[];
+    error?           : string;
+}
+
+/** Latest hosted content of a profile (the JSON to edit). */
+export interface ConfigContent { content : string; version? : number; contentType : string; error? : string; }
+
+/** Result of saving (new hosted version + deployment). */
+export interface ConfigSaveResult { ok : boolean; version? : number; deployment? : number; error? : string; }
+
+// ── DynamoDB (the Data tab) — a service's tables + item browse/edit ─────────────────────────────
+export interface DynamoTable { name : string; key : string; }                 // physical name + logical key
+export interface DynamoKeySchema { partitionKey : string; sortKey? : string; }
+export interface DynamoScanResult { items : Array<Record<string, unknown>>; lastKey? : Record<string, unknown>; error? : string; }
+export interface DynamoSaveResult { ok : boolean; error? : string; }
+
+// ── Cognito (the Cognito tab) — user pool + user browse/edit ────────────────────────────────────
+export interface CognitoPool { id : string; name : string; }
+export interface CognitoUser
+{
+    username    : string;
+    status?     : string;                       // e.g. CONFIRMED / FORCE_CHANGE_PASSWORD
+    enabled     : boolean;
+    attributes  : Record<string, string>;       // sub, email, email_verified, given_name, …
+    createdAt?  : string;
+    modifiedAt? : string;
+}
+export interface CognitoResult { ok : boolean; error? : string; }
+
+// ── Kafka monitor (the Events sub-tab) ─────────────────────────────────────────────────────────
+/** A binding edge in the topology — one service's publish or subscribe of a topic. */
+export interface MonitorBinding { topic : string; group? : string; }
+/** A service node in the radial graph + the topics it publishes/subscribes (mirrors the manifests). */
+export interface MonitorService { id : string; publishes : string[]; subscribes : MonitorBinding[]; }
+/** The whole topology: service nodes + the distinct set of topics (pipes radiate to the central hub). */
+export interface MonitorTopology { services : MonitorService[]; topics : string[]; }
+
+/** One observed Kafka event (an Events.Envelope the monitor consumed), enriched for the UI. */
+export interface MonitorEvent
+{
+    eventId    : string;
+    topic      : string;          // = Events.Object/Stream (the "noun"), e.g. "auth.user"
+    verb       : string;          // created / updated / deleted / purged / accessed (color)
+    action     : string;          // `${topic}.${verb}`
+    accountId  : string;
+    targetType : string;
+    targetId   : string;
+    publisher  : string;          // service that publishes this topic (from topology), or "?"
+    subscribers : string[];       // consumer groups bound to this topic (from topology)
+    occurredAt : string;          // envelope time
+    arrivedAt  : number;          // epoch ms the monitor received it (TTL clock)
+    partition  : number;
+    offset     : string;
+    sizeBytes  : number;          // JSON byte size of envelope.data (drives circle radius)
+    envelope   : unknown;         // full envelope (the model-data inspector)
+    delivered  : string[];        // subscriber groups confirmed past this offset
+    finishedAt? : number;         // set once ALL subscriber groups consumed it → it's in the bin
+}
+
+/** Snapshot returned by monitorStart / monitorState. */
+export interface MonitorState
+{
+    running   : boolean;
+    brokers   : string;
+    error?    : string;
+    topology  : MonitorTopology;
+    events    : MonitorEvent[];   // everything within the TTL window (live + binned; bin = finishedAt set)
+    ttlMs     : number;
+    maxTtlMs  : number;
+}
+
+/** Periodic reconciliation pushed to the renderer: delivery progress + which events aged out. */
+export interface MonitorSync
+{
+    delivered : Array<{ eventId : string; delivered : string[]; finishedAt? : number }>;
+    removed   : string[];         // eventIds pruned (older than TTL)
 }
 
 /** IPC channel names — referenced by both preload and main so they can't drift. */
@@ -779,6 +962,10 @@ export const IPC =
     openExternal       : "shell:open-external",
     devStart           : "web:dev-start",
     devStop            : "web:dev-stop",
+    tailDeployedStart  : "deploy:tail-start",
+    tailDeployedStop   : "deploy:tail-stop",
+    deployedPorts      : "deploy:ports",
+    manifestDrift      : "deploy:manifest-drift",
     proxyStart         : "proxy:start",
     proxyStop          : "proxy:stop",
     proxyRestart       : "proxy:restart",
@@ -788,6 +975,7 @@ export const IPC =
     proxyConfigSave    : "proxy:config-save",
     proxyApply         : "proxy:apply",
     proxyGatewayTargets : "proxy:gateway-targets",
+    proxyLocalRoutes   : "proxy:local-routes",
     // repo (git check-out / check-in)
     repoStatus         : "repo:status",
     repoBranches       : "repo:branches",
@@ -804,6 +992,12 @@ export const IPC =
     watchSyncStart     : "web:watch-sync-start",
     watchSyncStop      : "web:watch-sync-stop",
     watchSyncState     : "web:watch-sync-state",
+    // build orchestration (per-service Auto: build/docker/deploy chain + sequential cross-service queue)
+    buildConfigure     : "build:configure",
+    buildQueueGet      : "build:queue-get",
+    buildRunStep       : "build:run-step",
+    buildRunNow        : "build:run-now",
+    buildAll           : "build:all",
     // deploy (git → real AWS environment)
     deployRefs         : "deploy:refs",
     deployGitVersions  : "deploy:git-versions",
@@ -814,14 +1008,46 @@ export const IPC =
     deployAudit        : "deploy:audit",
     deployProposeTag   : "deploy:propose-tag",
     deployOpenLine     : "deploy:open-line",
+    // in-app browser window (console capture)
+    browserOpen        : "browser:open",
+    browserClose       : "browser:close",
+    browserReload      : "browser:reload",
+    browserBack        : "browser:back",
+    browserForward     : "browser:forward",
+    browserResize      : "browser:resize",
+    browserState       : "browser:state",
     targetGet          : "cloud:target-get",
     targetSet          : "cloud:target-set",
+    // appconfig (the Config tab)
+    configProfiles     : "config:profiles",
+    configGet          : "config:get",
+    configSave         : "config:save",
+    // dynamodb (the Data tab)
+    dynamoTables       : "dynamo:tables",
+    dynamoTableInfo    : "dynamo:table-info",
+    dynamoScan         : "dynamo:scan",
+    dynamoPut          : "dynamo:put",
+    dynamoDelete       : "dynamo:delete",
+    // cognito (the Cognito tab)
+    cognitoPools       : "cognito:pools",
+    cognitoUsers       : "cognito:users",
+    cognitoCreateUser  : "cognito:create-user",
+    cognitoUpdateUser  : "cognito:update-user",
+    cognitoSetEnabled  : "cognito:set-enabled",
+    cognitoDeleteUser  : "cognito:delete-user",
+    cognitoSetPassword : "cognito:set-password",
     // api tester
     apiDiscover        : "api:discover",
     apiSend            : "api:send",
     apiSavedList       : "api:saved-list",
     apiSavedSave       : "api:saved-save",
     apiSavedDelete     : "api:saved-delete",
+    // kafka monitor (the Events sub-tab)
+    monitorStart       : "monitor:start",
+    monitorStop        : "monitor:stop",
+    monitorState       : "monitor:state",
+    monitorSetTtl      : "monitor:set-ttl",
+    monitorClear       : "monitor:clear",
     // events (main → renderer, pushed)
     onLog              : "evt:log",
     onProc             : "evt:proc",
@@ -830,5 +1056,9 @@ export const IPC =
     onLocalStack       : "evt:localstack",
     onClaudeMessage    : "evt:claude-message",
     onClaudeApproval   : "evt:claude-approval",
-    onClaudeState      : "evt:claude-state"
+    onClaudeState      : "evt:claude-state",
+    onBrowser          : "evt:browser",
+    onBuildQueue       : "evt:build-queue",
+    onMonitorEvent     : "evt:monitor-event",     // one new event arrived on the bus
+    onMonitorSync      : "evt:monitor-sync"        // periodic delivery/bin/prune reconciliation
 } as const;

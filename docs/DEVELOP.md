@@ -220,6 +220,14 @@ auto-discover `@repo/*` packages (via `packages/build/aliases.mjs`), so they nee
 - `npm run <service>.image` / `<service>.docker` build/run it.
 - **LocalStack** (run the CDK against AWS-in-Docker): see [`cloud/README.md`](../cloud/README.md)
   and [`cloud/local/README.md`](../cloud/local/README.md).
+- **Local vs LocalStack dev loop** (via the [Console](../tools/console/README.md#local-vs-localstack--the-dev-loop)):
+  deploy the fleet to LocalStack **once**, then run the service you're working on in **Local** mode —
+  `npm run dev` (instant reload), but inheriting the deployed stack's resource env + pointing the SDK at
+  LocalStack, so your local code uses the real LocalStack AWS resources with **no per-change deploy**.
+  **Caveat:** code changes are free, but changing a service's **AWS footprint** in `CloudManifest.ts`
+  (a new bucket/table/queue/AppConfig profile, role/port, …) **requires a `cdklocal deploy`** — the new
+  resource and the env var the `CloudResolver` reads for it only exist after deploy. The Console hashes
+  the manifest and surfaces a **⚠ Redeploy** button when it drifts from the last deploy.
 
 ---
 

@@ -4,7 +4,7 @@ import Chip from "@mui/material/Chip";
 import Tooltip from "@mui/material/Tooltip";
 import Divider from "@mui/material/Divider";
 
-import type { ClaudeMode, DeployTarget, HealthResult, LogStream, ServiceInfo, StageId, StageState } from "../../shared/types";
+import type { ClaudeMode, HealthResult, LogStream, ServiceInfo, StageState } from "../../shared/types";
 import { serviceIcon } from "../icons";
 import { MONO } from "../theme";
 import { ActionToolbar } from "./ActionToolbar";
@@ -16,7 +16,7 @@ import { HealthCard } from "./HealthCard";
 // (left, grows), and a right rail with health + Ask-Claude.
 //
 export function ServicePanel(
-    { service, stages, runningStreams, busy, health, claudeMode, onClaudeMode, onRun, onStop, onComposeDown, onHealth } :
+    { service, stages, runningStreams, busy, health, claudeMode, onClaudeMode, onStop, onHealth } :
     {
         service : ServiceInfo;
         stages : StageState;
@@ -25,9 +25,7 @@ export function ServicePanel(
         health : HealthResult[];
         claudeMode : ClaudeMode;
         onClaudeMode : ( m : ClaudeMode ) => void;
-        onRun : ( selected : StageId[], target : DeployTarget, resume : boolean ) => void;
         onStop : () => void;
-        onComposeDown : () => void;
         onHealth : ( r : HealthResult[] ) => void;
     }
 )
@@ -53,9 +51,8 @@ export function ServicePanel(
                     service={service}
                     busy={busy}
                     anyRunning={anyRunning}
-                    onRun={onRun}
+                    localRunning={runningStreams.has( "runtime" )}
                     onStop={onStop}
-                    onComposeDown={onComposeDown}
                 />
                 <Box sx={{ flexGrow: 1 }} />
                 {!service.capabilities.scaffolded && <Chip label="planned" variant="outlined" />}
@@ -64,15 +61,14 @@ export function ServicePanel(
                 ) )}
             </Box>
 
-            {/* service blurb · failure hint */}
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, pb: 1 }}>
-                <Typography variant="caption" sx={{ color: "text.secondary" }}>{service.blurb}</Typography>
-                {hasFailure && (
+            {/* failure hint only (the service is obvious from the selected button — no blurb line) */}
+            {hasFailure && (
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, pb: 1 }}>
                     <Typography variant="caption" sx={{ color: "warning.main" }}>
-                        · a stage failed — fix it, then "Resume" to continue (passed stages are skipped)
+                        a step failed — fix it, then ▶ the step (or "Run") to retry (the chain halts on a failure)
                     </Typography>
-                )}
-            </Box>
+                </Box>
+            )}
             <Divider />
 
             {/* console (left) + right rail (health). A frontend has no HTTP endpoints → no health rail. */}

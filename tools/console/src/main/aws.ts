@@ -6,6 +6,10 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { ApiGatewayV2Client } from "@aws-sdk/client-apigatewayv2";
 import { ECSClient } from "@aws-sdk/client-ecs";
 import { ElasticLoadBalancingV2Client } from "@aws-sdk/client-elastic-load-balancing-v2";
+import { AppConfigClient } from "@aws-sdk/client-appconfig";
+import { CognitoIdentityProviderClient } from "@aws-sdk/client-cognito-identity-provider";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { fromIni } from "@aws-sdk/credential-providers";
 import { loadSharedConfigFiles } from "@aws-sdk/shared-ini-file-loader";
 
@@ -35,10 +39,14 @@ let _s3 : S3Client | undefined;
 let _apigw : ApiGatewayV2Client | undefined;
 let _ecs : ECSClient | undefined;
 let _elbv2 : ElasticLoadBalancingV2Client | undefined;
+let _appconfig : AppConfigClient | undefined;
+let _cognito : CognitoIdentityProviderClient | undefined;
+let _ddb : DynamoDBClient | undefined;
+let _ddbDoc : DynamoDBDocumentClient | undefined;
 
 function resetClients() : void
 {
-    _cfn = _logs = _cw = _lambda = _s3 = _apigw = _ecs = _elbv2 = undefined;
+    _cfn = _logs = _cw = _lambda = _s3 = _apigw = _ecs = _elbv2 = _appconfig = _cognito = _ddb = _ddbDoc = undefined;
 }
 
 /** SDK config for the active target. LocalStack: edge endpoint + test creds. AWS: profile + region. */
@@ -98,6 +106,10 @@ export function s3Client() : S3Client { return _s3 ??= new S3Client( { ...config
 export function apigwClient() : ApiGatewayV2Client { return _apigw ??= new ApiGatewayV2Client( config() ); }
 export function ecsClient() : ECSClient { return _ecs ??= new ECSClient( config() ); }
 export function elbv2Client() : ElasticLoadBalancingV2Client { return _elbv2 ??= new ElasticLoadBalancingV2Client( config() ); }
+export function appConfigClient() : AppConfigClient { return _appconfig ??= new AppConfigClient( config() ); }
+export function cognitoClient() : CognitoIdentityProviderClient { return _cognito ??= new CognitoIdentityProviderClient( config() ); }
+export function dynamoClient() : DynamoDBClient { return _ddb ??= new DynamoDBClient( config() ); }
+export function dynamoDocClient() : DynamoDBDocumentClient { return _ddbDoc ??= DynamoDBDocumentClient.from( dynamoClient(), { marshallOptions: { removeUndefinedValues: true } } ); }
 
 /** Turn an SDK error into a short, friendly message (LocalStack-down / creds are the common ones). */
 export function awsErr( err : unknown ) : string

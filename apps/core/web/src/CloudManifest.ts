@@ -24,7 +24,17 @@ export const manifest : ResourceManifest =
             {
                 key    : "site",
                 access : BucketAccess.PUBLIC_CDN,
-                cdn    : { staticSite: { source: "apps/core/web/bin", spa: true } },
+                cdn    :
+                {
+                    staticSite : { source: "apps/core/web/bin", spa: true },
+                    // The SPA calls the API on its own origin under the versioned /api namespace; route
+                    // each service's prefix to its gateway (CloudFront → API Gateway), like the local
+                    // webproxy. /api/{service}/* catches every version (v1, v2, …). Everything else
+                    // (index.html, assets, themes, localization, SPA routes) stays on S3. Keep in sync
+                    // with the webproxy upstreams. Only app + auth are live today; add prefixes as services land.
+                    apiRoutes  : [ { service: "app",  api: "api", prefixes: [ "/api/app" ] },
+                                   { service: "auth", api: "api", prefixes: [ "/api/auth" ] } ],
+                },
             },
         ],
 

@@ -18,7 +18,7 @@ import { RestfulEndpoint, Access } from "@repo/endpoint";
     // respond
     const RestfulEndpoint.Response : resp = await GetHeath.execute( auth );
 */
-export class GetHealth extends RestfulEndpoint<GetHealth.Query, undefined>
+export class GetHealth extends RestfulEndpoint<GetHealth.Query, undefined, GetHealth.Response>
 {
     public readonly uri      : string = "/health";
     public readonly method   : NetworkUtils.Method = NetworkUtils.Method.GET;

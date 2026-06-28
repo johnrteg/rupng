@@ -16,10 +16,12 @@ export class GetBootstrapImpl extends GetBootstrap
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////
-    // server-side fulfillment of the request
-    public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
+    // server-side fulfillment of the request — live read of the WEB config from AppConfig
+    // (profile "web"), falling back to GetBootstrap.SEED. A Redis cache will front this later.
+    public async execute( _auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
-        const reply : GetBootstrap.Response = { maxUploadSize : { texting : 750_000 } };
+        const reply : GetBootstrap.Response = await this.service.getWebConfig();
+        this.service.log.info('GetBootstrapImpl', reply );
         return { status : NetworkUtils.Status.OK, data : reply };
     }
 }

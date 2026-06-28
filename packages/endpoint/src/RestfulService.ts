@@ -300,6 +300,21 @@ export class RestfulService
         return await this.request( NetworkUtils.Method.DELETE, url, parameters, data, headers, timeout );
     }
 
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+    * Send an encapsulated, shared RestfulEndpoint and get back a typed reply. The endpoint marshals
+    * itself (method, URI, query, body, headers) so the same class the server fulfills and the /cloud
+    * build maps to a gateway route also drives the request — no per-call URL/verb wiring. The reply's
+    * `data` is typed as the endpoint's Response (declare its Response as the 3rd generic of
+    * RestfulEndpoint to get it, e.g. `class GetBootstrap extends RestfulEndpoint<Q, B, GetBootstrap.Response>`;
+    * otherwise it falls back to `any`). Sits alongside the traditional get/post/put/delete helpers.
+    */
+    public async fetch<R = any>( endpoint : RestfulEndpoint<any, any, R>, timeout : number | null = null ) : Promise<RestfulService.Reply<R>>
+    {
+        const transport : RestfulEndpoint.ClientTransport = endpoint.marshalClient();   // url already carries the query string
+        return await this.request( endpoint.method, transport.url, null, transport.body ?? null, transport.headers, timeout ) as RestfulService.Reply<R>;
+    }
+
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////
     public static queryString( parameters : any ) : string
     {
@@ -476,10 +491,10 @@ export namespace RestfulService
         data?       : any;      // optioan raw data of the error
     }
 
-    export interface Reply
+    export interface Reply<T = any>
     {
         ok       : boolean;
-        data?    : any;
+        data?    : T;
         status   : NetworkUtils.Status;
         headers? : any;
         error?   : Error;

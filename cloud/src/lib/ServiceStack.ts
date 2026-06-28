@@ -58,12 +58,37 @@ import {
 import { fargateSize, rdsInstanceClass, auroraAcu, cacheLimits, batchSize, FargateSize, AcuRange, CacheLimits, BatchSize } from "./sizing";
 import { isLocal, supportedLocally } from "./local";
 
+// Starter Content-Security-Policy for the web SPA (served at the CloudFront edge in real envs).
+// Deliberately permissive so it doesn't break the app on day one — tighten over time:
+//   • style-src 'unsafe-inline' — MUI/emotion inject inline <style>; removing needs nonces/hashes.
+//   • connect-src https: wss: — the API gateway (cross-origin) + websockets; narrow to specific hosts later.
+//   • script-src 'self' — the built bundle only (no eval); dev/HMR is unaffected (this is edge-only).
+const STARTER_CSP : string = [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self'",
+    "connect-src 'self' https: wss:",
+].join( "; " );
+
+/** A built API Gateway's identity, shared across stacks so a CDN can route prefixes to it. */
+export interface ApiGatewayRef { apiId : string; region : string; }
+/** Cross-stack registry of built gateways, keyed `${service}/${apiKey}` (e.g. "app/api"). */
+export type GatewayRegistry = Map<string, ApiGatewayRef>;
+
 export interface ServiceStackProps extends cdk.StackProps
 {
     manifest  : ResourceManifest;
     deployEnv : Environment;         // deployment environment (dev/staging/production)
     vpc?      : ec2.IVpc;            // shared VPC from PlatformStack (created lazily if absent)
-    // note: cdk.StackProps.env carries the AWS { account, region } — separate concept.
+    // Shared map every ServiceStack writes its gateway(s) into + reads from, so a CDN (web) can route
+    // API prefixes to another service's gateway. Relies on producer stacks being built before
+    // consumers in app.ts (app before web). note: StackProps.env carries AWS { account, region }.
+    gateways? : GatewayRegistry;
 }
 
 /**
@@ -104,6 +129,7 @@ export class ServiceStack extends cdk.Stack
     private _albListener? : elbv2.IApplicationListener;
     private _alb?         : elbv2.IApplicationLoadBalancer;   // for Route 53 alias targets
     private readonly cdns : Map<string, cloudfront.IDistribution> = new Map();   // for Route 53 alias targets
+    private readonly gateways : GatewayRegistry;   // cross-stack: gateways this + sibling stacks expose
 
     // A provisioned user pool the API's JWT authorizer can reference directly.
     private _userPool?       : cognito.UserPool;
@@ -124,6 +150,7 @@ export class ServiceStack extends cdk.Stack
         this.service   = props.manifest.service;
         this._vpc      = props.vpc;
         this.tracing   = props.manifest.tracing ?? false;
+        this.gateways  = props.gateways ?? new Map();
 
         const owns = props.manifest.owns;
 
@@ -259,6 +286,24 @@ export class ServiceStack extends cdk.Stack
         if( spec.access === BucketAccess.PUBLIC_CDN )
         {
             const spa : boolean = site !== undefined && site.spa !== false;   // default SPA routing when hosting a site
+
+            // Starter security headers (incl. CSP) for the static site — applied at the edge for real
+            // envs only (skipped on local + when not hosting a site). NOT a meta tag in index.html,
+            // which would break `vite dev` HMR. STARTER, deliberately permissive (style 'unsafe-inline'
+            // for MUI; connect https:/wss: for the API gateway + websockets) — tighten as the app settles.
+            const secHeaders : cloudfront.ResponseHeadersPolicy | undefined = ( site && !isLocal( this.deployEnv ) )
+                ? new cloudfront.ResponseHeadersPolicy( this, `SecHeaders-${spec.key}`, {
+                    comment : `${this.deployEnv}-${this.service}-${spec.key} starter CSP`,
+                    securityHeadersBehavior : {
+                        contentSecurityPolicy : { override: true, contentSecurityPolicy: STARTER_CSP },
+                        contentTypeOptions    : { override: true },
+                        frameOptions          : { override: true, frameOption: cloudfront.HeadersFrameOption.DENY },
+                        referrerPolicy        : { override: true, referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN },
+                        strictTransportSecurity : { override: true, accessControlMaxAge: cdk.Duration.days( 365 ), includeSubdomains: true },
+                    },
+                  } )
+                : undefined;
+
             const dist : cloudfront.Distribution = new cloudfront.Distribution( this, `Cdn-${spec.key}`, {
                 defaultRootObject : site ? "index.html" : undefined,
                 defaultBehavior : {
@@ -269,6 +314,7 @@ export class ServiceStack extends cdk.Stack
                         ? cloudfront.ViewerProtocolPolicy.ALLOW_ALL
                         : cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                     cachePolicy          : cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                    responseHeadersPolicy : secHeaders,
                 },
                 // SPA client-side routing: serve index.html for paths S3 can't resolve
                 errorResponses : spa
@@ -291,7 +337,23 @@ export class ServiceStack extends cdk.Stack
                 new cdk.CfnOutput( this, `WebsiteUrl${spec.key}`, { value: siteUrl, description: `Public URL for the ${spec.key} static site` } );
 
                 const source : string = path.join( __dirname, "..", "..", "..", site.source );   // cloud/src/lib → repo root
-                if( fs.existsSync( source ) )
+                if( !fs.existsSync( source ) )
+                {
+                    cdk.Annotations.of( this ).addWarning(
+                        `static site "${spec.key}": build output not found at ${site.source} — run the Build stage before Deploy. ` +
+                        `Created the bucket + distribution but uploaded nothing.` );
+                }
+                else if( isLocal( this.deployEnv ) )
+                {
+                    // LocalStack mishandles CDK's BucketDeployment custom resource on a stack UPDATE
+                    // ("request type is 'Update' but 'PhysicalResourceId' is not defined"), so we skip
+                    // it locally. The bucket + CloudFront are still created; upload the built SPA with
+                    // the console (Web → watch-sync) or: awslocal s3 sync <site.source> s3://<bucket>
+                    cdk.Annotations.of( this ).addInfo(
+                        `[local] skipping S3 BucketDeployment for "${spec.key}" — sync the built site into the bucket ` +
+                        `via the console (Web → watch-sync) or \`awslocal s3 sync ${site.source} s3://<bucket>\`.` );
+                }
+                else
                 {
                     new s3deploy.BucketDeployment( this, `Site-${spec.key}`, {
                         sources           : [ s3deploy.Source.asset( source ) ],
@@ -301,13 +363,32 @@ export class ServiceStack extends cdk.Stack
                         prune             : true,
                     } );
                 }
-                else
-                {
-                    cdk.Annotations.of( this ).addWarning(
-                        `static site "${spec.key}": build output not found at ${site.source} — run the Build stage before Deploy. ` +
-                        `Created the bucket + distribution but uploaded nothing.` );
-                }
             }
+
+            // Route API path prefixes to a sibling service's API Gateway (so the deployed SPA reaches
+            // the API on its OWN origin, like the local webproxy). Everything else — index.html,
+            // assets, themes, localization — falls through the default behavior to S3. Not emulated on
+            // LocalStack (custom origins): locally the webproxy does this routing.
+            if( !isLocal( this.deployEnv ) )
+                for( const route of spec.cdn?.apiRoutes ?? [] )
+                {
+                    const apiKey : string = route.api ?? "api";
+                    const ref : ApiGatewayRef | undefined = this.gateways.get( `${route.service}/${apiKey}` );
+                    if( !ref )
+                    {
+                        cdk.Annotations.of( this ).addWarning(
+                            `cdn "${spec.key}": no gateway for ${route.service}/${apiKey} — ensure ${route.service} is built before ${this.service} in cloud/src/app.ts.` );
+                        continue;
+                    }
+                    const apiOrigin : origins.HttpOrigin = new origins.HttpOrigin( `${ref.apiId}.execute-api.${ref.region}.amazonaws.com` );
+                    for( const prefix of route.prefixes )
+                        dist.addBehavior( `${prefix}/*`, apiOrigin, {
+                            cachePolicy          : cloudfront.CachePolicy.CACHING_DISABLED,
+                            originRequestPolicy  : cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                            viewerProtocolPolicy : cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                            allowedMethods       : cloudfront.AllowedMethods.ALLOW_ALL,
+                        } );
+                }
         }
 
         // Presigned upload: a small Lambda that issues S3 PUT/POST URLs (route added in makeApi).
@@ -757,7 +838,10 @@ export class ServiceStack extends cdk.Stack
             taskImageOptions     : {
                 image          : this.containerImage( spec ),
                 containerPort  : spec.containerPort ?? 8000,
-                environment    : { ...this.envVars, ...( spec.environment ?? {} ) },
+                // PORT pins the app to the SAME port ECS maps + the ALB target group health-checks, so it
+                // can't drift to the image's default (the root Dockerfile's ENV PORT). The service reads
+                // PORT at startup (overriding its role's default). SERVICE_ROLE etc. come from spec.environment.
+                environment    : { ...this.envVars, PORT: String( spec.containerPort ?? 8000 ), ...( spec.environment ?? {} ) },
             },
         } );
 
@@ -858,6 +942,9 @@ export class ServiceStack extends cdk.Stack
         }
 
         this.envVars[ envVarName( ResourceKind.API, spec.key ) ] = httpApi.apiEndpoint;
+
+        // publish this gateway so a sibling stack's CDN (web) can route prefixes to it (cross-stack)
+        this.gateways.set( `${this.service}/${spec.key}`, { apiId: httpApi.apiId, region: this.region } );
     }
 
     /** Convert a RestfulEndpoint uri (":id") to API Gateway path syntax ("{id}"). */

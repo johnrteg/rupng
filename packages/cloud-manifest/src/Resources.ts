@@ -89,6 +89,18 @@ export interface CdnSpec
     // build output (e.g. "apps/core/web/bin"); its contents are uploaded on deploy and the
     // distribution serves /index.html as the root, routing 403/404 → /index.html (client-side routing).
     staticSite?       : StaticSiteSpec;
+    // API path prefixes the distribution should route to a service's API Gateway instead of the
+    // static bucket — so the deployed SPA reaches the API on its OWN origin (same as the local
+    // webproxy). Everything else (index.html, assets, themes, localization) stays on S3. Mirrors the
+    // webproxy upstream prefixes; not emulated on LocalStack (use the webproxy locally).
+    apiRoutes?        : Array<CdnApiRoute>;
+}
+
+export interface CdnApiRoute
+{
+    prefixes : Array<string>;                // e.g. ["/app","/auth"] — each becomes a "<prefix>/*" behavior
+    service  : string;                       // the service whose API Gateway serves these prefixes (e.g. "app")
+    api?     : string;                       // that service's ApiSpec key (default "api")
 }
 
 export interface StaticSiteSpec

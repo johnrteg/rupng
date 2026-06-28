@@ -371,6 +371,26 @@ drive the whole flow end-to-end with **nothing actually delivered**:
 
 # Data model (sketch)
 
+> **Migrated.** The public **user profile** contract is now in **`@repo/api` → `User`**
+> ([`packages/api/src/auth/User.ts`](../../../../packages/api/src/auth/User.ts)) — `User.Entity` (**no
+> secrets**) + `User.Status`/`User.MfaMethod`/`User.Membership`. The contract **splits fields by source**
+> so reads/writes route without duplicating Cognito:
+> * **`User.CognitoProfile`** — Cognito-owned (email/phone + verified, name, picture, locale, zoneinfo,
+>   MFA). Source of truth is **Cognito**; not copied into our store.
+> * **`User.Augmented`** — DynamoDB-only metadata (status, `resetPassword`, icon, timestamps); the
+>   public projection of the internal SoT **`Auth.UserProfile`** ([AuthModel.ts](../src/models/AuthModel.ts)).
+> * `User.Entity` = `CognitoProfile ⊕ Augmented`, and `User.Update` is grouped (`cognito` → Cognito
+>   AdminUpdateUserAttributes · `augmented` → the DynamoDB row). So **GET composes both stores; POST
+>   routes each part** — password/MFA never travel these attribute writes.
+>
+> **Status / reset:** `User.Status` mirrors the internal `Auth.UserStatus` 1:1 (incl. `RESET_REQUIRED`);
+> `User.Entity.resetPassword` is just the projection of `status === RESET_REQUIRED`.
+>
+> The credential/identity-link storage (password in Cognito; SSO `UserIdentity`/`AuthMethod`;
+> `SsoConnection`; sessions) stays **auth-internal** — see *Security posture* below +
+> [SPECS.md](SPECS.md#identity--accounts). The `Registration` record below stays here (auth-internal
+> funnel/abuse analytics, not part of the API).
+
 Sign-up produces an **`Auth.UserProfile`** (+ Cognito user) and an **Account**; it also persists a registration
 record for funnel analytics + abuse review:
 

@@ -2,10 +2,18 @@ import { request } from "node:http";
 
 import type { HealthResult, ServiceInfo, ServiceRole } from "../shared/types";
 import { getService, listServices } from "./registry";
+import { processManager } from "./processManager";
 
 //
-// Health pings. A backend role exposes GET /health on its local port; we hit it with a short timeout
-// and report status + latency + parsed body. No SSL (everything is local http), per the brief.
+// Health pings. A backend role exposes GET /health; we hit it with a short timeout and report status +
+// latency + parsed body. No SSL (everything is local http), per the brief.
+//
+// Where a role actually listens depends on HOW it's running:
+//   • console-spawned local dev → the role's dev port (81xx)
+//   • deployed to LocalStack (ECS via docker) → the role's container port is published to a RANDOM host
+//     port (e.g. 8101 → 33934), resolved from `docker ps` (the same mapping the API tester uses).
+// Pinging the dev port while deployed is exactly the "still references 8*** ports" bug — so we resolve
+// the real port per run-mode below and report the port we actually hit.
 //
 
 const TIMEOUT_MS = 2500;
@@ -54,7 +62,18 @@ export async function pingHealth( service : string, role? : string ) : Promise<H
     if ( !svc || !svc.capabilities.canHealth ) return [];
 
     const roles : ServiceRole[] = role ? svc.roles.filter( r => r.role === role ) : svc.roles;
-    return Promise.all( roles.filter( r => r.port > 0 ).map( r => pingUrl( service, r.role, r.port ) ) );
+
+    // Resolve the real listen port per run-mode: local dev uses the dev port; a deployed service uses its
+    // published host port (containerPort → hostPort). `deployedPorts` shells out to `docker ps`, so do it
+    // once per call (not per role), and skip it entirely when the service is running locally.
+    const localRunning : boolean = processManager.isRunning( service, "runtime" );
+    const deployed : Record<number, number> = localRunning ? {} : processManager.deployedPorts( service );
+
+    return Promise.all( roles.filter( r => r.port > 0 ).map( r =>
+    {
+        const port : number = localRunning ? r.port : ( deployed[ r.port ] ?? r.port );
+        return pingUrl( service, r.role, port );
+    } ) );
 }
 
 /** Ping every health-capable role of every service (the fleet overview). */

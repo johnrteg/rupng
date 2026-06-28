@@ -37,8 +37,8 @@ export namespace Ports
     export namespace APP          { export const MAIN = 8100; export const PUBLIC = 8101; }
 
     // ── identity / account ───────────────────────────────────────────────────
-    export namespace AUTH         { export const READER = 8110; export const WRITER = 8111; }
-    export namespace ACCOUNT      { export const MAIN = 8120; }
+    export namespace AUTH         { export const MAIN = 8110; export const READER = 8111; export const WRITER = 8112; }
+    export namespace ACCOUNT      { export const MAIN = 8120; export const READ = 8121; }
     export namespace REGISTRATION { export const MAIN = 8130; }
 
     // ── contacts / orchestration ─────────────────────────────────────────────

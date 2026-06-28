@@ -123,3 +123,31 @@ export function stopWatchSync( service : string ) : void
 }
 
 export function isWatchSyncing( service : string ) : boolean { return active.has( service ); }
+
+/**
+ * One-shot: push the current build output into the site bucket. Called right after a local
+ * `cdklocal deploy` of a frontend — on LocalStack the CDK BucketDeployment is skipped (it mishandles
+ * Updates), so the deploy creates the bucket + CloudFront but uploads nothing; this populates it.
+ */
+export async function syncSiteOnce( service : string ) : Promise<{ ok : boolean; error? : string }>
+{
+    const bin : string = join( serviceDir( service ), "bin" );
+    if ( !existsSync( bin ) )
+        return { ok: false, error: `no build output at ${bin} — run the Build stage first` };
+
+    const bucket : string | undefined = await siteBucket( service );
+    if ( !bucket )
+        return { ok: false, error: `couldn't find the site bucket for ${service}-local` };
+
+    try
+    {
+        const n : number = await uploadAll( bin, bucket );
+        logStore.sys( service, "deploy", `⇡ synced ${n} file(s) → s3://${bucket} (BucketDeployment skipped on local)` );
+        return { ok: true };
+    }
+    catch ( err )
+    {
+        logStore.sys( service, "deploy", `✖ site sync failed: ${awsErr( err )}` );
+        return { ok: false, error: awsErr( err ) };
+    }
+}

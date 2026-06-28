@@ -1,34 +1,38 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Box from "@mui/material/Box";
 import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
-import Button from "@mui/material/Button";
-import Chip from "@mui/material/Chip";
 import IconButton from "@mui/material/IconButton";
 import InputBase from "@mui/material/InputBase";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
-import CircularProgress from "@mui/material/CircularProgress";
+import Select from "@mui/material/Select";
+import MenuItem from "@mui/material/MenuItem";
 import ClearAllIcon from "@mui/icons-material/ClearAll";
 import VerticalAlignBottomIcon from "@mui/icons-material/VerticalAlignBottom";
 import SearchIcon from "@mui/icons-material/Search";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import OpenInBrowserOutlinedIcon from "@mui/icons-material/OpenInBrowserOutlined";
 import RefreshIcon from "@mui/icons-material/Refresh";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import StopIcon from "@mui/icons-material/Stop";
-import SyncIcon from "@mui/icons-material/Sync";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 
-import { LOG_STREAMS, type ClaudeMode, type LogLine, type LogStream, type ServiceRole, type StageId, type StageState, type StageStatus } from "../../shared/types";
+import { BROWSER_ID, WEBPROXY_ID, LOG_STREAMS, type BrowserState, type ClaudeMode, type LogLine, type LogStream, type ProcState, type ServiceRole, type StageId, type StageState, type StageStatus } from "../../shared/types";
 import { api } from "../api";
 import { MONO } from "../theme";
+import { loadBuildSettings, BUILD_SETTINGS_EVENT } from "../buildSettings";
 import { ClaudePanel } from "./ClaudePanel";
 import { JobsPanel } from "./JobsPanel";
 import { ApiPanel } from "./ApiPanel";
-import { ProxyPanel } from "./ProxyPanel";
-import { LEVELS, LogRow, parseLine, recLevelColor, ANSI } from "./LogView";
+import { ConfigPanel } from "./ConfigPanel";
+import { DynamoPanel } from "./DynamoPanel";
+import { CognitoPanel } from "./CognitoPanel";
+import { ProxyPanel, loadRouting } from "./ProxyPanel";
+import { LogView, LEVELS, LogRow, parseLine, recLevelColor, ANSI } from "./LogView";
 
 //
 // The console pane. Tabs: one per log stream (Build / Docker / Deploy / Runtime), plus Claude (the
@@ -37,9 +41,9 @@ import { LEVELS, LogRow, parseLine, recLevelColor, ANSI } from "./LogView";
 // deploy multiplexes every container's logs into one stream.
 //
 
-type TabValue = LogStream | "web" | "api" | "claude" | "jobs";
+type TabValue = LogStream | "web" | "proxy" | "api" | "config" | "data" | "cognito" | "claude" | "jobs";
 
-const STREAM_LABEL : Record<LogStream, string> = { build: "Build", image: "Docker", deploy: "Deploy", runtime: "Runtime" };
+const STREAM_LABEL : Record<LogStream, string> = { build: "Build", image: "Docker", deploy: "Deploy", runtime: "Trace" };
 
 const MAX_RENDER = 2500;
 
@@ -53,9 +57,9 @@ function stageDotColor( status : StageStatus | undefined ) : string | null
 {
     switch ( status )
     {
-        case "success": return "#3fb950";
-        case "failed":  return "#f85149";
-        case "running": return "#d29922";
+        case "success": return "#3fb950";   // built
+        case "failed":  return "#f85149";   // build failed
+        case "running": return "#e3b341";   // building (yellow — readable on the dark bg)
         case "idle":    return "#6e7681";
         case "skipped": return "#484f58";
         default:        return null;
@@ -76,21 +80,78 @@ export function ConsoleView(
 )
 {
     // a frontend (SPA) has no Docker image, no compose runtime, and serves no API endpoints — drop those tabs
-    const visibleStreams : LogStream[] = isFrontend
-        ? LOG_STREAMS.filter( ( s ) => s !== "image" && s !== "runtime" )
-        : LOG_STREAMS;
+    const [ settingsTick, setSettingsTick ] = useState<number>( 0 );   // re-read target on an Auto/target change
+    // hide stream tabs that don't apply: a frontend has no image/runtime; in Local mode Docker + Deploy
+    // aren't part of the flow (build → run locally), so drop those too.
+    const visibleStreams : LogStream[] = useMemo<LogStream[]>( () =>
+    {
+        const local : boolean = loadBuildSettings( service ).target === "local";
+        let streams : LogStream[] = [ ...LOG_STREAMS ];
+        if ( isFrontend ) streams = streams.filter( ( s ) => s !== "image" && s !== "runtime" );
+        if ( local )      streams = streams.filter( ( s ) => s !== "image" && s !== "deploy" );
+        return streams;
+    }, [ isFrontend, service, settingsTick ] );
     const [ tab, setTab ]         = useState<TabValue>( isFrontend ? "web" : "build" );
-    const [ webSub, setWebSub ]   = useState<"app" | "proxy">( "proxy" );
     const [ lines, setLines ]     = useState<LogLine[]>( [] );
     const [ filter, setFilter ]   = useState<string>( "" );
     const [ autoscroll, setAuto ] = useState<boolean>( true );
     const [ logFile, setLogFile ] = useState<string>( "" );
     const [ roleFilter, setRoleFilter ] = useState<string[]>( [] );   // empty = all roles (runtime tab)
     const [ levelFilter, setLevelFilter ] = useState<string[]>( [] ); // empty = all levels
+    const [ proxyRunning, setProxyRunning ] = useState<boolean>( false );   // for the Proxy tab status dot
 
     const endRef = useRef<HTMLDivElement | null>( null );
 
+    // proxy run state → the Proxy tab's status dot (green running / red stopped)
+    useEffect( () =>
+    {
+        if ( !isFrontend ) return;
+        void api.proxyState().then( setProxyRunning );
+        const off : () => void = api.onProc( ( p : ProcState ) => { if ( p.service === WEBPROXY_ID && p.stream === "runtime" ) setProxyRunning( p.running ); } );
+        return off;
+    }, [ isFrontend ] );
+
+    // re-read the target when Auto/target settings change (so the Docker/Deploy tabs appear/disappear)
+    useEffect( () =>
+    {
+        const on = () : void => setSettingsTick( ( t ) => t + 1 );
+        window.addEventListener( BUILD_SETTINGS_EVENT, on );
+        return () => window.removeEventListener( BUILD_SETTINGS_EVENT, on );
+    }, [] );
+
+    // if the active tab just got hidden (e.g. switched to Local while on Deploy), fall back to a visible one
+    useEffect( () =>
+    {
+        if ( isLogStream( tab ) && !visibleStreams.includes( tab ) ) setTab( isFrontend ? "web" : "build" );
+        if ( tab === "cognito" && service !== "auth" ) setTab( isFrontend ? "web" : "build" );   // Cognito tab is auth-only
+    }, [ visibleStreams, tab, isFrontend, service ] );
+
     const stream : LogStream | null = isLogStream( tab ) ? tab : null;
+
+    // Drive the Trace (runtime) stream from the current target while the tab is active:
+    //   • LocalStack → tail the deployed ECS containers' logs (no local process exists).
+    //   • Local      → the local process's own logs (it streams there when you Run it).
+    // On a target SWITCH, flush the stale logs + stop the local process so Trace shows only the new source.
+    const prevTarget = useRef<string>( loadBuildSettings( service ).target );
+    useEffect( () =>
+    {
+        if ( stream !== "runtime" ) return;
+        const target : string = loadBuildSettings( service ).target;
+        const switched : boolean = target !== prevTarget.current;
+        prevTarget.current = target;
+
+        if ( switched )   // Local ⇄ LocalStack: flush Trace + stop the local process that was feeding it
+        {
+            void api.devStop( service );
+            void api.clearLog( service, "runtime" ).then( () => setLines( [] ) );
+        }
+        if ( target === "localstack" )
+        {
+            void api.tailDeployedStart( service );
+            return () => { void api.tailDeployedStop( service ); };
+        }
+        return undefined;
+    }, [ stream, service, settingsTick ] );
 
     // load history + subscribe for log streams
     useEffect( () =>
@@ -109,12 +170,16 @@ export function ConsoleView(
         return () => { active = false; off(); };
     }, [ service, stream ] );
 
-    // role-prefix match for the runtime tab (docker compose prefixes lines with "<service>-<role>")
-    const roleMatches = ( text : string ) : boolean =>
+    // Match a runtime line to a role. Two log shapes: docker compose prefixes lines with "<service>-<role>"
+    // (LocalStack/compose), while a LOCAL run's Trace records carry name "<service>:<role>" (e.g. "app:main").
+    const roleMatches = ( line : LogLine ) : boolean =>
     {
         if ( roleFilter.length === 0 ) return true;
-        const t : string = text.replace( ANSI, "" ).trimStart();
-        return roleFilter.some( ( r : string ) => t.startsWith( `${service}-${r}` ) );
+        const t : string = line.text.replace( ANSI, "" ).trimStart();
+        const name : string = parseLine( line ).record?.name ?? "";   // e.g. "app:main"
+        return roleFilter.some( ( r : string ) =>
+            t.startsWith( `${service}-${r}` )                                            // compose prefix
+            || name === `${service}:${r}` || name.startsWith( `${service}:${r}:` ) );    // local Trace name
     };
 
     // any structured (Trace JSON) lines present? → show the level filter (parsed once, cached)
@@ -124,7 +189,7 @@ export function ConsoleView(
     {
         let out = lines;
         if ( stream === "runtime" && roleFilter.length > 0 )
-            out = out.filter( ( l ) => l.level === "sys" || roleMatches( l.text ) );
+            out = out.filter( ( l ) => l.level === "sys" || roleMatches( l ) );
         if ( levelFilter.length > 0 )
             out = out.filter( ( l ) => { const r = parseLine( l ).record; return !r || levelFilter.includes( r.level.toUpperCase() ); } );
         if ( filter )
@@ -148,11 +213,17 @@ export function ConsoleView(
                     sx={{ minHeight: 40, "& .MuiTab-root": { minHeight: 40, minWidth: 0, px: 1.5 } }}
                 >
                     {isFrontend && <Tab value="web" label="Web" sx={{ color: "primary.main" }} />}
+                    {isFrontend && <Tab value="proxy" label={
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.7 }}>
+                            Proxy
+                            <Box sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: proxyRunning ? "#3fb950" : "#f85149" }} />
+                        </Box>
+                    } />}
                     {visibleStreams.map( ( s ) =>
                     {
-                        // build/image/deploy get the STAGE status dot; runtime keeps a running indicator
+                        // build/image/deploy get the STAGE status dot; runtime is green when the process is up
                         const dot : string | null = s === "runtime"
-                            ? ( runningStreams.has( s ) ? "#d29922" : null )
+                            ? ( runningStreams.has( s ) ? "#3fb950" : null )
                             : stageDotColor( stages[ s as StageId ] );
                         return (
                             <Tab
@@ -168,6 +239,9 @@ export function ConsoleView(
                         );
                     } )}
                     {!isFrontend && <Tab value="api" label="API" />}
+                    {!isFrontend && <Tab value="config" label="Config" />}
+                    {!isFrontend && <Tab value="data" label="Data" />}
+                    {!isFrontend && service === "auth" && <Tab value="cognito" label="Cognito" />}
                     <Tab value="claude" label="Claude" sx={{ color: "secondary.main" }} />
                     {!isFrontend && <Tab value="jobs" label="Jobs" />}
                 </Tabs>
@@ -224,22 +298,17 @@ export function ConsoleView(
 
             {/* body */}
             {tab === "web"
-                ? (
-                    <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1, minHeight: 0 }}>
-                        <Tabs value={webSub} onChange={( _e, v : "app" | "proxy" ) => setWebSub( v )}
-                              sx={{ minHeight: 36, borderBottom: "1px solid", borderColor: "divider", "& .MuiTab-root": { minHeight: 36, minWidth: 0, px: 1.5 } }}>
-                            <Tab value="proxy" label="Proxy" />
-                            <Tab value="app" label="App" />
-                        </Tabs>
-                        <Box sx={{ flexGrow: 1, minHeight: 0 }}>
-                            {webSub === "app"
-                                ? <WebAppPanel service={service} roles={roles} devRunning={runningStreams.has( "runtime" )} />
-                                : <ProxyPanel />}
-                        </Box>
-                    </Box>
-                )
+                ? <Box sx={{ flexGrow: 1, minHeight: 0 }}><RunPanel claudeMode={claudeMode} onClaudeMode={onClaudeMode} /></Box>
+                : tab === "proxy"
+                ? <Box sx={{ flexGrow: 1, minHeight: 0 }}><ProxyPanel /></Box>
                 : tab === "api"
                 ? <Box sx={{ flexGrow: 1, minHeight: 0 }}><ApiPanel service={service} roles={roles} /></Box>
+                : tab === "config"
+                ? <Box sx={{ flexGrow: 1, minHeight: 0 }}><ConfigPanel service={service} /></Box>
+                : tab === "data"
+                ? <Box sx={{ flexGrow: 1, minHeight: 0 }}><DynamoPanel service={service} /></Box>
+                : tab === "cognito"
+                ? <Box sx={{ flexGrow: 1, minHeight: 0 }}><CognitoPanel service={service} /></Box>
                 : tab === "claude"
                 ? <Box sx={{ flexGrow: 1, minHeight: 0 }}><ClaudePanel service={service} mode={claudeMode} onMode={onClaudeMode} /></Box>
                 : tab === "jobs"
@@ -256,7 +325,13 @@ export function ConsoleView(
                             >
                                 {shown.length === 0
                                     ? <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: MONO }}>
-                                          {filter || roleFilter.length > 0 || levelFilter.length > 0 ? "no lines match the filter" : "no output yet — run a stage"}
+                                          {filter || roleFilter.length > 0 || levelFilter.length > 0
+                                              ? "no lines match the filter"
+                                              : stream === "runtime"
+                                                  ? ( loadBuildSettings( service ).target === "localstack"
+                                                          ? "tailing the deployed container — no logs yet (is it deployed & running?)"
+                                                          : "Local mode — Run the service to see its Trace output" )
+                                                  : "no output yet — run a stage"}
                                       </Typography>
                                     : shown.map( ( l ) => <LogRow key={`${l.stream}-${l.seq}`} line={l} /> )}
                                 <div ref={endRef} />
@@ -277,93 +352,93 @@ export function ConsoleView(
 }
 
 // ── Web tab: vite dev server (fast loop) + deployed build with watch-sync ─────────────────────────
-function WebAppPanel( { service, roles, devRunning } : { service : string; roles : ServiceRole[]; devRunning : boolean } )
+// Device viewport presets for the app window (a curated selection — not exhaustive).
+const DEVICES : { name : string; w : number; h : number }[] =
+[
+    { name: "Desktop",            w: 1200, h: 860 },
+    { name: "iPhone SE",          w: 375,  h: 667 },
+    { name: "iPhone 15",          w: 393,  h: 852 },
+    { name: "iPhone 15 Pro Max",  w: 430,  h: 932 },
+    { name: "Pixel 8",            w: 412,  h: 915 },
+    { name: "Galaxy S20",         w: 360,  h: 800 },
+    { name: "iPad mini",          w: 768,  h: 1024 },
+    { name: "iPad Pro 11\"",      w: 834,  h: 1194 },
+];
+
+//
+// Run — open the app in its OWN resizable Chromium window (owned by the console). The page's console
+// (logs / warnings / errors) is captured natively and streamed into the Trace view below + a Claude
+// panel, so a frontend bug can be handed straight to Claude. Defaults to the proxy edge URL.
+//
+function RunPanel( { claudeMode, onClaudeMode } : { claudeMode : ClaudeMode; onClaudeMode : ( m : ClaudeMode ) => void } )
 {
-    const [ url, setUrl ]     = useState<string | undefined>();
-    const [ err, setErr ]     = useState<string | undefined>();
-    const [ busy, setBusy ]   = useState<boolean>( false );
-    const [ syncing, setSyncing ] = useState<boolean>( false );
-    const [ syncErr, setSyncErr ] = useState<string | undefined>();
+    const [ url, setUrl ]     = useState<string>( `http://localhost:${loadRouting().port}` );
+    const [ nav, setNav ]     = useState<BrowserState>( { open: false, url: "", canBack: false, canForward: false } );
+    const [ lines, setLines ] = useState<LogLine[]>( [] );
+    const [ showNet, setShowNet ]   = useState<boolean>( true );   // network (name:"net") records
+    const [ showLog, setShowLog ]   = useState<boolean>( true );   // console + everything else
+    const [ device, setDevice ]     = useState<string>( "Desktop" );
 
-    // vite dev server — the main role's port (web → 5173)
-    const devPort : number = roles.find( ( r ) => r.role === "main" )?.port ?? roles[ 0 ]?.port ?? 5173;
-    const devUrl  : string = `http://localhost:${devPort}`;
-
-    const load = useCallback( async () : Promise<void> =>
+    useEffect( () =>
     {
-        setBusy( true );
-        try { const r = await api.webAppUrl( service ); setUrl( r.url ); setErr( r.error ); }
-        finally { setBusy( false ); }
-    }, [ service ] );
+        let active : boolean = true;
+        const apply = ( s : BrowserState ) : void => { setNav( s ); if ( s.url ) setUrl( s.url ); };
+        void api.browserState().then( ( s : BrowserState ) => { if ( active ) apply( s ); } );
+        void api.getLog( BROWSER_ID, "runtime" ).then( ( h : LogLine[] ) => { if ( active ) setLines( h ); } );
+        const offB : () => void = api.onBrowser( ( s : BrowserState ) => apply( s ) );
+        const offL : () => void = api.onLog( ( l : LogLine ) => { if ( l.service === BROWSER_ID && l.stream === "runtime" ) setLines( ( p ) => ( p.length > 1500 ? [ ...p.slice( -1500 ), l ] : [ ...p, l ] ) ); } );
+        return () => { active = false; offB(); offL(); };
+    }, [] );
 
-    useEffect( () => { void load(); void api.watchSyncState( service ).then( setSyncing ); }, [ load, service ] );
+    const clearLog = () : void => { void api.clearLog( BROWSER_ID, "runtime" ).then( () => setLines( [] ) ); };
+    const open : boolean = nav.open;
 
-    const toggleSync = async () : Promise<void> =>
+    // #2 — split network (name:"net") vs console/other, toggle each
+    const shown : LogLine[] = useMemo( () => lines.filter( ( l ) =>
     {
-        setSyncErr( undefined );
-        if ( syncing ) { await api.watchSyncStop( service ); setSyncing( false ); return; }
-        const r = await api.watchSyncStart( service );
-        if ( r.ok ) setSyncing( true ); else setSyncErr( r.error );
-    };
+        const isNet : boolean = parseLine( l ).record?.name === "net";
+        return isNet ? showNet : showLog;
+    } ), [ lines, showNet, showLog ] );
 
     return (
-        <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "auto", p: 2, display: "flex", flexDirection: "column", gap: 2 }}>
-            {/* dev server — the fast loop (HMR) */}
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 1, p: 1.5, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Dev server (vite · HMR)</Typography>
-                    <Chip size="small" variant="outlined" color={devRunning ? "success" : "default"}
-                          label={devRunning ? "running" : "stopped"} />
-                    <Box sx={{ flexGrow: 1 }} />
-                    {devRunning
-                        ? <Button size="small" color="error" variant="outlined" startIcon={<StopIcon />} onClick={() => void api.devStop( service )}>Stop</Button>
-                        : <Button size="small" color="success" variant="contained" startIcon={<PlayArrowIcon />} onClick={() => void api.devStart( service )}>Start</Button>}
-                </Box>
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <Typography variant="body2" sx={{ fontFamily: MONO, color: "text.secondary", flexGrow: 1 }}>{devUrl}</Typography>
-                    <Tooltip title="Copy URL"><IconButton size="small" onClick={() => void navigator.clipboard.writeText( devUrl )}><ContentCopyIcon sx={{ fontSize: 15 }} /></IconButton></Tooltip>
-                    <Button size="small" variant="contained" color="primary" startIcon={<OpenInNewIcon />} disabled={!devRunning} onClick={() => void api.openExternal( devUrl )}>Open</Button>
-                </Box>
-                <Typography variant="caption" sx={{ color: "text.disabled" }}>
-                    The fast loop: hot-reload, no build/deploy. Output streams to the Build log. Open is enabled once the server is up.
-                </Typography>
+        <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider", flexWrap: "wrap" }}>
+                <Tooltip title="Back"><span><IconButton size="small" disabled={!nav.canBack} onClick={() => void api.browserBack()}><ArrowBackIcon fontSize="small" /></IconButton></span></Tooltip>
+                <Tooltip title="Forward"><span><IconButton size="small" disabled={!nav.canForward} onClick={() => void api.browserForward()}><ArrowForwardIcon fontSize="small" /></IconButton></span></Tooltip>
+                <Tooltip title="Hard refresh (reload ignoring cache)"><span><IconButton size="small" disabled={!open} onClick={() => void api.browserReload()}><RefreshIcon fontSize="small" /></IconButton></span></Tooltip>
+                <InputBase value={url} onChange={( e ) => setUrl( e.target.value )} onKeyDown={( e ) => { if ( e.key === "Enter" ) void api.browserOpen( url ); }}
+                           sx={{ flexGrow: 1, minWidth: 220, fontFamily: MONO, fontSize: 13, px: 1, py: 0.25, border: "1px solid", borderColor: "divider", borderRadius: 1 }} />
+                <Tooltip title={open ? "Reopen / navigate the app window" : "Open the app in its own window"}>
+                    <IconButton size="small" color="success" onClick={() => void api.browserOpen( url )}><OpenInNewIcon fontSize="small" /></IconButton>
+                </Tooltip>
+                <Tooltip title="Close the app window"><span><IconButton size="small" color="error" disabled={!open} onClick={() => void api.browserClose()}><StopIcon fontSize="small" /></IconButton></span></Tooltip>
+                <Tooltip title="Open in your system browser (no console capture there)">
+                    <IconButton size="small" onClick={() => void api.openExternal( url )}><OpenInBrowserOutlinedIcon fontSize="small" /></IconButton>
+                </Tooltip>
+                <Select size="small" value={device} disabled={!open}
+                        onChange={( e ) => { const name = e.target.value; setDevice( name ); const d = DEVICES.find( ( x ) => x.name === name ); if ( d ) void api.browserResize( d.w, d.h ); }}
+                        sx={{ minWidth: 130, fontSize: 12 }}>
+                    {DEVICES.map( ( d ) => <MenuItem key={d.name} value={d.name} sx={{ fontSize: 12 }}>{d.name} <Box component="span" sx={{ color: "text.disabled", ml: 0.5, fontFamily: MONO }}>{d.w}×{d.h}</Box></MenuItem> )}
+                </Select>
             </Box>
-
-            {/* deployed build (S3 + CloudFront) + fast watch-sync */}
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 1, p: 1.5, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Deployed build (S3 + CloudFront)</Typography>
-                    <Box sx={{ flexGrow: 1 }} />
-                    <Tooltip title="vite build --watch → sync bin/ to the S3 bucket (no cdk deploy)">
-                        <Button size="small" variant={syncing ? "contained" : "outlined"} color={syncing ? "success" : "inherit"}
-                                startIcon={<SyncIcon sx={{ animation: syncing ? "spin 2s linear infinite" : "none", "@keyframes spin": { to: { transform: "rotate(360deg)" } } }} />}
-                                onClick={() => void toggleSync()}>{syncing ? "Watching" : "Watch & sync"}</Button>
-                    </Tooltip>
-                    <Tooltip title="Re-read the deployed URL from the stack output (after a deploy / target switch). Does not refresh the browser or redeploy.">
-                        <Button size="small" variant="outlined" startIcon={busy ? <CircularProgress size={13} /> : <RefreshIcon fontSize="small" />}
-                                onClick={() => void load()}>Refresh</Button>
-                    </Tooltip>
-                </Box>
-                {syncErr && <Typography variant="caption" sx={{ color: "error.main" }}>{syncErr}</Typography>}
-                {url
-                    ? (
-                        <>
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                                <Typography variant="body2" sx={{ fontFamily: MONO, color: "text.secondary", wordBreak: "break-all", flexGrow: 1 }}>{url}</Typography>
-                                <Tooltip title="Copy URL"><IconButton size="small" onClick={() => void navigator.clipboard.writeText( url )}><ContentCopyIcon sx={{ fontSize: 15 }} /></IconButton></Tooltip>
-                                <Button size="small" variant="contained" color="success" startIcon={<OpenInNewIcon />} onClick={() => void api.openExternal( url )}>Open</Button>
-                            </Box>
-                            <Typography variant="caption" sx={{ color: "text.disabled" }}>
-                                Production-like artifact. On LocalStack, CloudFront is partially emulated and untrusted-TLS — prefer the dev server day to day; use this to validate the built bundle.
-                            </Typography>
-                        </>
-                    )
-                    : <Typography variant="caption" sx={{ color: "text.disabled" }}>
-                          {err
-                              ? `Couldn't read the deployed URL: ${err}`
-                              : "Not deployed yet. Run Build + Deploy once (creates the bucket + distribution), then Refresh — after that, Watch & sync pushes changes without a full deploy."}
-                      </Typography>}
+            {/* #2 filter — show/hide network vs console */}
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.5, py: 0.5, borderBottom: "1px solid", borderColor: "divider" }}>
+                <Typography variant="caption" sx={{ color: "text.disabled" }}>Its own resizable window; console + network stream below and to Claude.</Typography>
+                <Box sx={{ flexGrow: 1 }} />
+                <Typography variant="caption" sx={{ color: "text.disabled" }}>show</Typography>
+                <ToggleButtonGroup size="small" value={[ ...( showNet ? [ "net" ] : [] ), ...( showLog ? [ "log" ] : [] ) ]}
+                    onChange={( _e, v : string[] ) => { setShowNet( v.includes( "net" ) ); setShowLog( v.includes( "log" ) ); }}>
+                    <ToggleButton value="log" sx={{ px: 1.25, py: 0.1, fontSize: 11 }}>console</ToggleButton>
+                    <ToggleButton value="net" sx={{ px: 1.25, py: 0.1, fontSize: 11 }}>network</ToggleButton>
+                </ToggleButtonGroup>
+            </Box>
+            <Box sx={{ flexGrow: 1, minHeight: 0 }}>
+                <LogView lines={shown} empty="open the app — its console + network appear here" hideId onClear={clearLog} />
+            </Box>
+            <Box sx={{ height: "40%", minHeight: 200, flexShrink: 0, borderTop: "1px solid", borderColor: "divider" }}>
+                <ClaudePanel service={BROWSER_ID} mode={claudeMode} onMode={onClaudeMode} />
             </Box>
         </Box>
     );
 }
+

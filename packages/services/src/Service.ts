@@ -10,7 +10,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest, FastifyError, FastifyLis
 
 import { randomUUID } from 'crypto';
 
-import { RestfulEndpoint } from '@repo/endpoint';
+import { RestfulEndpoint, Access } from '@repo/endpoint';
 import { NetworkUtils } from '@repo/common';
 
 import { Daemon } from './Daemon';
@@ -108,19 +108,29 @@ export class Service extends Daemon
                 return;
             }
 
-            let authenticate : RestfulEndpoint.Authentication = {};
+            // Resolve the caller from the bearer access token (best-effort, dev): decode the JWT
+            // payload and lift sub/username + claims. NOTE: this does NOT verify the signature — in
+            // production the API Gateway Lambda authorizer validates the token (JWKS) and forwards the
+            // claims; this local path keeps auth working against Cognito on LocalStack.
+            const authenticate : RestfulEndpoint.Authentication = Service.authFromRequest( request );
 
-            // authentication required
+            // Authorize: an endpoint that declares a minimum role (endpt.access) requires (1) a signed-in
+            // caller and (2) a role that meets the minimum on the Access ladder. The caller's role comes
+            // from the JWT (a `role` claim or `cognito:groups`); an authenticated caller with no role
+            // claim is treated as USER (the pre-token-generation Lambda stamps the real role in prod).
             if( endpt.access !== undefined )
             {
-                // todo
-
-                // get information from request to authenticate
-
-                // verify who is asking has access to this endpoint (role)
-
-                // if not, return error
-                // NetworkUtils.Status.UNAUTHORIZED
+                if( !authenticate.userId )
+                {
+                    reply.code( NetworkUtils.Status.UNAUTHORIZED ).send( { message: "authentication required" } );
+                    return;
+                }
+                const callerRole : Access.Role = Service.roleFromClaims( authenticate.claims ) ?? Access.AccountRole.USER;
+                if( !Access.isAllowed( callerRole, endpt.access ) )
+                {
+                    reply.code( NetworkUtils.Status.FORBIDDEN ).send( { message: "insufficient role" } );
+                    return;
+                }
             }
 
             //
@@ -140,6 +150,56 @@ export class Service extends Daemon
             this.log.error( "processEndpoint:exception", err );
             reply.code( NetworkUtils.Status.INTERNAL_SERVER_ERROR ).send('server exception');
         }
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Resolve the caller from the request's `Authorization: Bearer <jwt>` header. DEV path: decodes the
+     * JWT payload (base64url) WITHOUT verifying the signature and lifts `sub`/username + claims, so
+     * "current user" endpoints work against Cognito-issued tokens locally. PROD: the API Gateway Lambda
+     * authorizer verifies the token (JWKS) and this becomes a trusted read of forwarded claims.
+     */
+    private static authFromRequest( request : FastifyRequest ) : RestfulEndpoint.Authentication
+    {
+        const header : string = String( ( request.headers as Record<string, unknown> )[ "authorization" ] ?? "" );
+        const match  : RegExpMatchArray | null = header.match( /^Bearer\s+(.+)$/i );
+        if( !match ) return {};
+
+        const token : string = match[ 1 ].trim();
+        const parts : Array<string> = token.split( "." );
+        if( parts.length < 2 ) return { token };
+
+        try
+        {
+            const claims : Record<string, unknown> = JSON.parse( Buffer.from( parts[ 1 ], "base64url" ).toString( "utf-8" ) );
+            const userId : string | undefined = ( claims.sub as string ) ?? undefined;
+            const username : string | undefined = ( claims[ "cognito:username" ] as string ) ?? ( claims.username as string ) ?? userId;
+            return { userId, username, token, claims };
+        }
+        catch
+        {
+            return { token };
+        }
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Resolve the caller's role from JWT claims — a `role` claim, else the first `cognito:groups` entry —
+     * mapped to a known Access ladder role. Returns `undefined` when there's no recognizable role claim
+     * (the caller is then treated as the default authenticated role by the authorizer above).
+     */
+    private static roleFromClaims( claims? : Record<string, unknown> ) : Access.Role | undefined
+    {
+        if( !claims ) return undefined;
+
+        const groups : unknown = claims[ "cognito:groups" ];
+        const candidate : string | undefined =
+              typeof claims[ "role" ] === "string" ? ( claims[ "role" ] as string )
+            : Array.isArray( groups ) && typeof groups[ 0 ] === "string" ? ( groups[ 0 ] as string )
+            : undefined;
+
+        if( !candidate ) return undefined;
+        return ( Access.LADDER as ReadonlyArray<string> ).includes( candidate ) ? ( candidate as Access.Role ) : undefined;
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

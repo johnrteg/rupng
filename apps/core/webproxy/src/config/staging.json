@@ -10,7 +10,7 @@
             "name": "staging",
             "target": "https://reactstaging.rumbleup.io",
             "ws": "/account/ws",
-            "prefixes": ["/rup", "/auth", "/account", "/passkey", "/login", "/verify", "/vcf", "/optin", "/uc"]
+            "prefixes": ["/api"]
         }
     ]
 }

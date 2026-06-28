@@ -12,7 +12,7 @@ import { RestfulEndpoint, Access } from "@repo/endpoint";
     const response = await appdata.server.fetch( endpt );
     if( response.ok ) { const reply : GetVersion.Response = response.data; }
 */
-export class GetVersion extends RestfulEndpoint<GetVersion.Query, undefined>
+export class GetVersion extends RestfulEndpoint<GetVersion.Query, undefined, GetVersion.Response>
 {
     public readonly uri      : string = "/version";
     public readonly method   : NetworkUtils.Method = NetworkUtils.Method.GET;

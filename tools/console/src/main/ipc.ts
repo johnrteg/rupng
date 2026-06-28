@@ -4,7 +4,7 @@ import {
     IPC,
     type ClaudeMode, type LocalStackState, type LogStream, type PipelineRequest, type StageState
 } from "../shared/types";
-import { listServices } from "./registry";
+import { getService, listServices } from "./registry";
 import { invalidatePorts } from "./ports";
 import { processManager } from "./processManager";
 import { logStore } from "./logStore";
@@ -15,19 +15,27 @@ import { claudeAgent } from "./claudeAgent";
 import { clearConversation, loadConversation } from "./claudeStore";
 import { lambdaInvoke, lambdaList, listJobs } from "./jobs";
 import { apigwRoutes, cloudGraph, cloudHealth, cloudTail, ecsService, s3List } from "./cloudGraph";
+import { configGet, configProfiles, configSave } from "./appconfig";
+import { dynamoDelete, dynamoPut, dynamoScan, dynamoTableInfo, dynamoTables } from "./dynamo";
+import { cognitoCreateUser, cognitoDeleteUser, cognitoPools, cognitoSetEnabled, cognitoSetPassword, cognitoUpdateUser, cognitoUsers } from "./cognito";
 import { dockerContainers } from "./docker";
 import { ecsMetrics } from "./awsMetrics";
 import { diagnoseVpcLink } from "./vpcDiag";
 import { webAppUrl } from "./webApp";
-import { isWatchSyncing, startWatchSync, stopWatchSync } from "./webDev";
+import { isWatchSyncing, startWatchSync, stopWatchSync, syncSiteOnce } from "./webDev";
+import { buildOrchestrator } from "./buildOrchestrator";
+import type { BuildSettings, StageId } from "../shared/types";
 import { listProxyConfigs, readProxyConfig, writeActiveConfig, writeProxyConfig } from "./proxyConfig";
 import { gatewayTargets } from "./proxyGateway";
 import { branches, bumpVersion, commitPush, createPR, npmOutdated, pull, reinstall, repoStatus, syncVersions, test, updateDeps, versionConflicts } from "./repo";
 import { deployAudit, deployMap, deployProposeTag, deployRefs, deployRun, deployState, deployedVersions, gitVersions, openReleaseLine } from "./deploy";
+import { manifestDrift } from "./deployState";
+import { browserBack, browserForward, browserState, closeBrowser, onBrowserState, openBrowser, reloadBrowser, resizeBrowser } from "./browser";
 import type { DeployEnvConfig, DeployEnvName, DeployRequest } from "../shared/types";
 import { WEBPROXY_ID } from "../shared/types";
 import { isReadOnly, setTarget, targetInfo } from "./aws";
-import { deleteRequest, discoverEndpoints, listSaved, saveRequest, sendRequest } from "./apiTester";
+import { deleteRequest, discoverEndpoints, listSaved, localApiRoutes, saveRequest, sendRequest } from "./apiTester";
+import { kafkaMonitor } from "./kafkaMonitor";
 import { LOG_DIR, REPO_ROOT } from "./paths";
 
 //
@@ -40,12 +48,15 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     const send = ( channel : string, ...args : unknown[] ) : void =>
     {
         const win : BrowserWindow | null = getWindow();
-        if ( win && !win.isDestroyed() ) win.webContents.send( channel, ...args );
+        if ( !win || win.isDestroyed() || win.webContents.isDestroyed() ) return;   // window/webContents gone (reload/close)
+        try { win.webContents.send( channel, ...args ); }
+        catch { /* webContents disposed between the check and the send (reload race) — drop the event */ }
     };
 
     // ── live event forwarding (main → renderer) ─────────────────────────────────────────────────
     logStore.on( "line", ( line ) => send( IPC.onLog, line ) );
     processManager.on( "proc", ( state ) => send( IPC.onProc, state ) );
+    buildOrchestrator.on( "queue", ( q ) => send( IPC.onBuildQueue, q ) );   // sequential build progress
     processManager.on( "stage", ( service : string, state : StageState ) =>
     {
         send( IPC.onStage, { service, state } );
@@ -58,13 +69,24 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     claudeAgent.on( "approval", ( req ) => send( IPC.onClaudeApproval, req ) );
     claudeAgent.on( "state", ( state ) => send( IPC.onClaudeState, state ) );
 
+    kafkaMonitor.on( "event", ( event ) => send( IPC.onMonitorEvent, event ) );   // a new bus event
+    kafkaMonitor.on( "sync", ( sync ) => send( IPC.onMonitorSync, sync ) );        // delivery/bin/prune reconciliation
+
     // ── services ────────────────────────────────────────────────────────────────────────────────
     ipcMain.handle( IPC.listServices, () => listServices() );
-    ipcMain.handle( IPC.rescanServices, () => { invalidatePorts(); return listServices(); } );
+    ipcMain.handle( IPC.rescanServices, () => { invalidatePorts(); buildOrchestrator.rescan(); return listServices(); } );
     ipcMain.handle( IPC.repoRoot, () => REPO_ROOT );
 
     // ── pipeline ────────────────────────────────────────────────────────────────────────────────
-    ipcMain.handle( IPC.runPipeline, ( _e, req : PipelineRequest ) => processManager.runPipeline( req ) );
+    ipcMain.handle( IPC.runPipeline, async ( _e, req : PipelineRequest ) =>
+    {
+        const result = await processManager.runPipeline( req );
+        // local frontend deploy: BucketDeployment is skipped on LocalStack, so push the built SPA into
+        // the site bucket once the stack exists (mirrors the watch-sync, but a single shot post-deploy)
+        if ( result.ok && req.target === "cdklocal" && req.stages.includes( "deploy" ) && getService( req.service )?.capabilities.isFrontend )
+            await syncSiteOnce( req.service );
+        return result;
+    } );
     ipcMain.handle( IPC.getStageStates, () => processManager.allStageStates() );
     ipcMain.handle( IPC.getProcStates, () => processManager.procStates() );
     ipcMain.handle( IPC.stopStream, ( _e, service : string, stream : LogStream ) => { processManager.kill( service, stream ); } );
@@ -116,6 +138,27 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     ipcMain.handle( IPC.cloudTail, ( _e, logGroup : string, limit? : number ) => cloudTail( logGroup, limit ) );
     ipcMain.handle( IPC.s3List, ( _e, bucket : string, prefix? : string ) => s3List( bucket, prefix ) );
     ipcMain.handle( IPC.apigwRoutes, ( _e, apiId : string ) => apigwRoutes( apiId ) );
+
+    // appconfig (the Config tab) — view/edit per-service config + sub-configs
+    ipcMain.handle( IPC.configProfiles, ( _e, service : string ) => configProfiles( service ) );
+    ipcMain.handle( IPC.configGet, ( _e, applicationId : string, profileId : string ) => configGet( applicationId, profileId ) );
+    ipcMain.handle( IPC.configSave, ( _e, applicationId : string, profileId : string, environmentId : string, content : string, contentType : string ) => configSave( applicationId, profileId, environmentId, content, contentType ) );
+
+    // dynamodb (the Data tab) — per-service tables + item browse/edit
+    ipcMain.handle( IPC.dynamoTables, ( _e, service : string ) => dynamoTables( service ) );
+    ipcMain.handle( IPC.dynamoTableInfo, ( _e, table : string ) => dynamoTableInfo( table ) );
+    ipcMain.handle( IPC.dynamoScan, ( _e, table : string, startKey? : Record<string, unknown> ) => dynamoScan( table, startKey ) );
+    ipcMain.handle( IPC.dynamoPut, ( _e, table : string, item : Record<string, unknown> ) => dynamoPut( table, item ) );
+    ipcMain.handle( IPC.dynamoDelete, ( _e, table : string, key : Record<string, unknown> ) => dynamoDelete( table, key ) );
+
+    // cognito (the Cognito tab, auth) — user pool + user browse/edit
+    ipcMain.handle( IPC.cognitoPools, ( _e, service : string ) => cognitoPools( service ) );
+    ipcMain.handle( IPC.cognitoUsers, ( _e, poolId : string, filter? : string ) => cognitoUsers( poolId, filter ) );
+    ipcMain.handle( IPC.cognitoCreateUser, ( _e, poolId : string, username : string, attributes : Record<string, string>, tempPassword? : string ) => cognitoCreateUser( poolId, username, attributes, tempPassword ) );
+    ipcMain.handle( IPC.cognitoUpdateUser, ( _e, poolId : string, username : string, attributes : Record<string, string> ) => cognitoUpdateUser( poolId, username, attributes ) );
+    ipcMain.handle( IPC.cognitoSetEnabled, ( _e, poolId : string, username : string, enabled : boolean ) => cognitoSetEnabled( poolId, username, enabled ) );
+    ipcMain.handle( IPC.cognitoDeleteUser, ( _e, poolId : string, username : string ) => cognitoDeleteUser( poolId, username ) );
+    ipcMain.handle( IPC.cognitoSetPassword, ( _e, poolId : string, username : string, password : string, permanent : boolean ) => cognitoSetPassword( poolId, username, password, permanent ) );
     ipcMain.handle( IPC.dockerContainers, () => dockerContainers() );
     ipcMain.handle( IPC.ecsMetrics, () => ecsMetrics() );
     ipcMain.handle( IPC.ecsService, ( _e, serviceArn : string ) => ecsService( serviceArn ) );
@@ -124,8 +167,12 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     ipcMain.handle( IPC.openExternal, ( _e, url : string ) => { void shell.openExternal( url ); } );
 
     // ── local dev processes: vite dev server, webproxy edge, build-watch + S3 sync ─────────────────
-    ipcMain.handle( IPC.devStart, ( _e, service : string ) => { processManager.startDev( service ); } );
-    ipcMain.handle( IPC.devStop, ( _e, service : string ) => { processManager.kill( service, "runtime" ); } );
+    ipcMain.handle( IPC.devStart, ( _e, service : string ) => { void processManager.startLocal( service ); } );
+    ipcMain.handle( IPC.devStop, ( _e, service : string ) => { processManager.stopLocal( service ); } );
+    ipcMain.handle( IPC.tailDeployedStart, ( _e, service : string ) => { processManager.tailDeployed( service ); } );
+    ipcMain.handle( IPC.tailDeployedStop, ( _e, service : string ) => { processManager.stopTailDeployed( service ); } );
+    ipcMain.handle( IPC.deployedPorts, ( _e, service : string ) => processManager.deployedPorts( service ) );
+    ipcMain.handle( IPC.manifestDrift, ( _e, service : string ) => manifestDrift( service ) );
     ipcMain.handle( IPC.proxyStart, ( _e, port? : number ) => { processManager.startProxy( port ); } );
     ipcMain.handle( IPC.proxyStop, () => { processManager.kill( WEBPROXY_ID, "runtime" ); } );
     ipcMain.handle( IPC.proxyRestart, ( _e, port? : number ) => { processManager.restartProxy( port ); } );
@@ -135,6 +182,7 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     ipcMain.handle( IPC.proxyConfigSave, ( _e, name : string, config : Parameters<typeof writeProxyConfig>[ 1 ] ) => writeProxyConfig( name, config ) );
     ipcMain.handle( IPC.proxyApply, ( _e, config : Parameters<typeof writeActiveConfig>[ 0 ] ) => writeActiveConfig( config ) );
     ipcMain.handle( IPC.proxyGatewayTargets, () => gatewayTargets() );
+    ipcMain.handle( IPC.proxyLocalRoutes, () => localApiRoutes() );
 
     // ── repo (git check-out / check-in) ────────────────────────────────────────────────────────────
     ipcMain.handle( IPC.repoStatus, () => repoStatus() );
@@ -153,6 +201,13 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     ipcMain.handle( IPC.watchSyncStop, ( _e, service : string ) => { stopWatchSync( service ); } );
     ipcMain.handle( IPC.watchSyncState, ( _e, service : string ) => isWatchSyncing( service ) );
 
+    // ── build orchestration (auto-build/deploy/refresh + sequential cross-service queue) ───────────
+    ipcMain.handle( IPC.buildConfigure, ( _e, settings : Record<string, BuildSettings> ) => { buildOrchestrator.configure( settings ); } );
+    ipcMain.handle( IPC.buildQueueGet, () => buildOrchestrator.queueState() );
+    ipcMain.handle( IPC.buildRunStep, ( _e, service : string, step : StageId ) => { buildOrchestrator.runStepNow( service, step ); } );
+    ipcMain.handle( IPC.buildRunNow, ( _e, service : string ) => { buildOrchestrator.runNow( service ); } );
+    ipcMain.handle( IPC.buildAll, ( _e, ids : string[], runId? : string ) => { buildOrchestrator.buildAll( ids, runId ); } );
+
     // ── deploy (git → real AWS environment) ──────────────────────────────────────────────────────
     ipcMain.handle( IPC.deployRefs, () => deployRefs() );
     ipcMain.handle( IPC.deployGitVersions, ( _e, ref : string, services : string[] ) => gitVersions( ref, services ) );
@@ -164,6 +219,16 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     ipcMain.handle( IPC.deployProposeTag, ( _e, ref : string ) => deployProposeTag( ref ) );
     ipcMain.handle( IPC.deployOpenLine, () => openReleaseLine() );
 
+    // ── in-app browser window (its own resizable window; console captured to the Trace view) ───────
+    onBrowserState( ( s ) => send( IPC.onBrowser, s ) );
+    ipcMain.handle( IPC.browserOpen, ( _e, url : string ) => openBrowser( url ) );
+    ipcMain.handle( IPC.browserClose, () => { closeBrowser(); } );
+    ipcMain.handle( IPC.browserReload, () => { reloadBrowser(); } );
+    ipcMain.handle( IPC.browserBack, () => { browserBack(); } );
+    ipcMain.handle( IPC.browserForward, () => { browserForward(); } );
+    ipcMain.handle( IPC.browserResize, ( _e, width : number, height : number ) => { resizeBrowser( width, height ); } );
+    ipcMain.handle( IPC.browserState, () => browserState() );
+
     // ── api tester ────────────────────────────────────────────────────────────────────────────────
     ipcMain.handle( IPC.apiDiscover, ( _e, service : string ) => discoverEndpoints( service ) );
     ipcMain.handle( IPC.apiSend, ( _e, spec : Parameters<typeof sendRequest>[ 0 ] ) => sendRequest( spec ) );
@@ -174,6 +239,13 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     // ── target (LocalStack vs AWS account) ────────────────────────────────────────────────────────
     ipcMain.handle( IPC.targetGet, () => targetInfo() );
     ipcMain.handle( IPC.targetSet, async ( _e, target : Parameters<typeof setTarget>[ 0 ] ) => { setTarget( target ); return targetInfo(); } );
+
+    // ── kafka monitor (the Events sub-tab) ──────────────────────────────────────────────────────────
+    ipcMain.handle( IPC.monitorStart, () => kafkaMonitor.start() );
+    ipcMain.handle( IPC.monitorStop, async () => { await kafkaMonitor.stop(); } );
+    ipcMain.handle( IPC.monitorState, () => kafkaMonitor.state() );
+    ipcMain.handle( IPC.monitorSetTtl, ( _e, ms : number ) => { kafkaMonitor.setTtl( ms ); } );
+    ipcMain.handle( IPC.monitorClear, () => { kafkaMonitor.clear(); } );
 
     void LOG_DIR; // ensured/created lazily by logStore; referenced for clarity
 }

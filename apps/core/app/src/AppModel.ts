@@ -31,87 +31,16 @@ export namespace App
     // Shared
     // ──────────────────────────────────────────────────────────────────────────
 
-    /** Who + when, for audit ({at,by} group). `by` is the actor's user id. */
-    export interface Stamp { at: Type.ISODateTime; by: Type.ID; }
+    
 
     // ══════════════════════════════════════════════════════════════════════════
     // 1) NOTICES & ANNOUNCEMENTS — the one entity the BFF OWNS (app-3)
     // ══════════════════════════════════════════════════════════════════════════
 
-    /** What kind of message it is — drives where/how the client surfaces it (app-3.1). */
-    export enum NoticeClass
-    {
-        SYSTEM    = "system",     // maintenance / outage / holiday hours (incl. the version-gate, app-3.5)
-        MARKETING = "marketing",
-        SUPPORT   = "support",
-        OFFER     = "offer",
-        WEBINAR   = "webinar",
-    }
+    
 
-    /** Urgency — drives client styling (app-3.1). */
-    export enum Severity { ERROR = "error", WARNING = "warning", INFO = "info" }
-
-    /**
-     * Where the notice renders — the at-login vs in-app selector (app-3.1).
-     * `login` rides the PUBLIC bootstrap blob (pre-auth, public-safe); `banner`/`center`
-     * come from the AUTHED `/app/notices` endpoint (app-3.3 / 3.4).
-     */
-    export enum Placement
-    {
-        LOGIN  = "login",     // pre-auth login screen — embedded in GET /app/bootstrap → notices[]
-        BANNER = "banner",    // global in-app banner
-        CENTER = "center",    // in-app notification list
-    }
-
-    export enum AudienceKind { PLATFORM = "platform", ACCOUNT = "account", WHITELABEL = "whitelabel", ROLE = "role" }
-
-    /**
-     * Who sees the notice (app-3.1) — a TYPED union, not a parsed string.
-     * `platform` is staff-authored only (app-3.8); `account`/`whitelabel` are auto-scoped when an
-     * account admin authors (the bootstrap is keyed by `Host` → account, so login-placement scoping
-     * is automatic). `role` targets everyone at/above a role on the `Access` ladder.
-     * Example: `{ kind: "whitelabel", subdomain: "acme" }` · `{ kind: "role", role: Access.AccountRole.BILLING }`
-     */
-    export type NoticeAudience =
-        | { kind: AudienceKind.PLATFORM }
-        | { kind: AudienceKind.ACCOUNT;    accountId: Type.ID }
-        | { kind: AudienceKind.WHITELABEL; subdomain: string }
-        | { kind: AudienceKind.ROLE;       role: Access.Role };
-
-    /**
-     * Active window (app-3.1) — **UTC instants + an IANA `timeZone`** for authoring/display, per the
-     * platform time discipline ("holiday hours Dec 24–26 ET" stored UTC, shown in zone). A notice is
-     * "active now" when `paused == false AND now ∈ [start,end] AND audience matches` (app-3.2).
-     */
-    export interface NoticeWindow { start: Type.ISODateTime; end: Type.ISODateTime; timeZone: string; }
-
-    /** Optional call-to-action — a **tracked-links** URL so offer/webinar clicks attribute (app-3.1). */
-    export interface NoticeCta { label: string; url: string; }   // url = links-service tracked URL
-
-    /**
-     * A notice / announcement (app-3.1). `title`/`body` are **server-sanitized HTML** via the shared
-     * `Application.sanitizeHtml` "vanilla" profile (app-8.4) — sanitized on **store *and* render**.
-     * `paused` is the admin kill-switch (excluded regardless of window). Authored in the in-app
-     * role-gated Tools section (app-3.6).
-     *   PK: accountId | "platform"   SK: noticeId
-     */
-    export interface Notice
-    {
-        id:          Type.ID;
-        class:       NoticeClass;
-        severity:    Severity;
-        title:       string;          // sanitized HTML (app-8.4)
-        body:        string;          // sanitized HTML (app-8.4)
-        placement:   Placement;
-        window:      NoticeWindow;
-        audience:    NoticeAudience;
-        paused:      boolean;          // pause WITHOUT deleting (app-3.6)
-        dismissible: boolean;          // may the user dismiss it (and is it remembered — app-3.7)
-        cta?:        NoticeCta;
-        locale?:     string;           // BCP-47 — localized title/body variant (app-3.9)
-        created:     Stamp;
-        updated:     Stamp;
-    }
+    
+    
 
     /**
      * A per-user dismissal of a dismissible notice (app-3.7). Residual decision: client-local vs
@@ -125,50 +54,7 @@ export namespace App
     //    from account (branding/flags) + auth (password policy) + AppConfig (keys/limits).
     // ══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * A feature-flag value. A **boolean** is a simple on/off; a **string** is an A/B **variant**
-     * label (the cohort assignment — app-2.4: an experiment is a flag variant, no separate service);
-     * a **number** supports staged percentages / numeric gates.
-     */
-    export type FlagValue = boolean | string | number;
-
-    /** Effective flag set after merging platform (AppConfig) ⊕ account (account override wins, app-2.3). */
-    export type FeatureFlags = { [flagKey: string]: FlagValue };
-
-    /** Per-whitelabel branding (public-safe subset; SoT = account). */
-    export interface Branding { subdomain: string; displayName: string; logoUrl?: string; colors?: Type.JsonObject; }
-
-    /** Public projection of the password policy (SoT = auth; client enforces, auth re-enforces server-side). */
-    export interface PasswordPolicy
-    {
-        minLength:      number;
-        requireUpper?:  boolean;
-        requireLower?:  boolean;
-        requireNumber?: boolean;
-        requireSymbol?: boolean;
-    }
-
-    export interface UploadLimits { maxFileBytes: number; allowedMimeTypes: Array<string>; }
-
-    /** **Publishable** keys ONLY — never secrets (app-1.4). */
-    export interface PublishableKeys { stripePublishable?: string; recaptchaSiteKey?: string; mapsKey?: string; }
-
-    /**
-     * The public, pre-auth startup blob the SPA reads (app-1.2) — **served fresh / no stale TTL**
-     * (app-9.1), keyed by validated `Host` (app-1.5). **No secrets, no PII** (app-1.4).
-     */
-    export interface BootstrapConfig
-    {
-        branding:        Branding;
-        name:            string;
-        passwordPolicy:  PasswordPolicy;
-        uploadLimits:    UploadLimits;
-        publishableKeys: PublishableKeys;
-        featureFlags:    FeatureFlags;
-        version:         string;             // drives the version-gate (app-3.5)
-        locale:          string;             // resolved BCP-47 (app-3.9)
-        notices:         Array<Notice>;      // active LOGIN-placement notices only (public-safe)
-    }
+ 
 
     // ══════════════════════════════════════════════════════════════════════════
     // 3) TELEMETRY & ANALYTICS INTAKE — two streams to two sinks (app-5 / app-6)
@@ -245,7 +131,7 @@ export namespace App
         ids?:      Type.JsonObject;     // context ids the user is looking at
         state?:    Type.JsonObject;     // captured app-state snapshot
         status:    PageShareStatus;
-        created:   Stamp;
+        created:   Type.Stamp;
         expiresAt: Type.ISODateTime;
     }
 
@@ -264,7 +150,7 @@ export namespace App
         body:            string;
         requesterUserId: Type.ID;
         status:          TicketStatus;
-        created:         Stamp;
+        created:         Type.Stamp;
     }
 
     /** Why a ticket is being opened — the reasons `AppTicketJob` drains off SQS (app-11.5). */

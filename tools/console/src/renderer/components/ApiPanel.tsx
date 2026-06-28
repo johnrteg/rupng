@@ -12,13 +12,16 @@ import Typography from "@mui/material/Typography";
 import Chip from "@mui/material/Chip";
 import Tooltip from "@mui/material/Tooltip";
 import Checkbox from "@mui/material/Checkbox";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import CircularProgress from "@mui/material/CircularProgress";
 import SendIcon from "@mui/icons-material/Send";
 import SaveIcon from "@mui/icons-material/Save";
 import DeleteIcon from "@mui/icons-material/DeleteOutline";
 
-import type { ApiEndpointDef, ApiResponse, KeyVal, SavedRequest, ServiceRole } from "../../shared/types";
+import type { ApiEndpointDef, ApiResponse, BuildTarget, KeyVal, SavedRequest, ServiceRole } from "../../shared/types";
 import { api } from "../api";
+import { loadBuildSettings, saveBuildSettings, BUILD_SETTINGS_EVENT } from "../buildSettings";
 import { MONO } from "../theme";
 
 //
@@ -31,6 +34,26 @@ import { MONO } from "../theme";
 const METHODS : string[] = [ "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS" ];
 
 const blankRow = () : KeyVal => ( { key: "", value: "", enabled: true } );
+
+// Persisted per-service request draft, so switching tabs/views/services and back keeps the in-progress
+// request + last response (transient `sending` is not persisted). localStorage, like the other UI prefs.
+interface ApiDraft
+{
+    method : string; port : number; path : string;
+    headers : KeyVal[]; query : KeyVal[]; body : string;
+    reqTab : "params" | "headers" | "body"; respTab : "body" | "headers";
+    saveName : string; resp : ApiResponse | null;
+}
+const draftKey  = ( service : string ) : string => `rup.api.${service}`;
+const loadDraft = ( service : string ) : Partial<ApiDraft> | null =>
+{
+    try { return JSON.parse( localStorage.getItem( draftKey( service ) ) ?? "null" ) as Partial<ApiDraft> | null; }
+    catch { return null; }
+};
+const saveDraft = ( service : string, draft : ApiDraft ) : void =>
+{
+    try { localStorage.setItem( draftKey( service ), JSON.stringify( draft ) ); } catch { /* quota/ignore */ }
+};
 
 /** key/value editor (headers, query) with an always-present trailing blank row. */
 function KVEditor( { rows, onChange } : { rows : KeyVal[]; onChange : ( next : KeyVal[] ) => void } )
@@ -60,36 +83,68 @@ export function ApiPanel( { service, roles } : { service : string; roles : Servi
     const [ endpoints, setEndpoints ] = useState<ApiEndpointDef[]>( [] );
     const [ saved, setSaved ]         = useState<SavedRequest[]>( [] );
 
-    const [ method, setMethod ] = useState<string>( "GET" );
-    const [ port, setPort ]     = useState<number>( roles[ 0 ]?.port || 8000 );
-    const [ path, setPath ]     = useState<string>( "/" );
-    const [ headers, setHeaders ] = useState<KeyVal[]>( [] );
-    const [ query, setQuery ]     = useState<KeyVal[]>( [] );
-    const [ body, setBody ]       = useState<string>( "" );
+    // restore the persisted draft for this service (ApiPanel remounts on every tab/view/service switch)
+    const restored = useMemo<Partial<ApiDraft> | null>( () => loadDraft( service ), [ service ] );
 
-    const [ resp, setResp ]       = useState<ApiResponse | null>( null );
+    const [ method, setMethod ] = useState<string>( () => restored?.method ?? "GET" );
+    const [ port, setPort ]     = useState<number>( () => restored?.port ?? ( roles[ 0 ]?.port || 8000 ) );
+    // where to send mirrors the SERVICE target (Local = the role's own port · LocalStack = the deployed
+    // ECS container's published host port). It's the SAME setting as the toolbar's toggle — toggling
+    // either updates both (+ the Trace stream), so the API can't drift out of sync with how it runs.
+    const [ target, setTarget ]     = useState<BuildTarget>( () => loadBuildSettings( service ).target );
+    const [ deployed, setDeployed ] = useState<Record<number, number>>( {} );   // role port → LocalStack host port (fetched live)
+    const [ path, setPath ]     = useState<string>( () => restored?.path ?? "/" );
+    const [ headers, setHeaders ] = useState<KeyVal[]>( () => restored?.headers ?? [] );
+    const [ query, setQuery ]     = useState<KeyVal[]>( () => restored?.query ?? [] );
+    const [ body, setBody ]       = useState<string>( () => restored?.body ?? "" );
+
+    const [ resp, setResp ]       = useState<ApiResponse | null>( () => restored?.resp ?? null );
     const [ sending, setSending ] = useState<boolean>( false );
-    const [ reqTab, setReqTab ]   = useState<"params" | "headers" | "body">( "params" );
-    const [ respTab, setRespTab ] = useState<"body" | "headers">( "body" );
-    const [ saveName, setSaveName ] = useState<string>( "" );
+    const [ reqTab, setReqTab ]   = useState<"params" | "headers" | "body">( () => restored?.reqTab ?? "params" );
+    const [ respTab, setRespTab ] = useState<"body" | "headers">( () => restored?.respTab ?? "body" );
+    const [ saveName, setSaveName ] = useState<string>( () => restored?.saveName ?? "" );
 
-    // load discovered endpoints + saved requests when the service changes
+    // load discovered endpoints + saved requests + live deployed ports (these are fetched, not persisted)
     useEffect( () =>
     {
         let active : boolean = true;
         void api.apiDiscover( service ).then( ( e : ApiEndpointDef[] ) => { if ( active ) setEndpoints( e ); } );
         void api.apiSavedList( service ).then( ( s : SavedRequest[] ) => { if ( active ) setSaved( s ); } );
-        setResp( null );
+        void api.deployedPorts( service ).then( ( d : Record<number, number> ) => { if ( active ) setDeployed( d ); } );
         return () => { active = false; };
     }, [ service ] );
 
+    // follow the service target when it's changed elsewhere (the toolbar toggle fires this event)
+    useEffect( () =>
+    {
+        const on = () : void => setTarget( loadBuildSettings( service ).target );
+        window.addEventListener( BUILD_SETTINGS_EVENT, on );
+        return () => window.removeEventListener( BUILD_SETTINGS_EVENT, on );
+    }, [ service ] );
+
+    /** Toggle the target here = change the SERVICE target (so the toolbar + Trace + dots all follow). */
+    const changeTarget = ( t : BuildTarget ) : void =>
+    {
+        setTarget( t );
+        saveBuildSettings( service, { ...loadBuildSettings( service ), target: t } );
+    };
+
+    // persist the draft on any change → restored on the next mount (ApiPanel is keyed per service upstream)
+    useEffect( () =>
+    {
+        saveDraft( service, { method, port, path, headers, query, body, reqTab, respTab, saveName, resp } );
+    }, [ service, method, port, path, headers, query, body, reqTab, respTab, saveName, resp ] );
+
     const portRoles : ServiceRole[] = roles.filter( ( r ) => r.port > 0 );
+
+    // the actual port to hit: Local = the role port; LocalStack = its deployed host port (fallback to role port)
+    const effectivePort : number = target === "localstack" ? ( deployed[ port ] ?? port ) : port;
 
     const url : string = useMemo<string>( () =>
     {
         const qs : string = query.filter( ( q ) => q.enabled && q.key ).map( ( q ) => `${encodeURIComponent( q.key )}=${encodeURIComponent( q.value )}` ).join( "&" );
-        return `http://localhost:${port}${path}${qs ? `?${qs}` : ""}`;
-    }, [ port, path, query ] );
+        return `http://localhost:${effectivePort}${path}${qs ? `?${qs}` : ""}`;
+    }, [ effectivePort, path, query ] );
 
     const loadEndpoint = ( ep : ApiEndpointDef ) : void =>
     {
@@ -179,11 +234,16 @@ export function ApiPanel( { service, roles } : { service : string; roles : Servi
                     <Select size="small" value={method} onChange={( e ) => setMethod( e.target.value )} sx={{ fontFamily: MONO, fontSize: 12, color: methodColor( method ), fontWeight: 700 }}>
                         {METHODS.map( ( m ) => <MenuItem key={m} value={m} sx={{ fontFamily: MONO, color: methodColor( m ), fontWeight: 700 }}>{m}</MenuItem> )}
                     </Select>
-                    <Tooltip title="Service port (direct)">
-                        <Select size="small" value={port} onChange={( e ) => setPort( Number( e.target.value ) )} sx={{ fontFamily: MONO, fontSize: 12 }}>
-                            {portRoles.map( ( r ) => <MenuItem key={r.role} value={r.port} sx={{ fontFamily: MONO }}>:{r.port} {r.role}</MenuItem> )}
-                        </Select>
-                    </Tooltip>
+                    <Select size="small" value={port} onChange={( e ) => setPort( Number( e.target.value ) )} sx={{ fontFamily: MONO, fontSize: 12 }}>
+                        {portRoles.map( ( r ) => <MenuItem key={r.role} value={r.port} sx={{ fontFamily: MONO }}>{r.role}</MenuItem> )}
+                    </Select>
+                    {/* Local (role port) vs LocalStack (the deployed container's published host port) */}
+                    <ToggleButtonGroup size="small" exclusive value={target} onChange={( _e, v : BuildTarget | null ) => v && changeTarget( v )}>
+                        <ToggleButton value="local" sx={{ px: 1, py: 0.2, fontSize: 11 }}>Local</ToggleButton>
+                        <Tooltip title={deployed[ port ] ? `deployed at :${deployed[ port ]}` : "no deployed container found — deploy to LocalStack"}>
+                            <span><ToggleButton value="localstack" sx={{ px: 1, py: 0.2, fontSize: 11 }}>LocalStack</ToggleButton></span>
+                        </Tooltip>
+                    </ToggleButtonGroup>
                     <InputBase value={path} onChange={( e ) => setPath( e.target.value )} placeholder="/path"
                                sx={{ flex: 1, fontFamily: MONO, fontSize: 13, border: "1px solid", borderColor: "divider", borderRadius: 1, px: 1 }} />
                     <Button variant="contained" startIcon={sending ? <CircularProgress size={14} color="inherit" /> : <SendIcon />} disabled={sending} onClick={() => void send()}>Send</Button>

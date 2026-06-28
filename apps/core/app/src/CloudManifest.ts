@@ -52,10 +52,12 @@ export const manifest : ResourceManifest =
             { key: "telemetry", maxReceiveCount: 3, dlq: true, visibilityTimeoutSec: 30 },   // -> AppTelemetryJob
         ],
 
-        // Runtime config + feature flags (app-1 bootstrap / app-2 flags).
+        // Runtime config + feature flags (app-1 bootstrap / app-2 flags). The "web" profile is the PUBLIC
+        // bootstrap blob (GetBootstrap.Config) served by the public role; "settings"/"flags" are the
+        // (separate) authed AppService config + flag set, wired later.
         appConfig:
         [
-            { key: "config", application: "app", profiles: [ { key: "settings" }, { key: "flags", type: "feature_flags" } ] },
+            { key: "config", application: "app", profiles: [ { key: "settings" }, { key: "flags", type: "feature_flags" }, { key: "web" } ] },
         ],
 
         // Web real-user monitoring (app-5 telemetry / RUM).
@@ -150,7 +152,12 @@ export const manifest : ResourceManifest =
     //   • subscribe to the SPECIFIC entity topics whose changes bust app caches → AppCacheInvalidationJob.
     //     (e.g. media.asset for cached assets; add the help/content entity topic when that service lands.)
     publishes:  [ { topic: Events.Stream.BEHAVIOR } ],
-    subscribes: [ { topic: Events.Object.MEDIA_ASSET, consumerGroup: "app-cache-invalidation" } ],
+    subscribes: [
+        { topic: Events.Object.MEDIA_ASSET,     consumerGroup: "app-cache-invalidation" },
+        // BFF read-model warming — the tail of the sign-up chain (account provisioned, new identity).
+        { topic: Events.Object.ACCOUNT_ACCOUNT, consumerGroup: "app-readmodel" },
+        { topic: Events.Object.AUTH_USER,       consumerGroup: "app-readmodel" },
+    ],
 
     tags: { domain: "core", tier: "bff" },
 };

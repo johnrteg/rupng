@@ -12,8 +12,13 @@ const ajvQuery : Ajv = new Ajv({ allErrors: true, coerceTypes: true });
 // genuine type errors, so body validation is a pure check.
 const ajvBody : Ajv = new Ajv({ allErrors: true, coerceTypes: false });
 
-export abstract class RestfulEndpoint<Q extends object = any, B extends object | undefined = any>
+export abstract class RestfulEndpoint<Q extends object = any, B extends object | undefined = any, R = any>
 {
+    // Phantom type carrier — has NO runtime value (`declare`), it only makes the endpoint's Response
+    // type (the 3rd generic) structurally present so `RestfulService.fetch( endpoint )` can INFER it
+    // and return `RestfulService.Reply<Response>`. An unused generic alone isn't inferable.
+    declare readonly _response: R;
+
     // 1. Core Infrastructure Properties
     public abstract readonly uri: string;
     public abstract readonly method: NetworkUtils.Method;
@@ -596,13 +601,15 @@ export namespace RestfulEndpoint
     }
 
     //
-    // for AuthRequest, this information is passed along
+    // Resolved caller context, passed to execute(). Populated by the service from the request's
+    // bearer token (and, in production, the Lambda authorizer). Empty when unauthenticated.
     //
     export interface Authentication
     {
-        //userId?    : string;
-        //devToken?  : string;
-        //sessionId? : string;
+        userId?   : string;                   // the caller's stable id (Cognito sub)
+        username? : string;                   // the caller's username / login
+        token?    : string;                   // the raw bearer access token (for downstream calls e.g. GlobalSignOut)
+        claims?   : Record<string, unknown>;  // decoded token claims (sub, email, roles, …)
     }
 
 

@@ -9,14 +9,25 @@ import { apigwClient, awsErr, getTarget } from "./aws";
 // execute-api edge URL; a real AWS profile uses the reported ApiEndpoint.
 //
 
-/** "GET /app/bootstrap" → "/app"; "$default" / "/" → undefined. */
+/**
+ * Route key → the SERVICE-level path prefix the edge routes on (never per-endpoint):
+ *   "GET /api/app/v1/bootstrap" → "/api/app"   (versioned API: /api/{service})
+ *   "POST /api/auth/v1/login"   → "/api/auth"
+ *   "GET /health" / "/version"  → "/health" / "/version"  (root ops endpoints, legacy single-segment)
+ *   "$default" / "/"            → undefined
+ * Deriving /api/{service} (not /api) keeps each service's prefix distinct, and stays at the service
+ * level so the version + endpoint segments never enter the proxy — splitting a service into more
+ * roles can't change the prefix.
+ */
 function prefixOf( routeKey : string ) : string | undefined
 {
     const parts : string[] = routeKey.trim().split( /\s+/ );
     const path : string = parts.length > 1 ? parts[ 1 ] : parts[ 0 ];
     if ( !path.startsWith( "/" ) ) return undefined;
-    const seg : string = path.split( "/" )[ 1 ] ?? "";
-    return seg ? `/${seg}` : undefined;
+    const segs : string[] = path.split( "/" ).filter( Boolean );   // ["api","app","v1","bootstrap"]
+    if ( segs.length === 0 ) return undefined;
+    if ( segs[ 0 ] === "api" && segs.length >= 2 ) return `/api/${segs[ 1 ]}`;   // /api/{service}
+    return `/${segs[ 0 ]}`;
 }
 
 /** prefix (e.g. "/app") → gateway invoke URL for the API that serves it. */

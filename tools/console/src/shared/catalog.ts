@@ -26,8 +26,8 @@ export interface CatalogEntry
 export const CATALOG : Record<string, CatalogEntry> =
 {
     app          : { label: "App",          icon: "Hub",              blurb: "BFF / front door — main + public roles", roles: { main: 8100, public: 8101 } },
-    auth         : { label: "Auth",         icon: "VpnKey",           blurb: "Identity — reader + writer roles",        roles: { reader: 8110, writer: 8111 } },
-    account      : { label: "Account",      icon: "AccountCircle",    blurb: "Accounts & billing",                      roles: { main: 8120 } },
+    auth         : { label: "Auth",         icon: "VpnKey",           blurb: "Identity — combined (reader/writer split in prod)", roles: { main: 8110 } },
+    account      : { label: "Account",      icon: "AccountCircle",    blurb: "Accounts & billing",                      roles: { main: 8120, read: 8121 } },
     registration : { label: "Registration", icon: "HowToReg",         blurb: "Sign-up & onboarding",                    roles: { main: 8130 } },
     contact      : { label: "Contact",      icon: "Contacts",         blurb: "Contacts & lists",                        roles: { main: 8140 } },
     campaign     : { label: "Campaign",     icon: "Campaign",         blurb: "Campaign orchestration",                  roles: { main: 8150 } },

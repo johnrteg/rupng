@@ -9,7 +9,12 @@
         {
             "name": "app-public",
             "target": "http://localhost:8101",
-            "prefixes": ["/app"]
+            "prefixes": ["/api/app"]
+        },
+        {
+            "name": "auth-reader",
+            "target": "http://localhost:8110",
+            "prefixes": ["/api/auth"]
         },
         {
             "name": "local",

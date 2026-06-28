@@ -8,8 +8,9 @@ import react from '@vitejs/plugin-react';
 //
 const API_TARGET : string = process.env.VITE_API_TARGET ?? 'http://localhost:8000';
 
-// the service prefixes the backend owns (kept in sync with webproxy src/config/local.json `prefixes`)
-const API_PREFIXES : Array<string> = [ '/rup', '/auth', '/account', '/passkey', '/login', '/verify', '/vcf', '/optin', '/uc' ];
+// the backend API namespace (kept in sync with webproxy src/config/local.json `prefixes`). Everything
+// under /api/{service}/v{N}/… is proxied to the backend; the SPA owns every other route.
+const API_PREFIXES : Array<string> = [ '/api' ];
 
 // build the dev proxy table: WS first (more specific than /account), then the REST prefixes
 const proxy : Record<string, { target: string; ws?: boolean; changeOrigin?: boolean }> = {
@@ -58,6 +59,9 @@ export default defineConfig({
                     if( id.includes( 'codemirror' ) )                                        return 'editor';   // heavy; only loaded where used
                     if( id.includes( 'emoji-picker-react' ) )                                return 'emoji';
                     if( id.includes( 'react' ) || id.includes( 'scheduler' ) )               return 'react';
+                    // PDF stack (html2pdf + jsPDF + html2canvas) — keep OUT of vendor so it stays an
+                    // on-demand chunk loaded only when a user downloads a PDF (it's ~1MB).
+                    if( id.includes( 'html2pdf' ) || id.includes( 'jspdf' ) || id.includes( 'html2canvas' ) ) return undefined;
                     return 'vendor';                                                          // everything else
                 },
             },

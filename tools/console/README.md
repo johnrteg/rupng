@@ -48,6 +48,47 @@ npm run build && npm run preview   # production build + run
   deploy targets).
 - **Stop** — `Stop` kills all of a service's streams; `Compose down` stops & removes its containers.
 
+## Local vs LocalStack — the dev loop
+
+Each service has a per-service **Target** toggle (in its action bar, mirrored by the API tab's toggle —
+they're the **same setting**, so changing either updates both, the **Trace** logs, and the API port):
+
+- **LocalStack** — the service is **deployed**: `Build → Docker image → Deploy (cdklocal)`. It runs as
+  ECS task containers inside LocalStack and is reached through the gateway/edge. This is how every
+  service the whole app depends on runs.
+- **Local** — the service runs **in development**: `Build → Run` via `npm run dev` (tsx, instant reload)
+  on its role port(s), with **no Docker build / deploy**. Crucially, a Local run **inherits the deployed
+  stack's resource env** (the CloudResolver identifiers — AppConfig app, bucket/table names, …) and
+  points the AWS SDK at LocalStack (`AWS_ENDPOINT_URL=:4566`). So **your local code uses the real
+  LocalStack AWS resources** (AppConfig, S3, SQS, …) exactly as if deployed — just running locally.
+
+**The loop:** deploy the fleet to LocalStack **once**; then switch the service you're working on to
+**Local** and iterate — every code change is live on save (tsx reload), still backed by LocalStack's
+AWS. No per-change Docker/deploy cycle.
+
+**Trace tab** — shows the running instance's output regardless of target: the local process's logs in
+Local mode, or the deployed ECS container's logs (tailed via `docker logs`) in LocalStack mode. A
+target switch **flushes** Trace and re-points it. (This is the tab formerly called "Runtime".)
+
+### Manifest changes require a redeploy to LocalStack
+
+Code changes never need a redeploy — but **changing a service's AWS footprint does**. Editing
+`apps/core/<svc>/src/CloudManifest.ts` to add/remove/rename a resource (bucket, table, queue, **AppConfig
+profile**, KMS key, …), or change role/port topology, means the new resource — and the env var the
+`CloudResolver` reads for it — **only exists after `cdklocal deploy`**. Until then a Local (or deployed)
+run that references it fails fast with `CloudResolver: missing resource identifier`.
+
+The console tracks this automatically: it **hashes `CloudManifest.ts`** and records the hash on each
+successful deploy. When the current hash drifts from the deployed one, the action bar shows a
+**⚠ Redeploy** button (one click runs the Deploy step to apply the new footprint). Rule of thumb:
+
+| Change | Redeploy to LocalStack? |
+|---|---|
+| Application / business code, new endpoints | **No** — tsx reload (endpoints are reachable locally via the proxy) |
+| AppConfig **content/values** (e.g. the `web` config) | **No** — runtime data, written via the data/control plane |
+| Manifest **footprint** — new/renamed resource, AppConfig profile, role/port | **Yes** — `cdklocal deploy` (the ⚠ Redeploy button) |
+| LocalStack restarted without state persistence | **Yes** — resources are gone |
+
 ## Claude Code integration (in-app)
 
 Claude runs **inside the app** via `@anthropic-ai/claude-agent-sdk` — the main process calls the SDK's

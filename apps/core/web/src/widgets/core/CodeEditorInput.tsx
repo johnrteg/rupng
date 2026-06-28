@@ -59,7 +59,7 @@ export function CodeEditorInput( props : CodeEditorInput.Props ) : JSX.Element
     {
         if (props.format === 'json' && props.jsonSchema)
         {
-            const ajv : Ajv = new Ajv({ allErrors: true });
+            const ajv : Ajv = new Ajv({ allErrors: true, allowUnionTypes: true });
             addFormats(ajv); // Add format validators (email, uri, date-time, etc.)
             const validate = ajv.compile( props.jsonSchema );
             
