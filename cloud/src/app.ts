@@ -21,6 +21,7 @@ import { isLocal, DestroyAll } from "./lib/local";
 import { manifest as appManifest } from "app/manifest";       // apps/core/app/src/CloudManifest.ts
 import { manifest as authManifest } from "auth/manifest";     // apps/core/auth/src/CloudManifest.ts
 import { manifest as accountManifest } from "account/manifest"; // apps/core/account/src/CloudManifest.ts
+import { manifest as mediaManifest } from "media/manifest";   // apps/core/media/src/CloudManifest.ts (S3 + DDB + scan/process SQS)
 import { manifest as webManifest } from "web/manifest";       // apps/core/web/src/CloudManifest.ts (S3+CloudFront / Amplify)
 // import { manifest as contactManifest } from "contact/manifest";
 
@@ -31,13 +32,18 @@ import { manifest as webManifest } from "web/manifest";       // apps/core/web/s
 import { apiEndpoints } from "./lib/endpoints";
 import {
     GetBootstrap, GetAccount,
+    PostUpload, PostUploadComplete, GetAssets, GetAsset, GetAssetStatus, PatchAsset, PostAssetVariants, PostAssetRescan, PostAssetDuplicate, PostAssetPoster, DeleteAsset, GetMediaUrl, GetItemVersions, PostItemRevert, PostItemText, GetDensities, PostAssetDensity, GetVariantSpecs,
+    GetBrowseProviders, PostBrowseSearch, PostBrowseImport, PostAiGenerate, PostAssetTranscribe,
+    PostAssetArchive, GetArchives, GetArchiveUrl, DeleteArchive, PostAssetCompress,
+    PostVoiceClone, GetVoices, DeleteVoice,
     PostLogin, PostLoginIdentify, PostLoginChallenge, PostLoginChallengeResend,
     PostRegister, PostRegisterVerify, PostVerifyResend, PostVerifyPhone,
     GetUsers, GetUserExists, GetUserMeta, PostUserMeta, DeleteUserMeta,
     GetSession, DeleteSession, PostPasswordForgot, PostPasswordReset,
     PostSessionRefresh, PostSessionSwitch, GetSessions, DeleteSessionById, PostSessionsRevokeAll, GetAccounts,
     PostPasskeyRegisterOptions, PostPasskeyRegisterVerify, PostLoginPasskeyOptions, PostLoginPasskeyVerify,
-    GetPasskeys, DeletePasskey
+    GetPasskeys, DeletePasskey,
+    GetApiKeys, PostApiKey, DeleteApiKey
 } from "@repo/api";
 if( appManifest.owns.api )
     appManifest.owns.api.endpoints = [ ...( appManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetBootstrap() ] ) ];
@@ -56,10 +62,28 @@ if( authManifest.owns.api )
         new PostSessionRefresh(), new PostSessionSwitch(), new GetSessions(), new DeleteSessionById(), new PostSessionsRevokeAll(), new GetAccounts(),
         // passkeys (WebAuthn)
         new PostPasskeyRegisterOptions(), new PostPasskeyRegisterVerify(), new PostLoginPasskeyOptions(), new PostLoginPasskeyVerify(),
-        new GetPasskeys(), new DeletePasskey()
+        new GetPasskeys(), new DeletePasskey(),
+        // developer API keys (list / mint / revoke)
+        new GetApiKeys(), new PostApiKey(), new DeleteApiKey()
     ] ) ];
 if( accountManifest.owns.api )
     accountManifest.owns.api.endpoints = [ ...( accountManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetAccount() ] ) ];
+if( mediaManifest.owns.api )
+    mediaManifest.owns.api.endpoints = [ ...( mediaManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        new PostUpload(), new PostUploadComplete(), new GetAssets(), new GetAsset(), new GetAssetStatus(), new PatchAsset(), new PostAssetVariants(), new PostAssetRescan(), new PostAssetDuplicate(), new PostAssetPoster(), new DeleteAsset(), new GetMediaUrl(), new GetItemVersions(), new PostItemRevert(), new PostItemText(), new GetDensities(), new PostAssetDensity(), new GetVariantSpecs(),
+        // Browse (media-12..17) — served by the media BROWSE role
+        new GetBrowseProviders(), new PostBrowseSearch(), new PostBrowseImport(),
+        // AI Gen (media-18) — generate a new asset from a prompt; served by the MAIN role
+        new PostAiGenerate(),
+        // Transcribe (media-18) — audio/video → text + timed segments (async media-transcribe Job)
+        new PostAssetTranscribe(),
+        // Downloads (media-20) — zip original+variants as a TTL'd archive; list / download / delete
+        new PostAssetArchive(), new GetArchives(), new GetArchiveUrl(), new DeleteArchive(),
+        // Video compression (media-10.10) — compress a video to a distribution target
+        new PostAssetCompress(),
+        // Voice cloning (media-21) — clone from an audio asset; list / delete account voices
+        new PostVoiceClone(), new GetVoices(), new DeleteVoice()
+    ] ) ];
 
 // ── Resolve environment from CDK context: `cdk synth -c env=staging` (default dev) ──
 //    Local cloud dev: `cdklocal deploy -c env=local` (deploys to LocalStack). See cloud/local/.
@@ -83,6 +107,15 @@ const platformManifest : PlatformManifest = {
     kafkaCluster  : { brokers: { default: 2 }, sizing: { default: { size: 3 }, production: { size: 6 } }, version: "3.6.0" },
     searchCluster : { serverless: true, sizing: { default: { size: 2 }, production: { size: 6 } } },
     cloudTrail    : { enabled: true, multiRegion: true, managementEvents: true },
+    // Platform-shared AI provider keys — granted read + ARN-injected into every service (all run the
+    // AiFactory). Created empty; values set by a root op. Service-specific keys stay in owns.secrets.
+    secrets       : [
+        { key: "ai-openai",     description: "OpenAI API key (platform AI)" },
+        { key: "ai-anthropic",  description: "Anthropic API key (platform AI)" },
+        { key: "ai-fish",       description: "fish.audio API key (platform AI — TTS / voice cloning)" },
+        { key: "ai-elevenlabs", description: "ElevenLabs API key (platform AI — TTS / voice cloning / SFX)" },
+        { key: "ai-magnific",   description: "Magnific / Freepik API key (platform AI — image generation)" },
+    ],
 };
 const platform : PlatformStack = new PlatformStack( app, `platform-${deployEnv}`, {
     manifest  : platformManifest,
@@ -99,6 +132,7 @@ const manifests : Array<ResourceManifest> = [
     appManifest,
     authManifest,
     accountManifest,
+    mediaManifest,
     webManifest,
     // contactManifest,
 ];
@@ -114,6 +148,7 @@ for( const manifest of manifests )
         deployEnv,                                   // our deployment environment
         vpc       : platform.vpc,                    // shared VPC for RDS / ECS / ElastiCache
         gateways,                                    // cross-stack gateway routing (web CDN → app gateway)
+        platformSecrets : platform.secrets,          // shared AI provider keys (read-granted + ARN-injected)
         stackName : `${manifest.service}-${deployEnv}`,
         env       : { account, region },             // the AWS account/region (cdk.StackProps)
     } );

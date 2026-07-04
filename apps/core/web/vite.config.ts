@@ -2,11 +2,13 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 //
-// Dev API target (LocalStack / local servers by default). Override per environment, e.g.
+// Dev API target — the local webproxy front door. The console runs the webproxy on :9000
+// (PROXY_DEFAULT_PORT), so `npm run web` (Vite dev, HMR on :5173) proxies /api there and reaches the
+// same backend the console-served SPA does. Override per environment, e.g.
 //   VITE_API_TARGET=https://dev.api.rumbleup.com npm run web
-// Mirrors the webproxy `local` upstream so `npm run web` (Vite dev, HMR) reaches the same backend.
+// (Standalone `npm run proxy` with no console binds :8080 — set VITE_API_TARGET=http://localhost:8080 then.)
 //
-const API_TARGET : string = process.env.VITE_API_TARGET ?? 'http://localhost:8000';
+const API_TARGET : string = process.env.VITE_API_TARGET ?? 'http://localhost:9000';
 
 // the backend API namespace (kept in sync with webproxy src/config/local.json `prefixes`). Everything
 // under /api/{service}/v{N}/… is proxied to the backend; the SPA owns every other route.

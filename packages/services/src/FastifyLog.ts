@@ -15,11 +15,11 @@ import type { Trace } from './Trace';
 type Sink = 'info' | 'warn' | 'error';
 
 /** Split a Pino-style call (object-first or message-first) into Trace's (message, ...args). */
-function normalize( bindings : object | undefined, call : unknown[] ) : [ string, unknown[] ]
+function normalize( bindings : object | undefined, call : Array<unknown> ) : [ string, Array<unknown> ]
 {
     let obj  : object | undefined;
     let msg  : string = '';
-    let rest : unknown[] = [];
+    let rest : Array<unknown> = [];
 
     if( typeof call[ 0 ] === 'string' )
     {
@@ -33,7 +33,7 @@ function normalize( bindings : object | undefined, call : unknown[] ) : [ string
         else                                 { rest = call.slice( 1 ); }
     }
 
-    const args : unknown[] = [];
+    const args : Array<unknown> = [];
     if( bindings && Object.keys( bindings ).length > 0 ) args.push( bindings );
     if( obj ) args.push( obj );
     args.push( ...rest );
@@ -49,7 +49,7 @@ export function fastifyLogger( log : Trace ) : FastifyBaseLogger
 {
     const build = ( bindings ? : object ) : FastifyBaseLogger =>
     {
-        const route = ( sink : Sink ) => ( ...call : unknown[] ) : void =>
+        const route = ( sink : Sink ) => ( ...call : Array<unknown> ) : void =>
         {
             const [ msg, args ] = normalize( bindings, call );
             log[ sink ]( msg, ...args );

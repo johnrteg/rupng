@@ -33,8 +33,9 @@ async function findApplication( service : string ) : Promise<Application | undef
     do
     {
         const page = await appConfigClient().send( new ListApplicationsCommand( { NextToken: token, MaxResults: 50 } ) );
-        const hit : Application | undefined = ( page.Items ?? [] ).find( ( a : Application ) => a.Name === service );
+        const hit : Application | undefined = ( page.Items ?? [] ).find( ( application : Application ) => application.Name === service );
         if ( hit ) return hit;
+        // follow the pagination cursor until AWS stops returning one
         token = page.NextToken;
     }
     while ( token );
@@ -53,30 +54,32 @@ export async function configProfiles( service : string ) : Promise<ServiceConfig
 
         const client = appConfigClient();
 
+        // collect every configuration profile (sub-config) across all pages
         const profiles : ServiceConfigTree[ "profiles" ] = [];
-        let pToken : string | undefined;
+        let profileToken : string | undefined;
         do
         {
-            const page = await client.send( new ListConfigurationProfilesCommand( { ApplicationId: app.Id, NextToken: pToken, MaxResults: 50 } ) );
-            ( page.Items ?? [] ).forEach( ( p : ConfigurationProfileSummary ) =>
-                profiles.push( { id: p.Id ?? "", name: p.Name ?? "(unnamed)", type: p.Type ?? "AWS.Freeform" } ) );
-            pToken = page.NextToken;
+            const page = await client.send( new ListConfigurationProfilesCommand( { ApplicationId: app.Id, NextToken: profileToken, MaxResults: 50 } ) );
+            ( page.Items ?? [] ).forEach( ( profile : ConfigurationProfileSummary ) =>
+                profiles.push( { id: profile.Id ?? "", name: profile.Name ?? "(unnamed)", type: profile.Type ?? "AWS.Freeform" } ) );
+            profileToken = page.NextToken;
         }
-        while ( pToken );
+        while ( profileToken );
 
+        // collect every environment across all pages
         const environments : ServiceConfigTree[ "environments" ] = [];
-        let eToken : string | undefined;
+        let environmentToken : string | undefined;
         do
         {
-            const page = await client.send( new ListEnvironmentsCommand( { ApplicationId: app.Id, NextToken: eToken, MaxResults: 50 } ) );
-            ( page.Items ?? [] ).forEach( ( e : Environment ) =>
-                environments.push( { id: e.Id ?? "", name: e.Name ?? "(unnamed)", state: e.State } ) );
-            eToken = page.NextToken;
+            const page = await client.send( new ListEnvironmentsCommand( { ApplicationId: app.Id, NextToken: environmentToken, MaxResults: 50 } ) );
+            ( page.Items ?? [] ).forEach( ( environment : Environment ) =>
+                environments.push( { id: environment.Id ?? "", name: environment.Name ?? "(unnamed)", state: environment.State } ) );
+            environmentToken = page.NextToken;
         }
-        while ( eToken );
+        while ( environmentToken );
 
-        profiles.sort( ( a, b ) => a.name.localeCompare( b.name ) );
-        environments.sort( ( a, b ) => a.name.localeCompare( b.name ) );
+        profiles.sort( ( first, second ) => first.name.localeCompare( second.name ) );
+        environments.sort( ( first, second ) => first.name.localeCompare( second.name ) );
 
         return { applicationId: app.Id, applicationName: app.Name, environments, profiles };
     }
@@ -100,9 +103,9 @@ export async function configGet( applicationId : string, profileId : string ) : 
         do
         {
             const page = await client.send( new ListHostedConfigurationVersionsCommand( { ApplicationId: applicationId, ConfigurationProfileId: profileId, NextToken: token, MaxResults: 50 } ) );
-            ( page.Items ?? [] ).forEach( ( v : HostedConfigurationVersionSummary ) =>
+            ( page.Items ?? [] ).forEach( ( version : HostedConfigurationVersionSummary ) =>
             {
-                if ( latest === undefined || ( v.VersionNumber ?? 0 ) > ( latest.VersionNumber ?? 0 ) ) latest = v;
+                if ( latest === undefined || ( version.VersionNumber ?? 0 ) > ( latest.VersionNumber ?? 0 ) ) latest = version;
             } );
             token = page.NextToken;
         }

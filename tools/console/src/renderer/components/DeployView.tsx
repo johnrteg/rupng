@@ -56,6 +56,7 @@ const DEFAULT_CONFIGS : Record<DeployEnvName, DeployEnvConfig> =
     production : { profile: "rupng-production", region: "us-east-1" }
 };
 
+/** Load per-env AWS configs from localStorage, falling back to the defaults for missing fields. */
 function loadConfigs() : Record<DeployEnvName, DeployEnvConfig>
 {
     try
@@ -63,9 +64,9 @@ function loadConfigs() : Record<DeployEnvName, DeployEnvConfig>
         const raw : string | null = localStorage.getItem( STORE_KEY );
         if ( !raw ) return DEFAULT_CONFIGS;
         const saved = JSON.parse( raw ) as Partial<Record<DeployEnvName, Partial<DeployEnvConfig>>>;
-        const out = { ...DEFAULT_CONFIGS };
-        for ( const e of DEPLOY_ENVS ) out[ e ] = { ...DEFAULT_CONFIGS[ e ], ...( saved[ e ] ?? {} ) };
-        return out;
+        const merged = { ...DEFAULT_CONFIGS };
+        for ( const envName of DEPLOY_ENVS ) merged[ envName ] = { ...DEFAULT_CONFIGS[ envName ], ...( saved[ envName ] ?? {} ) };
+        return merged;
     }
     catch { return DEFAULT_CONFIGS; }
 }
@@ -76,21 +77,22 @@ function signature( env : DeployEnvName, ref : string, sel : Set<string>, platfo
     return `${env}|${ref}|${platform ? "P+" : ""}${[ ...sel ].sort().join( "," )}`;
 }
 
-const isRelease = ( b : string ) : boolean => /^release\//.test( b );
+/** True for a release line branch ("release/X.Y"). */
+const isRelease = ( branch : string ) : boolean => /^release\//.test( branch );
 
 export function DeployView()
 {
     const [ env, setEnv ]           = useState<DeployEnvName>( "dev" );
     const [ ref, setRef ]           = useState<string>( "" );
-    const [ refs, setRefs ]         = useState<{ branches : string[]; tags : string[]; current : string }>( { branches: [], tags: [], current: "" } );
-    const [ services, setServices ] = useState<ServiceInfo[]>( [] );
+    const [ refs, setRefs ]         = useState<{ branches : Array<string>; tags : Array<string>; current : string }>( { branches: [], tags: [], current: "" } );
+    const [ services, setServices ] = useState<Array<ServiceInfo>>( [] );
     const [ sel, setSel ]           = useState<Set<string>>( new Set() );
     const [ platform, setPlatform ] = useState<boolean>( false );
     const [ configs, setConfigs ]   = useState<Record<DeployEnvName, DeployEnvConfig>>( loadConfigs );
     const [ gitVer, setGitVer ]     = useState<Record<string, string>>( {} );
     const [ depVer, setDepVer ]     = useState<Record<string, string>>( {} );
     const [ verNote, setVerNote ]   = useState<string>( "" );
-    const [ lines, setLines ]       = useState<LogLine[]>( [] );
+    const [ lines, setLines ]       = useState<Array<LogLine>>( [] );
     const [ busy, setBusy ]         = useState<boolean>( false );
     const [ showCfg, setShowCfg ]   = useState<boolean>( false );
     const [ confirmOpen, setConfirmOpen ] = useState<boolean>( false );
@@ -113,54 +115,56 @@ export function DeployView()
     const sig : string = signature( env, ref, sel, platform );
 
     // default ref for an env = its currently-deployed ref (environments.json), else newest release line, else main/current
-    const pickDefaultRef = useCallback( ( e : DeployEnvName, r : { branches : string[]; current : string }, st : DeployState | null ) : string =>
+    const pickDefaultRef = useCallback( ( envName : DeployEnvName, refData : { branches : Array<string>; current : string }, state : DeployState | null ) : string =>
     {
-        const cur : string | undefined = st?.[ e ]?.ref;
-        if ( cur ) return cur;
-        const rel : string[] = r.branches.filter( isRelease ).sort().reverse();
-        if ( rel.length ) return rel[ 0 ];
-        return r.branches.includes( "main" ) ? "main" : r.branches.includes( "master" ) ? "master" : r.current;
+        const deployedRef : string | undefined = state?.[ envName ]?.ref;
+        if ( deployedRef ) return deployedRef;
+        const releaseLines : Array<string> = refData.branches.filter( isRelease ).sort().reverse();
+        if ( releaseLines.length ) return releaseLines[ 0 ];
+        return refData.branches.includes( "main" ) ? "main" : refData.branches.includes( "master" ) ? "master" : refData.current;
     }, [] );
 
     // ── load services + refs + state once ───────────────────────────────────────────────────────
     useEffect( () =>
     {
         void api.listServices().then( setServices );
-        void Promise.all( [ api.deployRefs(), api.deployState() ] ).then( ( [ r, st ] ) =>
+        void Promise.all( [ api.deployRefs(), api.deployState() ] ).then( ( [ loadedRefs, loadedState ] ) =>
         {
-            setRefs( r ); setDstate( st );
-            setRef( ( p ) => p || pickDefaultRef( env, r, st ) );
+            setRefs( loadedRefs ); setDstate( loadedState );
+            setRef( ( prev ) => prev || pickDefaultRef( env, loadedRefs, loadedState ) );
         } );
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [] );
 
     // switching env (via the toggle) re-points the ref to that env's current/default
-    const selectEnv = ( e : DeployEnvName ) : void => { setEnv( e ); setRef( pickDefaultRef( e, refs, dstate ) ); };
+    const selectEnv = ( envName : DeployEnvName ) : void => { setEnv( envName ); setRef( pickDefaultRef( envName, refs, dstate ) ); };
 
     // ── stream the deploy console ──────────────────────────────────────────────────────────────────
     useEffect( () =>
     {
         let active : boolean = true;
-        void api.getLog( DEPLOY_ID, "deploy" ).then( ( h : LogLine[] ) => { if ( active ) setLines( h ); } );
-        const offLog : () => void = api.onLog( ( l : LogLine ) => { if ( l.service === DEPLOY_ID && l.stream === "deploy" ) setLines( ( p ) => ( p.length > 1500 ? [ ...p.slice( -1500 ), l ] : [ ...p, l ] ) ); } );
-        const offProc : () => void = api.onProc( ( p : ProcState ) =>
+        void api.getLog( DEPLOY_ID, "deploy" ).then( ( history : Array<LogLine> ) => { if ( active ) setLines( history ); } );
+        const offLog : () => void = api.onLog( ( line : LogLine ) => { if ( line.service === DEPLOY_ID && line.stream === "deploy" ) setLines( ( prev ) => ( prev.length > 1500 ? [ ...prev.slice( -1500 ), line ] : [ ...prev, line ] ) ); } );
+        const offProc : () => void = api.onProc( ( proc : ProcState ) =>
         {
-            if ( p.service === DEPLOY_ID && p.stream === "deploy" )
+            if ( proc.service === DEPLOY_ID && proc.stream === "deploy" )
             {
-                setBusy( p.running );
-                if ( !p.running ) { void api.deployState().then( setDstate ); }   // refresh pointers when a deploy finishes
+                setBusy( proc.running );
+                if ( !proc.running ) { void api.deployState().then( setDstate ); }   // refresh pointers when a deploy finishes
             }
         } );
         return () => { active = false; offLog(); offProc(); };
     }, [] );
 
-    const serviceIds : string[] = useMemo( () => services.map( ( s ) => s.id ), [ services ] );
+    const serviceIds : Array<string> = useMemo( () => services.map( ( service ) => service.id ), [ services ] );
 
+    /** Load the git-committed version of each service at the selected ref. */
     const loadGit = useCallback( () => { if ( ref && serviceIds.length ) void api.deployGitVersions( ref, serviceIds ).then( setGitVer ); }, [ ref, serviceIds ] );
+    /** Load the live deployed version of each service in the current env's account. */
     const loadDeployed = useCallback( () =>
     {
         if ( !cfg.profile.trim() ) { setDepVer( {} ); setVerNote( "set an AWS profile in env settings to read deployed versions" ); return; }
-        void api.deployedVersions( cfg ).then( ( r ) => { setDepVer( r.deployed ); setVerNote( r.error ?? "" ); } );
+        void api.deployedVersions( cfg ).then( ( result ) => { setDepVer( result.deployed ); setVerNote( result.error ?? "" ); } );
     }, [ cfg ] );
     useEffect( () => { loadGit(); }, [ loadGit ] );
     useEffect( () => { loadDeployed(); }, [ loadDeployed ] );
@@ -169,13 +173,15 @@ export function DeployView()
     useEffect( () =>
     {
         if ( !isProd || !ref ) { return; }
-        void api.deployProposeTag( ref ).then( ( t ) => setTagInput( t ?? "" ) );
+        void api.deployProposeTag( ref ).then( ( proposedTag ) => setTagInput( proposedTag ?? "" ) );
     }, [ isProd, ref ] );
 
     // map (service × environment)
+    /** Load the service × environment map (live + at-ref versions across all envs). */
     const loadMap = useCallback( () => { setMapLoading( true ); void api.deployMap( configs ).then( setMap ).finally( () => setMapLoading( false ) ); }, [ configs ] );
     useEffect( () => { if ( sub === "map" ) loadMap(); }, [ sub, loadMap ] );
 
+    /** Merge a config patch into the current env's settings and persist all configs. */
     const saveCfg = ( patch : Partial<DeployEnvConfig> ) : void =>
         setConfigs( ( prev ) =>
         {
@@ -184,8 +190,10 @@ export function DeployView()
             return next;
         } );
 
-    const toggle = ( id : string ) : void => setSel( ( prev ) => { const n = new Set( prev ); n.has( id ) ? n.delete( id ) : n.add( id ); return n; } );
+    /** Toggle a service id in/out of the deploy selection set. */
+    const toggle = ( id : string ) : void => setSel( ( prev ) => { const next = new Set( prev ); next.has( id ) ? next.delete( id ) : next.add( id ); return next; } );
 
+    /** Build the deploy/diff request payload from the current form state (prod fields only when prod). */
     const request = ( mode : "diff" | "deploy" ) : DeployRequest => ( {
         env, services: [ ...sel ], platform, ref, mode, config: cfg,
         tag      : isProd ? ( tagInput.trim() || undefined ) : undefined,
@@ -200,53 +208,62 @@ export function DeployView()
     const prodReady : boolean = !isProd || lastDiff === sig;   // prod requires a diff previewed for this exact selection
 
     // ── promotion / rollback: pre-fill the Deploy form (gates still apply) and switch to it ─────────
+    /** Pre-fill the Deploy form to promote the `from` env's ref to the `to` env. */
     const promote = ( from : DeployEnvName, to : DeployEnvName ) : void =>
     {
-        const r : string | undefined = map?.envs[ from ]?.ref || dstate?.[ from ]?.ref;
-        if ( !r ) return;
-        setEnv( to ); setRef( r ); setSel( new Set( serviceIds ) ); setPlatform( false ); setLastDiff( "" ); setSub( "deploy" );
+        const fromRef : string | undefined = map?.envs[ from ]?.ref || dstate?.[ from ]?.ref;
+        if ( !fromRef ) return;
+        setEnv( to ); setRef( fromRef ); setSel( new Set( serviceIds ) ); setPlatform( false ); setLastDiff( "" ); setSub( "deploy" );
     };
+    /** Pre-fill the Deploy form to redeploy the most recent non-current tag to production. */
     const rollback = () : void =>
     {
-        const curTag : string | undefined = map?.envs.production?.tag ?? dstate?.production?.tag;
-        const prev : string | undefined = refs.tags.find( ( t ) => t !== curTag );   // most recent tag that isn't current
-        setEnv( "production" ); setRef( prev ?? "" ); setSel( new Set( serviceIds ) ); setPlatform( false ); setLastDiff( "" ); setSub( "deploy" );
+        const currentProdTag : string | undefined = map?.envs.production?.tag ?? dstate?.production?.tag;
+        const previousTag : string | undefined = refs.tags.find( ( tag ) => tag !== currentProdTag );   // most recent tag that isn't current
+        setEnv( "production" ); setRef( previousTag ?? "" ); setSel( new Set( serviceIds ) ); setPlatform( false ); setLastDiff( "" ); setSub( "deploy" );
     };
+    /** Cut the next release/X.Y line from the newest one, push it, and refresh refs. */
     const openLine = () : void =>
     {
         if ( busy || !window.confirm( "Create the next release/X.Y line from the newest one and push it?" ) ) return;
-        void api.deployOpenLine().then( ( res ) =>
+        void api.deployOpenLine().then( ( result ) =>
         {
             void api.deployRefs().then( setRefs );
-            window.alert( res.line ? `Opened ${res.line}. Deploy it to Dev from the Deploy tab to start the next version.` : ( res.error ?? "could not open the next line" ) );
+            window.alert( result.line ? `Opened ${result.line}. Deploy it to Dev from the Deploy tab to start the next version.` : ( result.error ?? "could not open the next line" ) );
         } );
     };
 
+    /** Preview the CloudFormation diff and record the signature so a prod deploy can be unlocked. */
     const runDiff = () : void => { if ( !canAct ) return; setLastDiff( sig ); void api.deployRun( request( "diff" ) ); };
+    /** Open the deploy confirmation dialog (clearing any prior typed confirmation). */
     const askDeploy = () : void => { if ( !canAct ) return; setConfirmText( "" ); setConfirmOpen( true ); };
+    /** Close the dialog and fire the actual deploy. */
     const doDeploy = () : void => { setConfirmOpen( false ); void api.deployRun( request( "deploy" ) ); };
+    /** Clear the deploy console log. */
     const clearLog = () : void => { void api.clearLog( DEPLOY_ID, "deploy" ).then( () => setLines( [] ) ); };
 
-    const stacks : string[] = [ ...( platform ? [ `platform-${env}` ] : [] ), ...[ ...sel ].sort().map( ( s ) => `${s}-${env}` ) ];
+    // CloudFormation stacks this deploy will touch: platform-<env> (optional) + each selected service
+    const stacks : Array<string> = [ ...( platform ? [ `platform-${env}` ] : [] ), ...[ ...sel ].sort().map( ( serviceId ) => `${serviceId}-${env}` ) ];
     const confirmOk : boolean = !isProd || confirmText.trim() === "production";
     const current : string | undefined = dstate?.[ env ]?.ref;
     const currentTag : string | undefined = dstate?.[ env ]?.tag;
 
-    const releaseBranches : string[] = refs.branches.filter( isRelease );
-    const otherBranches : string[] = refs.branches.filter( ( b ) => !isRelease( b ) );
+    const releaseBranches : Array<string> = refs.branches.filter( isRelease );
+    const otherBranches : Array<string> = refs.branches.filter( ( branch ) => !isRelease( branch ) );
 
     // ── per-service version cell (deploy panel): git@ref vs live in this env ────────────────────────
+    /** Render the git@ref version over the live version for one service, color-coded by match/drift. */
     const verCell = ( id : string ) =>
     {
-        const g : string | undefined = gitVer[ id ];
-        const d : string | undefined = depVer[ id ];
-        const match : boolean = !!g && !!d && g === d;
-        const diff : boolean = !!g && !!d && g !== d;
+        const gitVersion : string | undefined = gitVer[ id ];
+        const liveVersion : string | undefined = depVer[ id ];
+        const match : boolean = !!gitVersion && !!liveVersion && gitVersion === liveVersion;
+        const diff : boolean = !!gitVersion && !!liveVersion && gitVersion !== liveVersion;
         return (
             <Box sx={{ textAlign: "right", fontFamily: MONO, fontSize: 12, lineHeight: 1.3 }}>
                 <Box component="span" sx={{ color: "text.disabled" }}>git </Box>
-                <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>{g ?? "—"}</Box>
-                <Box sx={{ color: match ? "success.main" : diff ? "warning.main" : "text.disabled" }}>live {d ?? "—"} {match ? "✓" : diff ? "≠" : ""}</Box>
+                <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>{gitVersion ?? "—"}</Box>
+                <Box sx={{ color: match ? "success.main" : diff ? "warning.main" : "text.disabled" }}>live {liveVersion ?? "—"} {match ? "✓" : diff ? "≠" : ""}</Box>
             </Box>
         );
     };
@@ -255,28 +272,28 @@ export function DeployView()
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
             {/* env selector + ref + refresh */}
             <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider", flexWrap: "wrap" }}>
-                <ToggleButtonGroup size="small" exclusive value={env} onChange={( _e, v : DeployEnvName | null ) => v && selectEnv( v )}>
-                    {DEPLOY_ENVS.map( ( e ) => (
-                        <ToggleButton key={e} value={e} sx={{ px: 1.5, fontWeight: 700, color: ENV_COLOR[ e ], "&.Mui-selected": { color: "#fff", bgcolor: ENV_COLOR[ e ], "&:hover": { bgcolor: ENV_COLOR[ e ] } } }}>
-                            {ENV_LABEL[ e ]}
+                <ToggleButtonGroup size="small" exclusive value={env} onChange={( _event, nextEnv : DeployEnvName | null ) => nextEnv && selectEnv( nextEnv )}>
+                    {DEPLOY_ENVS.map( ( envName ) => (
+                        <ToggleButton key={envName} value={envName} sx={{ px: 1.5, fontWeight: 700, color: ENV_COLOR[ envName ], "&.Mui-selected": { color: "#fff", bgcolor: ENV_COLOR[ envName ], "&:hover": { bgcolor: ENV_COLOR[ envName ] } } }}>
+                            {ENV_LABEL[ envName ]}
                         </ToggleButton>
                     ) )}
                 </ToggleButtonGroup>
 
                 <Tooltip title="Version to deploy — a release/X.Y line, or a vX.Y.Z tag (rollback)">
-                    <Select size="small" value={ref} onChange={( e ) => setRef( e.target.value )} sx={{ minWidth: 200, fontFamily: MONO }}>
+                    <Select size="small" value={ref} onChange={( event ) => setRef( event.target.value )} sx={{ minWidth: 200, fontFamily: MONO }}>
                         {releaseBranches.length > 0 && <ListSubheader>release lines</ListSubheader>}
-                        {releaseBranches.map( ( b ) => <MenuItem key={`r-${b}`} value={b} sx={{ fontFamily: MONO }}>{b}</MenuItem> )}
+                        {releaseBranches.map( ( branch ) => <MenuItem key={`r-${branch}`} value={branch} sx={{ fontFamily: MONO }}>{branch}</MenuItem> )}
                         {refs.tags.length > 0 && <ListSubheader>tags (rollback)</ListSubheader>}
-                        {refs.tags.map( ( t ) => <MenuItem key={`t-${t}`} value={t} sx={{ fontFamily: MONO }}>{t}</MenuItem> )}
+                        {refs.tags.map( ( tag ) => <MenuItem key={`t-${tag}`} value={tag} sx={{ fontFamily: MONO }}>{tag}</MenuItem> )}
                         {otherBranches.length > 0 && <ListSubheader>other branches</ListSubheader>}
-                        {otherBranches.map( ( b ) => <MenuItem key={`b-${b}`} value={b} sx={{ fontFamily: MONO }}>{b}</MenuItem> )}
+                        {otherBranches.map( ( branch ) => <MenuItem key={`b-${branch}`} value={branch} sx={{ fontFamily: MONO }}>{branch}</MenuItem> )}
                     </Select>
                 </Tooltip>
 
                 {current && <Chip size="small" variant="outlined" sx={{ fontFamily: MONO }} label={`live: ${currentTag ?? current}`} />}
 
-                <Tooltip title="Env AWS settings (profile / region)"><IconButton size="small" onClick={() => setShowCfg( ( v ) => !v )} color={showCfg ? "primary" : "default"}><TuneIcon fontSize="small" /></IconButton></Tooltip>
+                <Tooltip title="Env AWS settings (profile / region)"><IconButton size="small" onClick={() => setShowCfg( ( shown ) => !shown )} color={showCfg ? "primary" : "default"}><TuneIcon fontSize="small" /></IconButton></Tooltip>
                 <Box sx={{ flexGrow: 1 }} />
                 {busy && <CircularProgress size={16} />}
                 <Tooltip title="Refresh refs + versions"><span><Button size="small" startIcon={<RefreshIcon fontSize="small" />} disabled={busy} onClick={() => { void api.deployRefs().then( setRefs ); void api.deployState().then( setDstate ); loadGit(); loadDeployed(); }}>Refresh</Button></span></Tooltip>
@@ -294,8 +311,8 @@ export function DeployView()
                 <Box sx={{ width: "48%", minWidth: 460, flexShrink: 0, overflow: "auto", p: 1.5, borderRight: "1px solid", borderColor: "divider" }}>
                     <Collapse in={showCfg}>
                         <Box sx={{ display: "flex", gap: 1, mb: 1.5, p: 1, border: "1px solid", borderColor: "divider", borderRadius: 1.5, flexWrap: "wrap" }}>
-                            <TextField size="small" label={`${ENV_LABEL[ env ]} AWS profile`} value={cfg.profile} onChange={( e ) => saveCfg( { profile: e.target.value } )} sx={{ width: 200 }} />
-                            <TextField size="small" label="region" value={cfg.region} onChange={( e ) => saveCfg( { region: e.target.value } )} sx={{ width: 140 }} />
+                            <TextField size="small" label={`${ENV_LABEL[ env ]} AWS profile`} value={cfg.profile} onChange={( event ) => saveCfg( { profile: event.target.value } )} sx={{ width: 200 }} />
+                            <TextField size="small" label="region" value={cfg.region} onChange={( event ) => saveCfg( { region: event.target.value } )} sx={{ width: 140 }} />
                             <Typography variant="caption" sx={{ color: "text.disabled", alignSelf: "center", flexGrow: 1 }}>Live versions are read by discovering each service's API Gateway /version in this account.</Typography>
                         </Box>
                     </Collapse>
@@ -304,11 +321,11 @@ export function DeployView()
                         <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mb: 1.5, p: 1, border: "1px solid", borderColor: ENV_COLOR.production, borderRadius: 1.5 }}>
                             <Typography variant="caption" sx={{ color: ENV_COLOR.production, fontWeight: 700 }}>Production change control</Typography>
                             <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                                <TextField size="small" label="tag (auto)" value={tagInput} onChange={( e ) => setTagInput( e.target.value )} sx={{ width: 130, fontFamily: MONO }} />
-                                <TextField size="small" label="approver (≠ you)" value={approver} onChange={( e ) => setApprover( e.target.value )} sx={{ width: 150 }} />
-                                <TextField size="small" label="ticket" value={ticket} onChange={( e ) => setTicket( e.target.value )} placeholder="RUP-123" sx={{ width: 120 }} />
+                                <TextField size="small" label="tag (auto)" value={tagInput} onChange={( event ) => setTagInput( event.target.value )} sx={{ width: 130, fontFamily: MONO }} />
+                                <TextField size="small" label="approver (≠ you)" value={approver} onChange={( event ) => setApprover( event.target.value )} sx={{ width: 150 }} />
+                                <TextField size="small" label="ticket" value={ticket} onChange={( event ) => setTicket( event.target.value )} placeholder="RUP-123" sx={{ width: 120 }} />
                             </Box>
-                            <FormControlLabel control={<Checkbox size="small" checked={emergency} onChange={( e ) => setEmergency( e.target.checked )} />}
+                            <FormControlLabel control={<Checkbox size="small" checked={emergency} onChange={( event ) => setEmergency( event.target.checked )} />}
                                 label={<Typography variant="caption">Emergency change (skip-staging hotfix) — flagged for retroactive review</Typography>} />
                         </Box>
                     )}
@@ -319,18 +336,18 @@ export function DeployView()
                         <Button size="small" sx={{ minWidth: 0 }} onClick={() => setSel( new Set() )}>none</Button>
                     </Box>
 
-                    {services.map( ( s ) => (
-                        <Box key={s.id} sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5, p: 0.5, pl: 1, border: "1px solid", borderColor: sel.has( s.id ) ? color : "divider", borderRadius: 1.5 }}>
-                            <Checkbox size="small" checked={sel.has( s.id )} onChange={() => toggle( s.id )} sx={{ p: 0.5 }} />
+                    {services.map( ( service ) => (
+                        <Box key={service.id} sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5, p: 0.5, pl: 1, border: "1px solid", borderColor: sel.has( service.id ) ? color : "divider", borderRadius: 1.5 }}>
+                            <Checkbox size="small" checked={sel.has( service.id )} onChange={() => toggle( service.id )} sx={{ p: 0.5 }} />
                             <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                                <Typography variant="body2" sx={{ fontWeight: 600 }}>{s.label} <Box component="span" sx={{ color: "text.disabled", fontFamily: MONO, fontWeight: 400 }}>{s.id}-{env}</Box></Typography>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>{service.label} <Box component="span" sx={{ color: "text.disabled", fontFamily: MONO, fontWeight: 400 }}>{service.id}-{env}</Box></Typography>
                             </Box>
-                            {verCell( s.id )}
+                            {verCell( service.id )}
                         </Box>
                     ) )}
 
                     <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 1, p: 0.5, pl: 1, border: "1px dashed", borderColor: platform ? color : "divider", borderRadius: 1.5 }}>
-                        <Checkbox size="small" checked={platform} onChange={() => setPlatform( ( v ) => !v )} sx={{ p: 0.5 }} />
+                        <Checkbox size="small" checked={platform} onChange={() => setPlatform( ( on ) => !on )} sx={{ p: 0.5 }} />
                         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
                             <Typography variant="body2" sx={{ fontWeight: 600 }}>Platform <Box component="span" sx={{ color: "text.disabled", fontFamily: MONO, fontWeight: 400 }}>platform-{env}</Box></Typography>
                             <Typography variant="caption" sx={{ color: "text.disabled" }}>shared VPC / Kafka / OpenSearch — only when infra changed</Typography>
@@ -364,11 +381,11 @@ export function DeployView()
                     <Typography variant="body2" sx={{ mb: 1 }}>Ref <b style={{ fontFamily: MONO }}>{ref}</b> · profile <b style={{ fontFamily: MONO }}>{cfg.profile}</b> ({cfg.region})</Typography>
                     {isProd && <Typography variant="body2" sx={{ mb: 1 }}>Tag <b style={{ fontFamily: MONO }}>{tagInput}</b> · approver <b>{approver}</b> · ticket <b>{ticket}</b>{emergency ? " · EMERGENCY" : ""}</Typography>}
                     <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mb: 1 }}>Stacks:</Typography>
-                    {stacks.map( ( s ) => <Typography key={s} variant="caption" sx={{ display: "block", fontFamily: MONO }}>{s}</Typography> )}
+                    {stacks.map( ( stackName ) => <Typography key={stackName} variant="caption" sx={{ display: "block", fontFamily: MONO }}>{stackName}</Typography> )}
                     {isProd && (
                         <Box sx={{ mt: 2 }}>
                             <Typography variant="body2" sx={{ color: ENV_COLOR.production, fontWeight: 700, mb: 0.5 }}>This is PRODUCTION. Type <code>production</code> to confirm.</Typography>
-                            <TextField size="small" fullWidth autoFocus value={confirmText} onChange={( e ) => setConfirmText( e.target.value )} placeholder="production" />
+                            <TextField size="small" fullWidth autoFocus value={confirmText} onChange={( event ) => setConfirmText( event.target.value )} placeholder="production" />
                         </Box>
                     )}
                 </DialogContent>
@@ -381,28 +398,30 @@ export function DeployView()
     );
 
     // ── map cell: live version (bold) over the version committed at the env's deployed ref ──────────
-    const mapCell = ( e : DeployEnvName, id : string ) =>
+    /** Render one service × env cell: live version over the version committed at that env's ref. */
+    const mapCell = ( envName : DeployEnvName, id : string ) =>
     {
-        const col = map?.envs[ e ];
-        const live : string | undefined = col?.liveVersions[ id ];
-        const atRef : string | undefined = col?.branchVersions[ id ];
+        const column = map?.envs[ envName ];
+        const live : string | undefined = column?.liveVersions[ id ];
+        const atRef : string | undefined = column?.branchVersions[ id ];
         const sync : boolean = !!live && !!atRef && live === atRef;
         const drift : boolean = !!live && !!atRef && live !== atRef;
-        const c : string = sync ? "success.main" : drift ? "warning.main" : "text.disabled";
+        const liveColor : string = sync ? "success.main" : drift ? "warning.main" : "text.disabled";
         return (
             <Box sx={{ fontFamily: MONO, fontSize: 12, lineHeight: 1.35 }}>
-                <Box sx={{ fontWeight: 700, color: c }}>{live ?? "—"} {sync ? "✓" : drift ? "≠" : ""}</Box>
+                <Box sx={{ fontWeight: 700, color: liveColor }}>{live ?? "—"} {sync ? "✓" : drift ? "≠" : ""}</Box>
                 <Box sx={{ color: "text.disabled" }}>ref {atRef ?? "—"}{atRef && !live ? " ↑" : ""}</Box>
             </Box>
         );
     };
 
-    const pendingChip = ( e : DeployEnvName ) =>
+    /** Chip showing how many commits an env is behind its upstream env (dev→staging, staging→prod). */
+    const pendingChip = ( envName : DeployEnvName ) =>
     {
-        const n : number | undefined = e === "staging" ? map?.pending.devAheadOfStaging : e === "production" ? map?.pending.stagingAheadOfProduction : undefined;
-        if ( !n ) return null;
-        const from : string = e === "staging" ? "dev" : "staging";
-        return <Chip size="small" color="warning" variant="outlined" label={`↑ ${n} from ${from}`} sx={{ mt: 0.5, height: 18, fontSize: 10 }} />;
+        const count : number | undefined = envName === "staging" ? map?.pending.devAheadOfStaging : envName === "production" ? map?.pending.stagingAheadOfProduction : undefined;
+        if ( !count ) return null;
+        const from : string = envName === "staging" ? "dev" : "staging";
+        return <Chip size="small" color="warning" variant="outlined" label={`↑ ${count} from ${from}`} sx={{ mt: 0.5, height: 18, fontSize: 10 }} />;
     };
 
     const COLS = "1.4fr 1fr 1fr 1fr";
@@ -432,25 +451,25 @@ export function DeployView()
             <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "auto", p: 1.5 }}>
                 <Box sx={{ display: "grid", gridTemplateColumns: COLS, gap: 1, alignItems: "end", pb: 1, borderBottom: "1px solid", borderColor: "divider", position: "sticky", top: 0, bgcolor: "background.default", zIndex: 1 }}>
                     <Typography variant="caption" sx={{ color: "text.disabled" }}>Service</Typography>
-                    {DEPLOY_ENVS.map( ( e ) => (
-                        <Box key={e}>
-                            <Typography variant="body2" sx={{ fontWeight: 800, color: ENV_COLOR[ e ] }}>{ENV_LABEL[ e ]}</Typography>
-                            <Typography variant="caption" sx={{ fontFamily: MONO, color: "text.disabled", display: "block" }}>{map?.envs[ e ]?.tag ?? map?.envs[ e ]?.ref ?? "(none)"}</Typography>
-                            {pendingChip( e )}
+                    {DEPLOY_ENVS.map( ( envName ) => (
+                        <Box key={envName}>
+                            <Typography variant="body2" sx={{ fontWeight: 800, color: ENV_COLOR[ envName ] }}>{ENV_LABEL[ envName ]}</Typography>
+                            <Typography variant="caption" sx={{ fontFamily: MONO, color: "text.disabled", display: "block" }}>{map?.envs[ envName ]?.tag ?? map?.envs[ envName ]?.ref ?? "(none)"}</Typography>
+                            {pendingChip( envName )}
                         </Box>
                     ) )}
                 </Box>
-                {services.map( ( s ) => (
-                    <Box key={s.id} sx={{ display: "grid", gridTemplateColumns: COLS, gap: 1, alignItems: "center", py: 0.75, borderBottom: "1px solid", borderColor: "divider" }}>
+                {services.map( ( service ) => (
+                    <Box key={service.id} sx={{ display: "grid", gridTemplateColumns: COLS, gap: 1, alignItems: "center", py: 0.75, borderBottom: "1px solid", borderColor: "divider" }}>
                         <Box sx={{ minWidth: 0 }}>
-                            <Typography variant="body2" sx={{ fontWeight: 600 }}>{s.label}</Typography>
-                            <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: MONO }}>{s.id}</Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 600 }}>{service.label}</Typography>
+                            <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: MONO }}>{service.id}</Typography>
                         </Box>
-                        {DEPLOY_ENVS.map( ( e ) => <Box key={e}>{mapCell( e, s.id )}</Box> )}
+                        {DEPLOY_ENVS.map( ( envName ) => <Box key={envName}>{mapCell( envName, service.id )}</Box> )}
                     </Box>
                 ) )}
-                {DEPLOY_ENVS.map( ( e ) => map?.envs[ e ]?.liveError
-                    ? <Typography key={e} variant="caption" sx={{ display: "block", mt: 0.5, color: "text.disabled" }}><b style={{ color: ENV_COLOR[ e ] }}>{ENV_LABEL[ e ]}</b>: {map.envs[ e ].liveError}</Typography>
+                {DEPLOY_ENVS.map( ( envName ) => map?.envs[ envName ]?.liveError
+                    ? <Typography key={envName} variant="caption" sx={{ display: "block", mt: 0.5, color: "text.disabled" }}><b style={{ color: ENV_COLOR[ envName ] }}>{ENV_LABEL[ envName ]}</b>: {map.envs[ envName ].liveError}</Typography>
                     : null ) }
                 <Box sx={{ display: "flex", gap: 2, mt: 1.5, flexWrap: "wrap" }}>
                     <Typography variant="caption" sx={{ color: "success.main" }}>✓ live = ref</Typography>
@@ -464,7 +483,7 @@ export function DeployView()
     return (
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
             <Box sx={{ display: "flex", alignItems: "center", px: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
-                <Tabs value={sub} onChange={( _e, v : "map" | "deploy" ) => setSub( v )} sx={{ minHeight: 44, "& .MuiTab-root": { minHeight: 44 } }}>
+                <Tabs value={sub} onChange={( _event, nextSub : "map" | "deploy" ) => setSub( nextSub )} sx={{ minHeight: 44, "& .MuiTab-root": { minHeight: 44 } }}>
                     <Tab value="map" icon={<GridViewIcon fontSize="small" />} iconPosition="start" label="Map" />
                     <Tab value="deploy" icon={<RocketLaunchIcon fontSize="small" />} iconPosition="start" label="Deploy" />
                 </Tabs>

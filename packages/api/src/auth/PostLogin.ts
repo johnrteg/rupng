@@ -73,7 +73,8 @@ export namespace PostLogin
         idToken?      : string;
         refreshToken? : string;
         expiresIn?    : number;         // seconds
-        challenge?    : string;         // Cognito challenge name when not complete (e.g. NEW_PASSWORD_REQUIRED)
+        challenge?    : string;         // the remaining challenge when not complete (e.g. Login.ChallengeType.TOTP)
+        challengeToken? : string;       // opaque handle to answer `challenge` via /login/challenge (MFA continuation)
     }
 
     // possible error type

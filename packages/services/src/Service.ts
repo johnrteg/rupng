@@ -14,7 +14,9 @@ import { RestfulEndpoint, Access } from '@repo/endpoint';
 import { NetworkUtils } from '@repo/common';
 
 import { Daemon } from './Daemon';
+import { RequestContext } from './RequestContext';
 import type { Register } from '@repo/system';
+import { Authorizer } from './Authorizer';
 import { GetHealthImpl } from './endpoints/GetHealthImpl';
 import { GetVersionImpl } from './endpoints/GetVersionImpl';
 import { fastifyLogger } from './FastifyLog';
@@ -28,6 +30,7 @@ export class Service extends Daemon
     private port        : number = 8000;
     private host        : string = 'localhost';
     public version      : string = "unset";
+    private _authorizer? : Authorizer;   // shared authz-store reader (lazy) — see resolveRole
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /**
@@ -86,10 +89,23 @@ export class Service extends Daemon
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     private async processEndpoint( request: FastifyRequest, reply: FastifyReply, endpt : RestfulEndpoint ) : Promise<void>
     {
+        // one transaction id per request: reuse the caller's `x-transactionid` (API Gateway / client / S2S)
+        // else mint one. Echo it back so the caller can correlate, and carry it in RequestContext so every log
+        // line + downstream call/event this request makes is stamped with it (console trace / CloudWatch / X-Ray).
+        const transactionId : string = String( ( request.headers as Record<string, unknown> )[ RestfulEndpoint.RestfulHeaders.TRANSACTION_ID ] ?? "" ) || randomUUID();
+        reply.header( RestfulEndpoint.RestfulHeaders.TRANSACTION_ID, transactionId );
+
+        await RequestContext.run( { transactionId }, async () : Promise<void> =>
+        {
         try
         {
-            // endpoint instances are registered once and reused, so clear per-request state first
-            endpt.reset();
+            // Endpoint instances are registered ONCE and shared across every request to their route. Their
+            // query/body/headers are MUTABLE instance state (set by unmarshalServer), so concurrent requests
+            // to the same route race — one request's execute() reads another's params (e.g. the media grid
+            // firing 8 GET /assets/:guid/url at once all resolving to the last guid). Work on a per-request
+            // SHALLOW CLONE: its own mutable state, sharing the prototype methods + the (stateless) service ref.
+            const scoped : RestfulEndpoint = Object.assign( Object.create( Object.getPrototypeOf( endpt ) ) as RestfulEndpoint, endpt );
+            scoped.reset();
 
             //
             // Hydrate the endpoint from the incoming request and validate it against its schemas.
@@ -97,10 +113,10 @@ export class Service extends Daemon
             //
             try
             {
-                endpt.unmarshalServer( { headers  : request.headers,
-                                         query    : request.query,
-                                         fullPath : request.url,
-                                         body     : request.body } );
+                scoped.unmarshalServer( { headers  : request.headers,
+                                          query    : request.query,
+                                          fullPath : request.url,
+                                          body     : request.body } );
             }
             catch( err : any )
             {
@@ -113,20 +129,42 @@ export class Service extends Daemon
             // production the API Gateway Lambda authorizer validates the token (JWKS) and forwards the
             // claims; this local path keeps auth working against Cognito on LocalStack.
             const authenticate : RestfulEndpoint.Authentication = Service.authFromRequest( request );
+            authenticate.transactionId = transactionId;   // acting context carries the request's correlation id
+
+            // Developer API key bearer (`rup_<keyId>.<secret>`) — not a JWT, so authFromRequest leaves it as a
+            // bare token with no userId. Verify it against the auth-owned key store (a shared authz read, like
+            // the membership read) and ADOPT the key's owner/account/role. Fails closed: an invalid key stays
+            // unauthenticated and the authorize gate below rejects it.
+            if( !authenticate.userId && authenticate.token && authenticate.token.startsWith( "rup_" ) )
+            {
+                const identity : Authorizer.ApiKeyIdentity | undefined = await ( this._authorizer ??= new Authorizer( this.cloud ) ).verifyApiKey( authenticate.token );
+                if( identity )
+                {
+                    authenticate.userId    = identity.userId;
+                    authenticate.accountId = identity.accountId;
+                    authenticate.role      = identity.role;
+                    authenticate.apiKey    = true;   // role is adopted from the key — skip membership re-resolution
+                }
+            }
 
             // Authorize: an endpoint that declares a minimum role (endpt.access) requires (1) a signed-in
-            // caller and (2) a role that meets the minimum on the Access ladder. The caller's role comes
-            // from the JWT (a `role` claim or `cognito:groups`); an authenticated caller with no role
-            // claim is treated as USER (the pre-token-generation Lambda stamps the real role in prod).
-            if( endpt.access !== undefined )
+            // caller and (2) a role that meets the minimum on the Access ladder. The JWT is IDENTITY-ONLY —
+            // the caller's role is resolved PER REQUEST via resolveRole() (a service that owns membership
+            // reads it from DynamoDB; the base falls back to claims, default USER). The resolved role +
+            // account are written back onto `authenticate` so execute() sees the acting context.
+            if( scoped.access !== undefined )
             {
                 if( !authenticate.userId )
                 {
                     reply.code( NetworkUtils.Status.UNAUTHORIZED ).send( { message: "authentication required" } );
                     return;
                 }
-                const callerRole : Access.Role = Service.roleFromClaims( authenticate.claims ) ?? Access.AccountRole.USER;
-                if( !Access.isAllowed( callerRole, endpt.access ) )
+                // an API-key caller already carries its adopted role (capped at mint) — trust it, don't re-resolve
+                const callerRole : Access.Role = authenticate.apiKey && authenticate.role
+                    ? ( authenticate.role as Access.Role )
+                    : await this.resolveRole( authenticate );
+                authenticate.role = callerRole;
+                if( !Access.isAllowed( callerRole, scoped.access ) )
                 {
                     reply.code( NetworkUtils.Status.FORBIDDEN ).send( { message: "insufficient role" } );
                     return;
@@ -136,7 +174,7 @@ export class Service extends Daemon
             //
             // have the endpoint execute the request
             //
-            const response : RestfulEndpoint.Response = await endpt.execute( authenticate );
+            const response : RestfulEndpoint.Response = await scoped.execute( authenticate );
 
             //
             // reply to client
@@ -150,6 +188,7 @@ export class Service extends Daemon
             this.log.error( "processEndpoint:exception", err );
             reply.code( NetworkUtils.Status.INTERNAL_SERVER_ERROR ).send('server exception');
         }
+        } );
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -174,7 +213,10 @@ export class Service extends Daemon
             const claims : Record<string, unknown> = JSON.parse( Buffer.from( parts[ 1 ], "base64url" ).toString( "utf-8" ) );
             const userId : string | undefined = ( claims.sub as string ) ?? undefined;
             const username : string | undefined = ( claims[ "cognito:username" ] as string ) ?? ( claims.username as string ) ?? userId;
-            return { userId, username, token, claims };
+            // the client states which account it's ACTING in via the X-Account header (identity-only token);
+            // the role is then resolved for (userId, accountId) — see resolveRole.
+            const accountId : string | undefined = ( ( request.headers as Record<string, unknown> )[ "x-account" ] as string ) || undefined;
+            return { userId, username, token, claims, accountId };
         }
         catch
         {
@@ -200,6 +242,31 @@ export class Service extends Daemon
 
         if( !candidate ) return undefined;
         return ( Access.LADDER as ReadonlyArray<string> ).includes( candidate ) ? ( candidate as Access.Role ) : undefined;
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Resolve the caller's effective role for THIS request (the JWT is identity-only — the role is NOT a
+     * token claim). Resolution order:
+     *   1. a forwarded `role` claim — PROD: the API-Gateway authorizer verified the token AND resolved the
+     *      role from DynamoDB, forwarding it in the request context; trust it.
+     *   2. DEV (no authorizer): the shared {@link Authorizer} resolves the role for the ACTING account
+     *      (X-Account header) from the authz store — the same read the prod Lambda authorizer performs.
+     *   3. otherwise the default authenticated role (USER).
+     * The authz read lives in ONE shared component (not duplicated/ad-hoc per service). Failures fall
+     * through to USER (never crash a request over an authz lookup).
+     */
+    protected async resolveRole( auth : RestfulEndpoint.Authentication ) : Promise<Access.Role>
+    {
+        const claimed : Access.Role | undefined = Service.roleFromClaims( auth.claims );
+        if( claimed ) return claimed;
+
+        if( auth.userId && auth.accountId )
+        {
+            const role : Access.Role | undefined = await ( this._authorizer ??= new Authorizer( this.cloud ) ).roleFor( auth.userId, auth.accountId );
+            if( role ) return role;
+        }
+        return Access.AccountRole.USER;
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

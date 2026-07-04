@@ -16,6 +16,7 @@ import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined';
 import Show from './Show';
 import ButtonIcon from './ButtonIcon';
 import BrowserUtils from '@utils/BrowserUtils';
+import { useIsMobile } from '../../utils/useBreakpoint';
 
 //
 //
@@ -23,6 +24,8 @@ import BrowserUtils from '@utils/BrowserUtils';
 export function AlertPrompt( props : AlertPrompt.Props ) : JSX.Element
 {
     const [saving,setSaving]                = React.useState< boolean >( false );
+
+    const isMobile : boolean = useIsMobile();
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////
     async function onActionSync( action : AlertPrompt.Action ) : Promise<void>
@@ -71,7 +74,7 @@ export function AlertPrompt( props : AlertPrompt.Props ) : JSX.Element
         <Divider />
 
         { /* ---------------------- mobile actions ------------------------ */ }
-        <Show show={ BrowserUtils.isMobile }>
+        <Show show={ isMobile }>
             <DialogActions>
                 { props.cancelText ? <ButtonIcon id="cancel" icon={<CancelOutlinedIcon/>} label={ props.cancelText } disabled={ saving } onClick={ () => onActionSync( AlertPrompt.Action.CANCEL ) } /> : null }
                 { props.noText ? <ButtonIcon id="no" icon={<DoNotDisturbAltOutlinedIcon/>} label={ props.noText } disabled={ saving } onClick={ () => onActionSync( AlertPrompt.Action.NO ) } /> : null }
@@ -80,7 +83,7 @@ export function AlertPrompt( props : AlertPrompt.Props ) : JSX.Element
         </Show>
 
         { /* ---------------------- desktip actions ------------------------ */ }
-        <Show show={ !BrowserUtils.isMobile }>
+        <Show show={ !isMobile }>
             <DialogActions>
                 { props.cancelText ? <Button variant="outlined" disabled={ saving } onClick={ () => onActionSync( AlertPrompt.Action.CANCEL ) }>{ props.cancelText }</Button> : null }
                 { props.noText     ? <Button variant="outlined" disabled={ saving } onClick={ () => onActionSync( AlertPrompt.Action.NO )     }>{ props.noText }</Button> : null }

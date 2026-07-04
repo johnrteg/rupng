@@ -4,7 +4,7 @@
 // and data-retention windows.
 //
 // Lives in @repo/api (not the service) so the ONE definition is shared: the account service reads it live
-// + seeds `SEED`; the Console's AppConfig editor lints edits against `SCHEMA`; an admin UI validates with
+// + seeds `DEFAULT`; the Console's AppConfig editor lints edits against `SCHEMA`; an admin UI validates with
 // `validate()`. Plan-driven caps (e.g. members-PER-PLAN) are entitlements (see Billing), not service
 // config, and are intentionally excluded here.
 //
@@ -88,7 +88,7 @@ export namespace AccountConfig
     export const validate : Validation.Validator<Config> = Validation.compile<Config>( SCHEMA );
 
     /** Seed for a fresh environment — safe, conservative defaults. */
-    export const SEED : Config =
+    export const DEFAULT : Config =
     {
         hierarchy: {
             maxDepth:                3,

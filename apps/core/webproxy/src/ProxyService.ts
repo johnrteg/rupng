@@ -2,7 +2,7 @@
 // Proxy — a development front door. Serves the built web app (apps/core/web) as static files
 // with SPA fallback, and reverse-proxies API + WebSocket traffic to a configurable upstream:
 // LOCAL servers / LocalStack, or a deployed AWS environment (dev / staging / production).
-// Which one is purely a config choice (`upstreams[].target`); the same code serves all.
+// Which one is purely a config choice (`Array<upstreams>.target`); the same code serves all.
 //
 // Converted to the @repo/services `Service` base — which owns the Fastify instance, the
 // run/init/start lifecycle, OS-signal shutdown, error handling, and /health — so this class
@@ -112,39 +112,74 @@ export class ProxyService extends Service
     {
         if( !this.server || !this.cfg.routes?.length ) return;
 
-        const matchers : Array<{ method : string; re : RegExp; target : string }> =
-            this.cfg.routes.map( ( r ) => ( { method: r.method.toUpperCase(), re: ProxyService.routeRegex( r.path ), target: r.target } ) );
-
-        const pick = ( method : string, url : string ) : string | undefined =>
+        // Build PREFIX proxies from the per-endpoint route table. A service whose endpoints span multiple ports
+        // (e.g. media MAIN 8240 + BROWSE 8241) can't be one `/api/{service}` prefix — so for each service we
+        // mount its PRIMARY target (the one serving the most endpoints) at `/api/{service}`, and each OTHER
+        // target at the LONGEST COMMON PATH-PREFIX of its endpoints (e.g. `/api/media/v1/browse` → 8241).
+        // Fastify's router matches the most-specific prefix, so `/api/media/v1/browse/*` → 8241 while everything
+        // else under `/api/media/*` → 8240 — per-sub-service routing without @fastify/http-proxy's `getUpstream`
+        // (broken in 11.5.0: the returned upstream is computed but never applied, so every request 404s).
+        const byService : Map<string, Map<string, Array<string>>> = new Map<string, Map<string, Array<string>>>();   // service → target → paths
+        for( const route of this.cfg.routes )
         {
-            const path : string = ( url || "" ).split( "?" )[ 0 ];
-            const m : string = ( method || "GET" ).toUpperCase();
-            return matchers.find( ( x ) => x.method === m && x.re.test( path ) )?.target;
-        };
+            const segments : Array<string> = route.path.split( "/" ).filter( Boolean );   // ["api","media","v1",…]
+            if( segments[ 0 ] !== "api" || segments.length < 2 ) continue;
+            const service : string = segments[ 1 ];
+            if( !byService.has( service ) ) byService.set( service, new Map<string, Array<string>>() );
+            const targets : Map<string, Array<string>> = byService.get( service )!;
+            if( !targets.has( route.target ) ) targets.set( route.target, [] );
+            targets.get( route.target )!.push( route.path );
+        }
 
-        const fallback : string = matchers[ 0 ].target;   // default upstream (getUpstream overrides per request)
-        this.log.info( "proxy route table", { routes: matchers.length } );
+        // resolve (prefix → target) mounts: primary target at the service root, each other target at its
+        // endpoints' common prefix. Register longest prefixes LAST so a more-specific mount wins the match.
+        const mounts : Array<{ prefix : string; target : string }> = [];
+        for( const [ service, targets ] of byService )
+        {
+            const ranked : Array<[ string, Array<string> ]> = [ ...targets.entries() ].sort( ( left, right ) => right[ 1 ].length - left[ 1 ].length );
+            mounts.push( { prefix: `/api/${ service }`, target: ranked[ 0 ][ 0 ] } );   // primary → service root
+            for( let index : number = 1; index < ranked.length; index++ )
+            {
+                const [ target, paths ] : [ string, Array<string> ] = ranked[ index ];
+                const prefix : string = ProxyService.commonPathPrefix( paths );
+                if( prefix === `/api/${ service }` )   // can't disambiguate — would collide with the primary mount
+                    this.log.warn( "proxy route: sub-service shares the service prefix — cannot split-route", { service, target } );
+                else
+                    mounts.push( { prefix, target } );
+            }
+        }
 
-        this.server.register( fastifyHttpProxy, {
-            upstream      : fallback,
-            prefix        : "/api",
-            rewritePrefix : "/api",                       // forward the full /api/{service}/v{N}/… path unchanged
-            http2         : false,
-            replyOptions  : {
-                getUpstream           : ( req, _base ) => pick( req.method ?? "GET", req.url ?? "" ) ?? fallback,
-                rewriteRequestHeaders : ( req, headers ) => ( { ...headers, origin: pick( req.method ?? "GET", req.url ?? "" ) ?? fallback } ),
-            },
-        } );
+        for( const { prefix, target } of mounts.sort( ( left, right ) => left.prefix.length - right.prefix.length ) )
+        {
+            this.log.info( "proxy route", { prefix, target } );
+            this.server.register( fastifyHttpProxy, {
+                upstream      : target,
+                prefix,
+                rewritePrefix : prefix,                   // forward the full /api/{service}/v{N}/… path unchanged
+                http2         : false,
+                replyOptions  : {
+                    rewriteRequestHeaders : ( _req, headers ) => ( { ...headers, origin: target } ),
+                },
+            } );
+        }
     }
 
-    /** Compile an endpoint path (with :params / :opt? segments) to an anchored matcher. */
-    private static routeRegex( pathPattern : string ) : RegExp
+    /////////////////////////////////////////////////////////////////////////////////////////
+    /** The longest common leading path (by whole segments) across the given paths — used to mount a
+     *  sub-service's endpoints at the deepest prefix they all share (e.g. `/api/media/v1/browse`). */
+    private static commonPathPrefix( paths : Array<string> ) : string
     {
-        const parts : string[] = pathPattern.split( "/" ).filter( Boolean ).map( ( seg ) =>
-            seg.startsWith( ":" )
-                ? ( seg.endsWith( "?" ) ? "(?:[^/]+)?" : "[^/]+" )
-                : seg.replace( /[.*+?^${}()|[\]\\]/g, "\\$&" ) );
-        return new RegExp( "^/" + parts.join( "/" ) + "/?$" );
+        if( paths.length === 0 ) return "";
+        const segmented : Array<Array<string>> = paths.map( ( path : string ) => path.split( "/" ).filter( Boolean ) );
+        const first : Array<string> = segmented[ 0 ];
+        let shared : number = first.length;
+        for( const segments of segmented )
+        {
+            let index : number = 0;
+            while( index < shared && index < segments.length && segments[ index ] === first[ index ] ) index++;
+            shared = index;
+        }
+        return "/" + first.slice( 0, shared ).join( "/" );
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////
@@ -172,6 +207,12 @@ export class ProxyService extends Service
             wildcard     : true,
             cacheControl : false,       // dev: never cache the SPA shell/assets
             maxAge       : 0,
+            // The SPA shell (index.html) MUST NOT be browser-cached, or a normal refresh keeps loading the
+            // old hashed asset refs (→ stale app even after a rebuild). Force revalidation on every HTML hit.
+            setHeaders   : ( res : { setHeader( name : string, value : string ) : void }, filePath : string ) : void =>
+            {
+                if( filePath.endsWith( ".html" ) ) res.setHeader( "Cache-Control", "no-store, must-revalidate" );
+            },
         } );
     }
 
@@ -244,10 +285,14 @@ export class ProxyService extends Service
             // also a real 404 if the SPA shell isn't built yet (web root has no index.html).
             if( request.method !== "GET" || request.url.startsWith( "/assets/" ) || !fs.existsSync( indexPath ) )
             {
+                // DIAGNOSTIC: a request reached the SPA not-found handler — if this fires for an /api path,
+                // the route table / upstream prefix did NOT claim it (e.g. routes empty + /api prefix skipped).
+                this.log.warn( "proxy 404 (not-found handler)", { method: request.method, url: request.url } );
                 reply.status( 404 ).send( { error: "Not Found" } );
                 return;
             }
-            reply.type( "text/html" ).send( fs.readFileSync( indexPath ) );
+            // no-store: the SPA shell must always revalidate so a rebuild's new asset refs load on refresh
+            reply.header( "Cache-Control", "no-store, must-revalidate" ).type( "text/html" ).send( fs.readFileSync( indexPath ) );
         } );
     }
 

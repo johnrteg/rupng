@@ -89,6 +89,13 @@ export const manifest : ResourceManifest =
                   { name: "userId", partitionKey: { name: "userId", type: AttrType.STRING }, projection: "ALL" },
               ] },
 
+            // invites — pending invitations to an account (before the invitee is a member); SK inviteId,
+            // GSI email (find an email's pending invites, to materialize on that user's next app load)
+            { key: "invites", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "inviteId", type: AttrType.STRING },
+              globalSecondaryIndexes: [
+                  { name: "email", partitionKey: { name: "email", type: AttrType.STRING }, projection: "ALL" },
+              ] },
+
             // plans — the pricing catalog (versioned); GSI key for stable lookup
             { key: "plans", partitionKey: { name: "planId", type: AttrType.STRING },
               globalSecondaryIndexes: [
@@ -109,6 +116,13 @@ export const manifest : ResourceManifest =
 
             // coupons — discount codes; PK code
             { key: "coupons", partitionKey: { name: "code", type: AttrType.STRING } },
+        ],
+
+        // Work queues (auto-DLQ). invite-requests: decoupled/persistent invite processing — POST /invites
+        // enqueues, the account service's invite consumer writes the invite row + sends the (stub) email.
+        queues:
+        [
+            { key: "invite-requests", maxReceiveCount: 5, dlq: true, visibilityTimeoutSec: 60 },   // -> invite consumer
         ],
     },
 

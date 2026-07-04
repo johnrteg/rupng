@@ -44,6 +44,7 @@ export function EmailInput( props: EmailInput.Props ) : JSX.Element
                         disabled={ props.disabled != undefined ? props.disabled : false }
                         endIcon={ value != "" && EmailUtils.isValid( value ) ? <IconButton onClick={ () => onClick() }><EmailOutlinedIcon /></IconButton> : null }
                         value={ value }
+                        focus={ props.focus }
                         width={ props.sx && props.sx.width ? props.sx.width : undefined }
                         autoComplete={ props.autoComplete }
                         onChange={ onChange }
@@ -59,6 +60,7 @@ export namespace EmailInput
         label         : string;
         value         : string;
         disabled ?    : boolean;
+        focus?        : boolean;   // autofocus on mount (forwarded to TextInput)
         sx?           : { width? : number | string };
         autoComplete? : string;
         onChange?     : ( new_value : string ) => void;

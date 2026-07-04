@@ -8,13 +8,21 @@
 export class Trace
 {
     private name : string;
-    private id : string;          // correlation id — currently process-scoped; see TODO below
+    private id : string;          // the PROCESS/service-instance id (stable for the running service)
     private minLevel : Trace.Level;
 
-    // TODO(monitor): `id` will become the per-request TRANSACTION ID, not a single app id.
-    // Add a child-logger factory (e.g. `forRequest( transactionId )`) that returns a Trace with
-    // the same name/level but a request-scoped id, so concurrent requests stay distinguishable in
-    // the logs the monitor service ingests. Wired from Application — see Application.ts constructor.
+    // Request correlation: rather than a per-request child logger threaded through every call site, the
+    // shared logger reads the current request's transaction id from an ambient CONTEXT PROVIDER (set by the
+    // runtime — @repo/services wires it to an AsyncLocalStorage). Every log line then carries `txn` = the
+    // transaction id for that request/event, so logs correlate across services (console trace / CloudWatch
+    // Logs Insights). Browser-safe: no node deps here; the provider is optional and defaults to none.
+    private static contextProvider? : () => Trace.Context | undefined;
+
+    /** Install the ambient request-context source (the runtime does this once, e.g. from Application). */
+    public static setContextProvider( provider : () => Trace.Context | undefined ) : void
+    {
+        Trace.contextProvider = provider;
+    }
 
     ///////////////////////////////////////////////////////////////////////
     constructor( name : string, id : string, minLevel : Trace.Level = Trace.Level.INFO )
@@ -49,7 +57,7 @@ export class Trace
     /////////////////////////////////////////////////////////////////////////////////////
     // Emits one parseable JSON record per event. INFO -> stdout; WARN/ERROR -> stderr so
     // operators can split and alert on the two streams.
-    private write( level : Trace.Level, message : string, args : unknown[] ) : void
+    private write( level : Trace.Level, message : string, args : Array<unknown> ) : void
     {
         if( level < this.minLevel ) return;
 
@@ -62,6 +70,10 @@ export class Trace
             message : message,
         };
 
+        // stamp the current request/event transaction id (when the runtime provides one) so log lines correlate
+        const context : Trace.Context | undefined = Trace.contextProvider?.();
+        if( context?.transactionId ) record.txn = context.transactionId;
+
         if( args.length > 0 )record.args = args.map( Trace.serializeArg );
 
         const line : string = JSON.stringify( record );
@@ -73,19 +85,19 @@ export class Trace
     }
 
     /////////////////////////////////////////////////////////////////////////////////////
-    public info( message: string, ...args: unknown[] ) : void
+    public info( message: string, ...args: Array<unknown> ) : void
     {
         this.write( Trace.Level.INFO, message, args );
     }
 
     /////////////////////////////////////////////////////////////////////////////////////
-    public warn( message: string, ...args: unknown[] ) : void
+    public warn( message: string, ...args: Array<unknown> ) : void
     {
         this.write( Trace.Level.WARNING, message, args );
     }
 
     /////////////////////////////////////////////////////////////////////////////////////
-    public error( message: string, ...args: unknown[] ) : void
+    public error( message: string, ...args: Array<unknown> ) : void
     {
         this.write( Trace.Level.ERROR, message, args );
     }
@@ -98,9 +110,16 @@ export namespace Trace
         level   : string;
         time    : string; // iso
         name    : string;
-        id      : string;
+        id      : string;         // process / service-instance id
+        txn?    : string;         // request/event transaction id (correlation across services) when in a request context
         message : string;
-        args?   : unknown[];
+        args?   : Array<unknown>;
+    }
+
+    /** Ambient per-request context the logger reads (supplied by the runtime via {@link setContextProvider}). */
+    export interface Context
+    {
+        transactionId? : string;
     }
     export enum Level
     {

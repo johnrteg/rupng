@@ -7,6 +7,7 @@ import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import { ClientUtils } from "./ClientUtils";
+import { RequestContext } from "../RequestContext";
 
 /**
  * SQS facade — the routine message operations over `@aws-sdk/client-sqs`, addressed by
@@ -43,16 +44,23 @@ export class Sqs
      * @param queueKey logical queue key.
      * @param body     message payload (object → JSON).
      */
-    send( queueKey : ResourceKey, body : string | object, opts : { delaySeconds? : number; groupId? : string; dedupeId? : string } = {} ) : Promise<Type.Result<void>>
+    send( queueKey : ResourceKey, body : string | object, opts : { delaySeconds? : number; groupId? : string; dedupeId? : string; transactionId? : string } = {} ) : Promise<Type.Result<void>>
     {
         return ResultUtils.from( async () : Promise<void> =>
         {
+            // carry the transaction id as a MESSAGE ATTRIBUTE (out-of-band metadata — no message-body change),
+            // so a queue-triggered consumer/job re-links to the request that enqueued it. Ambient by default.
+            const transactionId : string | undefined = opts.transactionId ?? RequestContext.transactionId();
+
             await this.client.send( new SendMessageCommand( {
                 QueueUrl               : this.url( queueKey ),
                 MessageBody            : typeof body === "string" ? body : JSON.stringify( body ),
                 DelaySeconds           : opts.delaySeconds,
                 MessageGroupId         : opts.groupId,
                 MessageDeduplicationId : opts.dedupeId,
+                MessageAttributes      : transactionId
+                    ? { transactionId: { DataType: "String", StringValue: transactionId } }
+                    : undefined,
             } ) );
         } );
     }
@@ -69,9 +77,10 @@ export class Sqs
         return ResultUtils.from( async () : Promise<Array<Message>> =>
         {
             const result : ReceiveMessageCommandOutput = await this.client.send( new ReceiveMessageCommand( {
-                QueueUrl            : this.url( queueKey ),
-                MaxNumberOfMessages : max,
-                WaitTimeSeconds     : waitSeconds,
+                QueueUrl              : this.url( queueKey ),
+                MaxNumberOfMessages   : max,
+                WaitTimeSeconds       : waitSeconds,
+                MessageAttributeNames : [ "All" ],   // return our `transactionId` attribute (see send/transactionId)
             } ) );
             return result.Messages ?? [];
         } );
@@ -85,5 +94,14 @@ export class Sqs
         {
             await this.client.send( new DeleteMessageCommand( { QueueUrl: this.url( queueKey ), ReceiptHandle: receiptHandle } ) );
         } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    /** The transaction id an enqueuer stamped (message attribute), if any. A consumer wraps its processing in
+     *  `RequestContext.run({ transactionId: Sqs.transactionId(msg) }, …)` so its logs + downstream work re-link
+     *  to the originating request. */
+    public static transactionId( message : Message ) : string | undefined
+    {
+        return message.MessageAttributes?.transactionId?.StringValue;
     }
 }

@@ -17,15 +17,17 @@ const EXCLUDE = new Set( [ "webproxy" ] ); // local-only dev proxy — never bui
 
 const hasRootDockerfile = existsSync( join( REPO_ROOT, "Dockerfile" ) );
 
+/** Read a service dir's package.json (scripts + version), or undefined if absent/unparseable. */
 function readPkg( dir : string ) : { scripts?: Record<string, string>; version?: string } | undefined
 {
-    const p : string = join( dir, "package.json" );
-    if ( !existsSync( p ) ) return undefined;
-    try { return JSON.parse( readFileSync( p, "utf8" ) ); }
+    const path : string = join( dir, "package.json" );
+    if ( !existsSync( path ) ) return undefined;
+    try { return JSON.parse( readFileSync( path, "utf8" ) ); }
     catch { return undefined; }
 }
 
-function rolesFor( id : string, entry : CatalogEntry | undefined ) : ServiceRole[]
+/** Resolve a service's roles + ports, preferring Ports.ts, then the static catalog, then a 0-port "main" default. */
+function rolesFor( id : string, entry : CatalogEntry | undefined ) : Array<ServiceRole>
 {
     // 1) authoritative: the role/port block parsed from Ports.ts at runtime (no rebuild needed)
     const parsed : Record<string, number> | undefined = servicePorts()[ id.toUpperCase() ];
@@ -40,6 +42,7 @@ function rolesFor( id : string, entry : CatalogEntry | undefined ) : ServiceRole
     return [ { role: "main", port: 0 } ];
 }
 
+/** Merge catalog metadata with on-disk facts to produce a service's full info + live capabilities. */
 function buildInfo( id : string ) : ServiceInfo
 {
     const dir   : string = serviceDir( id );
@@ -52,8 +55,8 @@ function buildInfo( id : string ) : ServiceInfo
     const hasCompose : boolean = existsSync( join( dir, "docker-compose.yml" ) ) || existsSync( join( dir, "docker-compose.yaml" ) );
     const hasManifest : boolean = existsSync( join( dir, "src", "CloudManifest.ts" ) );   // → its own cloud stack
 
-    const roles    : ServiceRole[] = rolesFor( id, entry );
-    const hasPort  = roles.some( r => r.port > 0 );
+    const roles    : Array<ServiceRole> = rolesFor( id, entry );
+    const hasPort  = roles.some( role => role.port > 0 );
 
     return {
         id,
@@ -77,10 +80,10 @@ function buildInfo( id : string ) : ServiceInfo
 }
 
 /** List every deployable service, catalog-ordered (known first, then any extras found on disk). */
-export function listServices() : ServiceInfo[]
+export function listServices() : Array<ServiceInfo>
 {
     // every dir under apps/core that is a directory and not excluded
-    const onDisk : string[] = existsSync( APPS_CORE )
+    const onDisk : Array<string> = existsSync( APPS_CORE )
         ? readdirSync( APPS_CORE ).filter( ( name : string ) =>
         {
             if ( EXCLUDE.has( name ) ) return false;
@@ -92,7 +95,7 @@ export function listServices() : ServiceInfo[]
     const onDiskSet : Set<string> = new Set( onDisk );
 
     // ordered ids = catalog order ∩ on-disk, then any on-disk extras not in the catalog (sorted)
-    const ordered : string[] =
+    const ordered : Array<string> =
     [
         ...CATALOG_ORDER.filter( id => onDiskSet.has( id ) ),
         ...onDisk.filter( id => !CATALOG_ORDER.includes( id ) ).sort()

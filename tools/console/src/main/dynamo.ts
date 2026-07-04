@@ -17,25 +17,27 @@ const SCAN_PAGE : number = 50;   // items per scan page
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 /** The tables owned by a service (by physical-name convention), newest key order. */
-export async function dynamoTables( service : string ) : Promise<{ tables : DynamoTable[]; error? : string }>
+export async function dynamoTables( service : string ) : Promise<{ tables : Array<DynamoTable>; error? : string }>
 {
     try
     {
-        const names : string[] = [];
-        let start : string | undefined;
+        // collect every table name across all pages
+        const names : Array<string> = [];
+        let startTableName : string | undefined;
         do
         {
-            const page = await dynamoClient().send( new ListTablesCommand( { ExclusiveStartTableName: start, Limit: 100 } ) );
+            const page = await dynamoClient().send( new ListTablesCommand( { ExclusiveStartTableName: startTableName, Limit: 100 } ) );
             names.push( ...( page.TableNames ?? [] ) );
-            start = page.LastEvaluatedTableName;
+            startTableName = page.LastEvaluatedTableName;
         }
-        while ( start );
+        while ( startTableName );
 
+        // keep only this service's tables and derive the key suffix from the physical name
         const marker : string = `-${service}-table-`;
-        const tables : DynamoTable[] = names
-            .filter( ( n : string ) => n.includes( marker ) )
-            .map( ( n : string ) => ( { name: n, key: n.slice( n.indexOf( marker ) + marker.length ) } ) );
-        tables.sort( ( a, b ) => a.key.localeCompare( b.key ) );
+        const tables : Array<DynamoTable> = names
+            .filter( ( name : string ) => name.includes( marker ) )
+            .map( ( name : string ) => ( { name, key: name.slice( name.indexOf( marker ) + marker.length ) } ) );
+        tables.sort( ( first, second ) => first.key.localeCompare( second.key ) );
         return { tables };
     }
     catch ( err )
@@ -50,11 +52,12 @@ export async function dynamoTableInfo( table : string ) : Promise<{ keySchema? :
 {
     try
     {
-        const out = await dynamoClient().send( new DescribeTableCommand( { TableName: table } ) );
-        const ks = out.Table?.KeySchema ?? [];
-        const pk : string = ks.find( ( k ) => k.KeyType === "HASH" )?.AttributeName ?? "";
-        const sk : string | undefined = ks.find( ( k ) => k.KeyType === "RANGE" )?.AttributeName;
-        return { keySchema: { partitionKey: pk, sortKey: sk } };
+        const described = await dynamoClient().send( new DescribeTableCommand( { TableName: table } ) );
+        const keySchema = described.Table?.KeySchema ?? [];
+        // HASH = partition key (required), RANGE = sort key (optional)
+        const partitionKey : string = keySchema.find( ( element ) => element.KeyType === "HASH" )?.AttributeName ?? "";
+        const sortKey : string | undefined = keySchema.find( ( element ) => element.KeyType === "RANGE" )?.AttributeName;
+        return { keySchema: { partitionKey, sortKey } };
     }
     catch ( err )
     {
@@ -68,8 +71,9 @@ export async function dynamoScan( table : string, startKey? : Record<string, unk
 {
     try
     {
-        const out = await dynamoDocClient().send( new ScanCommand( { TableName: table, Limit: SCAN_PAGE, ExclusiveStartKey: startKey } ) );
-        return { items: ( out.Items ?? [] ) as Array<Record<string, unknown>>, lastKey: out.LastEvaluatedKey };
+        const scanned = await dynamoDocClient().send( new ScanCommand( { TableName: table, Limit: SCAN_PAGE, ExclusiveStartKey: startKey } ) );
+        // lastKey is the cursor for the next page (undefined once the scan is exhausted)
+        return { items: ( scanned.Items ?? [] ) as Array<Record<string, unknown>>, lastKey: scanned.LastEvaluatedKey };
     }
     catch ( err )
     {
@@ -109,6 +113,7 @@ export async function dynamoDelete( table : string, key : Record<string, unknown
     }
 }
 
+/** The refusal result returned for any mutation while pointed at a real AWS account. */
 function readOnly() : DynamoSaveResult
 {
     return { ok: false, error: "Read-only on a real AWS account — switch the target to LocalStack to edit." };

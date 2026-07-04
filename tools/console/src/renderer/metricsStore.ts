@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 import type { ContainerInfo } from "../shared/types";
+import { TargetKind } from "../shared/types";
 import { api } from "./api";
 import { targetStore } from "./targetStore";
 import { settingsStore } from "./settingsStore";
@@ -17,23 +18,23 @@ const AWS_POLL_MS = 20000;      // CloudWatch — metered, poll slower
 export const ALERT_THRESHOLD = 75;                                                // % CPU or memory → alert
 
 /** Number of history bins for a window: window / poll-interval (the charts span this many slots). */
-function binsFor( kind : "localstack" | "aws", windowMin : number ) : number
+function binsFor( kind : TargetKind, windowMin : number ) : number
 {
-    const pollMs : number = kind === "aws" ? AWS_POLL_MS : LOCAL_POLL_MS;
+    const pollMs : number = kind === TargetKind.AWS ? AWS_POLL_MS : LOCAL_POLL_MS;
     return Math.max( 1, Math.round( ( windowMin * 60 * 1000 ) / pollMs ) );
 }
 
 const SOUND_KEY = "rupconsole.alertSound";
 
-export interface MetricHistory { cpu : number[]; mem : number[]; }
+export interface MetricHistory { cpu : Array<number>; mem : Array<number>; }
 
 export interface Breach { key : string; name : string; metric : "CPU" | "MEM"; value : number; }
 
 export interface MetricsSnapshot
 {
-    containers : ContainerInfo[];
+    containers : Array<ContainerInfo>;
     history : Map<string, MetricHistory>;
-    breaches : Breach[];
+    breaches : Array<Breach>;
     error? : string;
     loaded : boolean;
     soundEnabled : boolean;
@@ -54,14 +55,14 @@ class MetricsStore
     {
         containers: [], history: new Map(), breaches: [], loaded: false,
         soundEnabled: loadSound(), threshold: ALERT_THRESHOLD,
-        bins: binsFor( "localstack", settingsStore.getSnapshot().histogramWindowMin ), ts: 0
+        bins: binsFor( TargetKind.LOCALSTACK, settingsStore.getSnapshot().histogramWindowMin ), ts: 0
     };
 
     private listeners = new Set<() => void>();
     private timer : ReturnType<typeof setInterval> | null = null;
     private polling = false;
     private started = false;
-    private lastKind : "localstack" | "aws" | null = null;
+    private lastKind : TargetKind | null = null;
     private lastBins = 0;
     /** keys currently in breach (e.g. "abc:CPU") — for rising-edge beep detection. */
     private breaching = new Set<string>();
@@ -77,7 +78,7 @@ class MetricsStore
 
     getSnapshot = () : MetricsSnapshot => this.snapshot;
 
-    private emit() : void { for ( const l of this.listeners ) l(); }
+    private emit() : void { for ( const listener of this.listeners ) listener(); }
 
     // ── lifecycle ───────────────────────────────────────────────────────────────────────────────
     /** Begin polling (idempotent). Re-arms when the target (LocalStack/AWS) changes. */
@@ -93,7 +94,7 @@ class MetricsStore
     /** (Re)arm for the current target + window. Target change resets history; window change re-caps. */
     private rearm() : void
     {
-        const kind : "localstack" | "aws" = targetStore.getSnapshot().target.kind;
+        const kind : TargetKind = targetStore.getSnapshot().target.kind;
         const newBins : number = binsFor( kind, settingsStore.getSnapshot().histogramWindowMin );
         const kindChanged : boolean = kind !== this.lastKind;
 
@@ -107,7 +108,7 @@ class MetricsStore
             if ( this.timer ) clearInterval( this.timer );
             this.emit();
             void this.poll();
-            this.timer = setInterval( () => { void this.poll(); }, kind === "aws" ? AWS_POLL_MS : LOCAL_POLL_MS );
+            this.timer = setInterval( () => { void this.poll(); }, kind === TargetKind.AWS ? AWS_POLL_MS : LOCAL_POLL_MS );
             return;
         }
 
@@ -116,8 +117,8 @@ class MetricsStore
             // window changed → keep data, re-cap each series to the new bin count
             this.lastBins = newBins;
             const history : Map<string, MetricHistory> = new Map<string, MetricHistory>();
-            for ( const [ k, h ] of this.snapshot.history )
-                history.set( k, { cpu: h.cpu.slice( -newBins ), mem: h.mem.slice( -newBins ) } );
+            for ( const [ key, series ] of this.snapshot.history )
+                history.set( key, { cpu: series.cpu.slice( -newBins ), mem: series.mem.slice( -newBins ) } );
             this.snapshot = { ...this.snapshot, history, bins: newBins };
             this.emit();
         }
@@ -140,35 +141,36 @@ class MetricsStore
         try
         {
             // LocalStack → docker stats; AWS → ECS service metrics from CloudWatch (read-only)
-            const aws : boolean = targetStore.getSnapshot().target.kind === "aws";
+            const aws : boolean = targetStore.getSnapshot().target.kind === TargetKind.AWS;
             const { containers, error } = aws ? await api.ecsMetrics() : await api.dockerContainers();
 
             // roll history forward (keep last 30 min per container; drop vanished ones)
             const history : Map<string, MetricHistory> = new Map<string, MetricHistory>();
-            const breaches : Breach[] = [];
+            const breaches : Array<Breach> = [];
             const nowBreaching : Set<string> = new Set<string>();
 
             const cap : number = this.lastBins;
-            const push = ( arr : number[], v : number ) : number[] =>
+            // append a sample to a series, trimming to the most recent `cap` bins
+            const pushSample = ( series : Array<number>, value : number ) : Array<number> =>
             {
-                const a : number[] = [ ...arr, v ];
-                return a.length > cap ? a.slice( -cap ) : a;
+                const next : Array<number> = [ ...series, value ];
+                return next.length > cap ? next.slice( -cap ) : next;
             };
 
-            for ( const c of containers )
+            for ( const container of containers )
             {
-                const key : string = c.id || c.name;
+                const key : string = container.id || container.name;
                 const prev : MetricHistory = this.snapshot.history.get( key ) ?? { cpu: [], mem: [] };
-                const cpu : number = parseFloat( c.cpuPercent ?? "0" ) || 0;
-                const mem : number = parseFloat( c.memPercent ?? "0" ) || 0;
-                history.set( key, { cpu: push( prev.cpu, cpu ), mem: push( prev.mem, mem ) } );
+                const cpu : number = parseFloat( container.cpuPercent ?? "0" ) || 0;
+                const mem : number = parseFloat( container.memPercent ?? "0" ) || 0;
+                history.set( key, { cpu: pushSample( prev.cpu, cpu ), mem: pushSample( prev.mem, mem ) } );
 
-                if ( cpu >= ALERT_THRESHOLD ) { breaches.push( { key, name: c.name, metric: "CPU", value: cpu } ); nowBreaching.add( `${key}:CPU` ); }
-                if ( mem >= ALERT_THRESHOLD ) { breaches.push( { key, name: c.name, metric: "MEM", value: mem } ); nowBreaching.add( `${key}:MEM` ); }
+                if ( cpu >= ALERT_THRESHOLD ) { breaches.push( { key, name: container.name, metric: "CPU", value: cpu } ); nowBreaching.add( `${key}:CPU` ); }
+                if ( mem >= ALERT_THRESHOLD ) { breaches.push( { key, name: container.name, metric: "MEM", value: mem } ); nowBreaching.add( `${key}:MEM` ); }
             }
 
             // rising edge — a metric newly crossed the threshold this tick → beep (if enabled)
-            const newBreach : boolean = [ ...nowBreaching ].some( ( k : string ) => !this.breaching.has( k ) );
+            const newBreach : boolean = [ ...nowBreaching ].some( ( breachKey : string ) => !this.breaching.has( breachKey ) );
             this.breaching = nowBreaching;
 
             this.snapshot = { containers, history, breaches, error, loaded: true, soundEnabled: this.snapshot.soundEnabled, threshold: ALERT_THRESHOLD, bins: this.lastBins, ts: Date.now() };
@@ -188,19 +190,19 @@ class MetricsStore
         {
             const ctx : AudioContext = this.audioCtx ??= new AudioContext();
             if ( ctx.state === "suspended" ) void ctx.resume();
-            // two quick rising tones
+            // two quick rising tones; `at` is the start offset (s) from now, with a short gain envelope
             const tone = ( freq : number, at : number ) : void =>
             {
-                const o : OscillatorNode = ctx.createOscillator();
-                const g : GainNode = ctx.createGain();
-                o.type = "sine";
-                o.frequency.value = freq;
-                g.gain.setValueAtTime( 0.0001, ctx.currentTime + at );
-                g.gain.exponentialRampToValueAtTime( 0.09, ctx.currentTime + at + 0.02 );
-                g.gain.exponentialRampToValueAtTime( 0.0001, ctx.currentTime + at + 0.16 );
-                o.connect( g ); g.connect( ctx.destination );
-                o.start( ctx.currentTime + at );
-                o.stop( ctx.currentTime + at + 0.18 );
+                const oscillator : OscillatorNode = ctx.createOscillator();
+                const gain : GainNode = ctx.createGain();
+                oscillator.type = "sine";
+                oscillator.frequency.value = freq;
+                gain.gain.setValueAtTime( 0.0001, ctx.currentTime + at );
+                gain.gain.exponentialRampToValueAtTime( 0.09, ctx.currentTime + at + 0.02 );
+                gain.gain.exponentialRampToValueAtTime( 0.0001, ctx.currentTime + at + 0.16 );
+                oscillator.connect( gain ); gain.connect( ctx.destination );
+                oscillator.start( ctx.currentTime + at );
+                oscillator.stop( ctx.currentTime + at + 0.18 );
             };
             tone( 740, 0 );
             tone( 988, 0.14 );

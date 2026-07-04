@@ -33,7 +33,7 @@ export namespace PasswordPolicy
 
     export const validate : Validation.Validator<Rule> = Validation.compile<Rule>( SCHEMA );
 
-    export const SEED : PasswordPolicy.Rule = { minLength: 8, requireUpper: true, requireLower: true, requireNumber: true, requireSymbol: false };
+    export const DEFAULT : PasswordPolicy.Rule = { minLength: 8, requireUpper: true, requireLower: true, requireNumber: true, requireSymbol: false };
 }
 
 export default PasswordPolicy;

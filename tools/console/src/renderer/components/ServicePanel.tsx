@@ -22,11 +22,11 @@ export function ServicePanel(
         stages : StageState;
         runningStreams : Set<LogStream>;
         busy : boolean;
-        health : HealthResult[];
+        health : Array<HealthResult>;
         claudeMode : ClaudeMode;
         onClaudeMode : ( m : ClaudeMode ) => void;
         onStop : () => void;
-        onHealth : ( r : HealthResult[] ) => void;
+        onHealth : ( r : Array<HealthResult> ) => void;
     }
 )
 {
@@ -56,8 +56,8 @@ export function ServicePanel(
                 />
                 <Box sx={{ flexGrow: 1 }} />
                 {!service.capabilities.scaffolded && <Chip label="planned" variant="outlined" />}
-                {service.roles.filter( ( r ) => r.port > 0 ).map( ( r ) => (
-                    <Chip key={r.role} variant="outlined" label={`${r.role} :${r.port}`} sx={{ fontFamily: MONO }} />
+                {service.roles.filter( ( role ) => role.port > 0 ).map( ( role ) => (
+                    <Chip key={role.role} variant="outlined" label={`${role.role} :${role.port}`} sx={{ fontFamily: MONO }} />
                 ) )}
             </Box>
 

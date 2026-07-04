@@ -19,6 +19,8 @@ export interface AdapterOptions
     keyProvider? : KeyProvider;
     /** AWS region (Bedrock / KMS). */
     region?      : string;
+    /** S3 bucket for async video output (Bedrock Nova Reel writes the mp4 here; the adapter reads it back). */
+    videoBucket? : string;
     /** Retry attempts on transient failures (default 3). */
     maxAttempts? : number;
     /** Sink for per-call usage records (e.g. forward to monitor). */
@@ -79,6 +81,16 @@ export abstract class BaseAdapter implements Ai
     embed( _request : Ai.EmbedRequest ) : Promise<Ai.EmbedResponse> { return this.unsupported( Ai.Capability.EMBED ); }
     /** Default: image is unsupported unless an adapter overrides it. */
     image( _request : Ai.ImageRequest ) : Promise<Ai.ImageResponse> { return this.unsupported( Ai.Capability.IMAGE ); }
+    /** Default: text-to-speech is unsupported unless an adapter overrides it. */
+    speak( _request : Ai.SpeakRequest ) : Promise<Ai.SpeakResponse> { return this.unsupported( Ai.Capability.SPEECH ); }
+    /** Default: transcription is unsupported unless an adapter overrides it. */
+    transcribe( _request : Ai.TranscribeRequest ) : Promise<Ai.TranscribeResponse> { return this.unsupported( Ai.Capability.TRANSCRIBE ); }
+    /** Default: sound generation is unsupported unless an adapter overrides it. */
+    sound( _request : Ai.SoundRequest ) : Promise<Ai.SoundResponse> { return this.unsupported( Ai.Capability.SOUND ); }
+    /** Default: video generation is unsupported unless an adapter overrides it. */
+    video( _request : Ai.VideoRequest ) : Promise<Ai.VideoResponse> { return this.unsupported( Ai.Capability.VIDEO ); }
+    /** Default: voice cloning is unsupported unless an adapter overrides it. */
+    cloneVoice( _request : Ai.CloneVoiceRequest ) : Promise<Ai.CloneVoiceResponse> { return this.unsupported( Ai.Capability.VOICE_CLONE ); }
 
     /** Default: streaming is unsupported unless an adapter overrides it. */
     // eslint-disable-next-line require-yield

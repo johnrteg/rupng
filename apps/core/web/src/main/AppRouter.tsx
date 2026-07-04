@@ -9,11 +9,29 @@ import AppModel         from '@model/AppModel';
 import PubSubService    from '@model/service/PubSubService';
 import PageWaiting      from '@pages/common/PageWaiting';
 import { Dashboard }    from '@pages/dashboard/Dashboard';
+import { ProfileDetails } from '@pages/profile/ProfileDetails';
+import { ProfileDisplay } from '@pages/profile/ProfileDisplay';
+import { ProfileSecurity } from '@pages/profile/ProfileSecurity';
+import { ProfileNotifications } from '@pages/profile/ProfileNotifications';
+import { AccountDetails } from '@pages/account/AccountDetails';
+import { AccountBilling } from '@pages/account/AccountBilling';
+import { AccountUsers } from '@pages/account/AccountUsers';
+import { AccountSubAccounts } from '@pages/account/AccountSubAccounts';
+import { Schedule } from '@pages/schedule/Schedule';
+import { MediaLibrary } from '@pages/media/MediaLibrary';
+import { MediaBrowse } from '@pages/media/MediaBrowse';
+import { MediaAiGen } from '@pages/media/MediaAiGen';
+import { MediaDownloads } from '@pages/media/MediaDownloads';
+import { MediaStudio } from '@pages/media/MediaStudio';
+import { Help } from '@pages/help/Help';
+import { SettingsApi } from '@pages/settings/SettingsApi';
 import { Login }        from '@pages/login/Login';
 import { Register }     from '@pages/register/Register';
 import { ForgotPassword }   from '@pages/login/ForgotPassword';
 import Subscriber       from '@widgets/core/Subscriber';
 import ErrorPage        from '@pages/common/ErrorPage';
+import StubPage         from '@widgets/app/StubPage';
+import navModel         from '@widgets/app/navigation/navModel';
 
 
 interface RouteMatch
@@ -78,6 +96,24 @@ export function AppRouter( props : AppRouter.Props ) : JSX.Element
         // dashboard (loaded immediately - most common)
         new_routes.push( { path: AppRouter.Route.DASHBOARD, component: () => <Dashboard /> } );
 
+        // real nav destinations (built pages) — registered explicitly; skipped by the stub loop below
+        new_routes.push( { path: "/profile/details", component: () => <ProfileDetails /> } );
+        new_routes.push( { path: "/profile/display", component: () => <ProfileDisplay /> } );
+        new_routes.push( { path: "/profile/security", component: () => <ProfileSecurity /> } );
+        new_routes.push( { path: "/profile/notifications", component: () => <ProfileNotifications /> } );
+        new_routes.push( { path: "/account/details", component: () => <AccountDetails /> } );
+        new_routes.push( { path: "/account/billing", component: () => <AccountBilling /> } );
+        new_routes.push( { path: "/account/users", component: () => <AccountUsers /> } );
+        new_routes.push( { path: "/account/sub-accounts", component: () => <AccountSubAccounts /> } );
+        new_routes.push( { path: "/schedule", component: () => <Schedule /> } );
+        new_routes.push( { path: "/media/library", component: () => <MediaLibrary /> } );
+        new_routes.push( { path: "/media/browse", component: () => <MediaBrowse /> } );
+        new_routes.push( { path: "/media/ai-gen", component: () => <MediaAiGen /> } );
+        new_routes.push( { path: "/media/downloads", component: () => <MediaDownloads /> } );
+        new_routes.push( { path: "/media/studio", component: () => <MediaStudio /> } );
+        new_routes.push( { path: "/help", component: () => <Help /> } );
+        new_routes.push( { path: "/settings/api", component: () => <SettingsApi /> } );
+
         // least common (mixed - some critical, some lazy)
         new_routes.push( { path: AppRouter.Route.ROOT     , component: () => <Dashboard /> } );
         //new_routes.push( { path: AppRouter.Route.REGISTER , component: withLazyWrapper(SignUp) } );
@@ -86,6 +122,16 @@ export function AppRouter( props : AppRouter.Props ) : JSX.Element
         new_routes.push( { path: AppRouter.Route.REGISTER , component: () => <Register /> } );
         new_routes.push( { path: AppRouter.Route.FORGOT_PASSWORD , component: () => <ForgotPassword /> } );
         //new_routes.push( { path: AppRouter.Route.REGISTRY , component: withLazyWrapper(Registry) } );
+
+        // nav destinations from the shared nav model — each renders a Dashboard-like page (StubPage until
+        // its real page exists), titled with a "Parent : Child" breadcrumb for children. /dashboard is
+        // already mapped to the real Dashboard above, so skip it.
+        const built : Set<string> = new Set( new_routes.map( ( r : Route ) => r.path ) );   // don't stub a real page
+        for( const page of navModel.pages() )
+        {
+            if( !page.route || built.has( page.route ) ) continue;
+            new_routes.push( { path: page.route, component: () => <StubPage title={ page.title } /> } );
+        }
 
         setRoutes( new_routes );
     }

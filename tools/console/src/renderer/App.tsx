@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import Box from "@mui/material/Box";
+import Backdrop from "@mui/material/Backdrop";
+import CircularProgress from "@mui/material/CircularProgress";
+import Typography from "@mui/material/Typography";
 
 import type { LocalStackState } from "../shared/types";
 import { api } from "./api";
@@ -10,6 +13,9 @@ import { AppHeader, type AppView } from "./components/AppHeader";
 import { DevelopView } from "./components/DevelopView";
 import { CloudView } from "./components/CloudView";
 import { KafkaMonitorView } from "./components/KafkaMonitorView";
+import { SesView } from "./components/SesView";
+import { CognitoCodesView } from "./components/CognitoCodesView";
+import { ProcessView } from "./components/ProcessView";
 import { RepoView } from "./components/RepoView";
 import { DeployView } from "./components/DeployView";
 
@@ -20,15 +26,20 @@ import { DeployView } from "./components/DeployView";
 export function App()
 {
     const [ view, setView ]             = useState<AppView>( "develop" );
-    const [ monitorTab, setMonitorTab ] = useState<"cloud" | "events">( "cloud" );
+    const [ monitorTab, setMonitorTab ] = useState<"cloud" | "events" | "email" | "processes">( "cloud" );
     const [ localstack, setLocalstack ] = useState<LocalStackState>( { status: "unknown", ts: 0 } );
+    const [ shuttingDown, setShuttingDown ] = useState<boolean>( false );
 
+    // main signals it's tearing local services down on quit → show a blocking "please wait" overlay
+    useEffect( () => api.onShuttingDown( () => setShuttingDown( true ) ), [] );
+
+    // Seed the LocalStack status, subscribe to push updates from main, and poll every 10s as a fallback.
     useEffect( () =>
     {
         void api.localstackStatus().then( setLocalstack );
-        const offLs : () => void = api.onLocalStack( ( s : LocalStackState ) => setLocalstack( s ) );
-        const id : ReturnType<typeof setInterval> = setInterval( () => { void api.localstackStatus().then( setLocalstack ); }, 10000 );
-        return () => { offLs(); clearInterval( id ); };
+        const offLocalStack : () => void = api.onLocalStack( ( state : LocalStackState ) => setLocalstack( state ) );
+        const pollId : ReturnType<typeof setInterval> = setInterval( () => { void api.localstackStatus().then( setLocalstack ); }, 10000 );
+        return () => { offLocalStack(); clearInterval( pollId ); };
     }, [] );
 
     return (
@@ -39,10 +50,12 @@ export function App()
             </Box>
             {view === "monitor" && (
                 <Box sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-                    <Tabs value={monitorTab} onChange={( _e, v : "cloud" | "events" ) => setMonitorTab( v )}
+                    <Tabs value={monitorTab} onChange={( _event, nextTab : "cloud" | "events" | "email" | "processes" ) => setMonitorTab( nextTab )}
                           sx={{ minHeight: 40, borderBottom: "1px solid", borderColor: "divider", "& .MuiTab-root": { minHeight: 40 } }}>
                         <Tab value="cloud" label="Cloud" />
                         <Tab value="events" label="Events" />
+                        <Tab value="email" label="Email" />
+                        <Tab value="processes" label="Processes" />
                     </Tabs>
                     <Box sx={{ flexGrow: 1, minHeight: 0, display: monitorTab === "cloud" ? "block" : "none" }}>
                         <CloudView />
@@ -50,6 +63,19 @@ export function App()
                     {monitorTab === "events" && (
                         <Box sx={{ flexGrow: 1, minHeight: 0 }}>
                             <KafkaMonitorView />
+                        </Box>
+                    )}
+                    {monitorTab === "email" && (
+                        <Box sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                            <CognitoCodesView />
+                            <Box sx={{ flexGrow: 1, minHeight: 0 }}>
+                                <SesView />
+                            </Box>
+                        </Box>
+                    )}
+                    {monitorTab === "processes" && (
+                        <Box sx={{ flexGrow: 1, minHeight: 0 }}>
+                            <ProcessView />
                         </Box>
                     )}
                 </Box>
@@ -64,6 +90,13 @@ export function App()
                     <DeployView />
                 </Box>
             )}
+
+            {/* quit overlay — blocks the UI while main runs local services down before exiting */}
+            <Backdrop open={shuttingDown} sx={{ zIndex: ( theme ) => theme.zIndex.modal + 10, color: "#fff", flexDirection: "column", gap: 2, backdropFilter: "blur(2px)" }}>
+                <CircularProgress color="inherit" />
+                <Typography variant="h6">Shutting down…</Typography>
+                <Typography variant="body2" sx={{ opacity: 0.8 }}>Stopping local services — please wait.</Typography>
+            </Backdrop>
         </Box>
     );
 }

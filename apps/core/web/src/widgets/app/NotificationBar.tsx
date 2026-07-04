@@ -14,12 +14,12 @@ import KeyboardArrowDownOutlinedIcon    from '@mui/icons-material/KeyboardArrowD
 import KeyboardArrowUpOutlinedIcon      from '@mui/icons-material/KeyboardArrowUpOutlined';
 
 //
-import AppModel          from '@model/AppModel';
+import AppModel             from '@model/AppModel';
 
-import ButtonIcon       from '@widgets/core/ButtonIcon';
-import Pusher from '../core/Pusher';
-import Subscriber from '../core/Subscriber';
-import PubSubService from '../../model/service/PubSubService';
+import ButtonIcon           from '@widgets/core/ButtonIcon';
+import Pusher               from '../core/Pusher';
+import Subscriber           from '../core/Subscriber';
+import PubSubService        from '../../model/service/PubSubService';
 
 
 

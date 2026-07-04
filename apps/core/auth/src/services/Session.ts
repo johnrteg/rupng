@@ -13,8 +13,10 @@ import { createHmac } from "crypto";
 //
 export class Session
 {
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////
     /** HS256 signing secret — override via env in any real environment. */
-    private static secret() : string { return process.env.AUTH_SESSION_SECRET ?? "dev-insecure-session-secret"; }
+    private static secret() : string
+    { return process.env.AUTH_SESSION_SECRET ?? "dev-insecure-session-secret"; }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     /** Issue a signed session token for a user. */
@@ -53,6 +55,7 @@ export class Session
         return createHmac( "sha256", Session.secret() ).update( data ).digest( "base64url" );
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////
     private static b64url( value : string ) : string
     {
         return Buffer.from( value, "utf-8" ).toString( "base64url" );

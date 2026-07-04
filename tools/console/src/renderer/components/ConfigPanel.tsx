@@ -15,6 +15,7 @@ import DataObjectIcon from "@mui/icons-material/DataObject";
 import { ConfigSchema } from "@repo/api";
 
 import type { ConfigContent, ConfigSaveResult, ServiceConfigTree, TargetInfo } from "../../shared/types";
+import { TargetKind } from "../../shared/types";
 import { api } from "../api";
 import { MONO } from "../theme";
 import { JsonEditor } from "./JsonEditor";
@@ -38,6 +39,10 @@ function prettyJson( raw : string, contentType : string ) : string
 // shared Monitor target; real AWS is read-only here.
 //
 
+/**
+ * The Config tab — view/edit one service's AppConfig profile JSON, then "Save & Deploy"
+ * to publish a new hosted version. Read-only when the target is real AWS.
+ */
 export function ConfigPanel( { service } : { service : string } )
 {
     const [ tree, setTree ]       = useState<ServiceConfigTree | null>( null );
@@ -68,14 +73,14 @@ export function ConfigPanel( { service } : { service : string } )
         setTree( null );
         setProfileId( "" );
         setEnvId( "" );
-        void api.configProfiles( service ).then( ( t : ServiceConfigTree ) =>
+        void api.configProfiles( service ).then( ( configTree : ServiceConfigTree ) =>
         {
             if ( !active ) return;
-            setTree( t );
+            setTree( configTree );
             setLoadingTree( false );
             // default selections: prefer the "settings" profile, then "default" env
-            const firstProfile : string = ( t.profiles.find( ( p ) => p.name === "settings" ) ?? t.profiles[ 0 ] )?.id ?? "";
-            const firstEnv : string = ( t.environments.find( ( e ) => e.name === "default" ) ?? t.environments[ 0 ] )?.id ?? "";
+            const firstProfile : string = ( configTree.profiles.find( ( profile ) => profile.name === "settings" ) ?? configTree.profiles[ 0 ] )?.id ?? "";
+            const firstEnv : string = ( configTree.environments.find( ( environment ) => environment.name === "default" ) ?? configTree.environments[ 0 ] )?.id ?? "";
             setProfileId( firstProfile );
             setEnvId( firstEnv );
         } );
@@ -89,19 +94,19 @@ export function ConfigPanel( { service } : { service : string } )
         let active : boolean = true;
         setLoadingDoc( true );
         setMsg( null );
-        void api.configGet( tree.applicationId, profileId ).then( ( c : ConfigContent ) =>
+        void api.configGet( tree.applicationId, profileId ).then( ( doc : ConfigContent ) =>
         {
             if ( !active ) return;
             setLoadingDoc( false );
-            if ( c.error ) { setMsg( { kind: "err", text: c.error } ); return; }
+            if ( doc.error ) { setMsg( { kind: "err", text: doc.error } ); return; }
             // AppConfig stores JSON minified (one line); pretty-print on load so it's readable/editable.
             // Set content + original to the SAME formatted text so the editor doesn't open "dirty".
-            const ctype : string = c.contentType || "application/json";
-            const text : string = prettyJson( c.content, ctype );
-            setContent( text );
-            setOriginal( text );
-            setVersion( c.version );
-            setContentType( ctype );
+            const docContentType : string = doc.contentType || "application/json";
+            const formatted : string = prettyJson( doc.content, docContentType );
+            setContent( formatted );
+            setOriginal( formatted );
+            setVersion( doc.version );
+            setContentType( docContentType );
         } );
         return () => { active = false; };
     }, [ tree, profileId ] );
@@ -114,7 +119,7 @@ export function ConfigPanel( { service } : { service : string } )
     {
         if ( !contentType.includes( "json" ) || content.trim() === "" ) return null;
         try { JSON.parse( content ); return null; }
-        catch ( err ) { return ( err as Error ).message; }
+        catch ( parseError ) { return ( parseError as Error ).message; }
     }, [ content, contentType ] );
 
     const profiles : ServiceConfigTree[ "profiles" ] = tree?.profiles ?? [];
@@ -123,7 +128,7 @@ export function ConfigPanel( { service } : { service : string } )
     // The schema only applies to the service's `settings` profile (the typed config). Other profiles
     // (feature flags, etc.) are edited as plain JSON. Comes from @repo/api so it's the SAME contract the
     // service validates against.
-    const profileName : string = profiles.find( ( p ) => p.id === profileId )?.name ?? "";
+    const profileName : string = profiles.find( ( profile ) => profile.id === profileId )?.name ?? "";
     const schema : object | undefined = useMemo<object | undefined>(
         () => ( profileName === "settings" ? ConfigSchema.forService( service ) : undefined ),
         [ profileName, service ],
@@ -138,39 +143,43 @@ export function ConfigPanel( { service } : { service : string } )
         if ( !validator ) return [];
         try
         {
-            const result = validator( JSON.parse( content ) );
-            return result.valid ? [] : result.issues.map( ( i ) => `${i.path || "(root)"}: ${i.message}` );
+            const validation = validator( JSON.parse( content ) );
+            return validation.valid ? [] : validation.issues.map( ( issue ) => `${issue.path || "(root)"}: ${issue.message}` );
         }
         catch { return []; }
     }, [ schema, service, content, jsonError ] );
 
+    /** Pretty-print the current editor content (Format button); surfaces a message on parse failure. */
     function onFormat() : void
     {
         try { setContent( JSON.stringify( JSON.parse( content ), null, JSON_INDENT ) ); setMsg( null ); }
-        catch ( err ) { setMsg( { kind: "err", text: `Can't format — ${( err as Error ).message}` } ); }
+        catch ( formatError ) { setMsg( { kind: "err", text: `Can't format — ${( formatError as Error ).message}` } ); }
     }
 
+    /** Discard unsaved edits, restoring the last loaded/saved content. */
     function onReload() : void
     {
         setContent( original );
         setMsg( null );
     }
 
+    /** Save & Deploy: publish the edited content as a new hosted version and deploy it. */
     async function onSave() : Promise<void>
     {
         if ( !tree?.applicationId || !profileId || !envId ) return;
         setSaving( true );
         setMsg( null );
-        const res : ConfigSaveResult = await api.configSave( tree.applicationId, profileId, envId, content, contentType );
+        const saveResult : ConfigSaveResult = await api.configSave( tree.applicationId, profileId, envId, content, contentType );
         setSaving( false );
-        if ( !res.ok ) { setMsg( { kind: "err", text: res.error ?? "Save failed" } ); return; }
+        if ( !saveResult.ok ) { setMsg( { kind: "err", text: saveResult.error ?? "Save failed" } ); return; }
         setOriginal( content );
-        setVersion( res.version );
-        setMsg( { kind: "ok", text: `Deployed v${res.version} (deployment #${res.deployment ?? "?"})` } );
+        setVersion( saveResult.version );
+        setMsg( { kind: "ok", text: `Deployed v${saveResult.version} (deployment #${saveResult.deployment ?? "?"})` } );
     }
 
+    /** Short label for the current AWS target (aws · profile, or localstack). */
     const targetChip = ( ) : string =>
-        targetInfo ? ( targetInfo.target.kind === "aws" ? `aws · ${targetInfo.target.profile ?? ""}` : "localstack" ) : "…";
+        targetInfo ? ( targetInfo.target.kind === TargetKind.AWS ? `aws · ${targetInfo.target.profile ?? ""}` : "localstack" ) : "…";
 
 
     // ── render ───────────────────────────────────────────────────────────────────────────────────
@@ -193,18 +202,18 @@ export function ConfigPanel( { service } : { service : string } )
             {/* toolbar: sub-config · environment · target/version · actions */}
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider", flexWrap: "wrap" }}>
                 <Typography variant="caption" sx={{ color: "text.disabled" }}>sub-config</Typography>
-                <Select size="small" value={profileId} onChange={( e ) => setProfileId( e.target.value )} sx={{ minWidth: 150, fontFamily: MONO, fontSize: 13 }}>
-                    {profiles.map( ( p ) => (
-                        <MenuItem key={p.id} value={p.id} sx={{ fontFamily: MONO, fontSize: 13 }}>
-                            {p.name}{p.type.includes( "FeatureFlags" ) ? " ⚑" : ""}
+                <Select size="small" value={profileId} onChange={( event ) => setProfileId( event.target.value )} sx={{ minWidth: 150, fontFamily: MONO, fontSize: 13 }}>
+                    {profiles.map( ( profile ) => (
+                        <MenuItem key={profile.id} value={profile.id} sx={{ fontFamily: MONO, fontSize: 13 }}>
+                            {profile.name}{profile.type.includes( "FeatureFlags" ) ? " ⚑" : ""}
                         </MenuItem>
                     ) )}
                 </Select>
 
                 <Typography variant="caption" sx={{ color: "text.disabled", ml: 1 }}>env</Typography>
-                <Select size="small" value={envId} onChange={( e ) => setEnvId( e.target.value )} sx={{ minWidth: 110, fontFamily: MONO, fontSize: 13 }}>
-                    {environments.map( ( en ) => (
-                        <MenuItem key={en.id} value={en.id} sx={{ fontFamily: MONO, fontSize: 13 }}>{en.name}</MenuItem>
+                <Select size="small" value={envId} onChange={( event ) => setEnvId( event.target.value )} sx={{ minWidth: 110, fontFamily: MONO, fontSize: 13 }}>
+                    {environments.map( ( environment ) => (
+                        <MenuItem key={environment.id} value={environment.id} sx={{ fontFamily: MONO, fontSize: 13 }}>{environment.name}</MenuItem>
                     ) )}
                 </Select>
 

@@ -606,10 +606,16 @@ export namespace RestfulEndpoint
     //
     export interface Authentication
     {
-        userId?   : string;                   // the caller's stable id (Cognito sub)
-        username? : string;                   // the caller's username / login
-        token?    : string;                   // the raw bearer access token (for downstream calls e.g. GlobalSignOut)
-        claims?   : Record<string, unknown>;  // decoded token claims (sub, email, roles, …)
+        userId?    : string;                   // the caller's stable id (Cognito sub)
+        username?  : string;                   // the caller's username / login
+        token?     : string;                   // the raw bearer access token (for downstream calls e.g. GlobalSignOut)
+        claims?    : Record<string, unknown>;  // decoded token claims (sub, email, roles, …)
+        transactionId? : string;               // this request's correlation id (echoed as x-transactionid; carried in RequestContext)
+        // Resolved per request (the JWT is identity-only — role/account are NOT trusted from claims):
+        accountId? : string;                   // the acting account the caller is operating in
+        role?      : string;                   // the caller's resolved Access role within that account
+        apiKey?    : boolean;                  // true when authenticated via a developer API key (rup_<keyId>.<secret>) —
+                                               // userId/accountId/role are ADOPTED from the key; membership is NOT re-resolved
     }
 
 

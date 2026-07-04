@@ -17,6 +17,18 @@ The shape of the problem: bytes are **big, cacheable, and expensive to move**, b
 mobile thumbnail). So media separates **the bytes (S3) from the truth about them (DynamoDB)** and **decisions
 about them (the endpoint) from the serving of them (CloudFront / S3)**.
 
+> **Related:** [BROWSE.md](./BROWSE.md) — **Media : Browse**, the third-party asset marketplace (search /
+> download / purchase across pluggable providers + AI generators; imports land here as library assets with
+> provenance). Requirements continue the media register at `media-12.x`.
+>
+> **UI surfaces (web nav → Media):** **Library** (owned assets) · **Browse** (acquire EXISTING third-party
+> assets — BROWSE.md) · **AI Gen** (create NEW assets from prompts) · **Studio** (post-creation editing).
+> **AI Gen** is deliberately its OWN surface, not part of Browse: Browse *finds what exists*, AI Gen *makes
+> what doesn't*. It has one sub-tab per generative modality — **Image · Video · Voice · Sound** — each routed
+> to a provider by the account's `config/ai` routing (`AiRouting`, keys from the platform Secrets; see
+> BROWSE.md `media-17`). Generated outputs save to the Library as assets with `source.origin = generated`
+> (vs Browse's `provider`), so provenance, licensing, and dedup stay uniform across both surfaces.
+
 The load-bearing ideas:
 * **S3 holds bytes, DynamoDB holds the truth** — raw files live in **per-account S3 buckets**
   (`:accountId/{public|protected|private}/:guid`); a DynamoDB record is the **index** (guid · filename · mime ·
@@ -244,6 +256,36 @@ Application
 * **ffmpeg / ffprobe** — video (build with `libx265` + `libfdk_aac`).
 * **ClamAV / Sophos** — malware scan (factory; later phase).
 
+**Candidate libraries / services (to evaluate — not yet decided)**
+* **Remotion** ([remotion.pro](https://www.remotion.pro/)) — programmatic, React-based video creation/editing;
+  candidate for **integrated, templated video editing** (data-driven renders, per-account branded video, an
+  in-app editor) rather than raw transcode. Renders via a headless-Chromium pipeline; note licensing (Remotion
+  is free for individuals/small teams, **paid company license** at scale) and that its render fleet is separate
+  compute from the ffmpeg/MediaConvert transcode path.
+* **GStreamer** ([gstreamer.freedesktop.org](https://gstreamer.freedesktop.org/)) — a pipeline-based multimedia
+  framework; candidate **ffmpeg alternative** for transcode/compression. Pluggable element graph (LGPL core;
+  codec plugins carry their own licensing — same HEVC/patent considerations as ffmpeg), suited to streaming /
+  live pipelines. Evaluate vs. the self-hosted-ffmpeg vs. MediaConvert trade-offs above (ops surface, filters,
+  size-cap retry) before adopting.
+* **Shotstack** ([shotstack.io](https://shotstack.io/)) — a **hosted, API-first video editing / rendering**
+  service (JSON edit spec → rendered MP4, templates, a Studio SDK for in-app editing). Candidate for
+  **integrated, templated video editing** without running our own render fleet — the managed alternative to
+  Remotion. Fully SaaS (usage-priced, bytes leave our VPC to a third party — weigh against the data-residency /
+  PII posture in media-8), so evaluate vs. self-hosted Remotion on cost-at-scale, template flexibility, and
+  whether renders can stay in-region.
+* **Creatomate** ([creatomate.com](https://creatomate.com/)) — a **hosted video/image generation + editing
+  API** (template-driven, data-merge renders, MP4/GIF output, a template editor). Same class as Shotstack: an
+  integrated, templated video-edit candidate with no render infrastructure to operate. Compare the two head to
+  head (template model, editor UX, API ergonomics, pricing, region/residency) and both against self-hosted
+  Remotion before deciding.
+* **ffmpeg.wasm** ([ffmpegwasm.netlify.app](https://ffmpegwasm.netlify.app/)) — ffmpeg compiled to
+  WebAssembly; candidate for **client-side / in-browser** trim, transcode, and thumbnailing. Attractive for
+  light edits that never leave the browser (no source upload, no server compute), but note the hard limits:
+  large WASM payload, single-threaded / memory-capped (≈2–4 GB, no true hardware accel), and the same
+  **HEVC/patent** considerations as native ffmpeg. Best framed as an **edge/preview** complement to the server
+  transcode path — media-10.9 keeps the heavy encode on the **native binary**, explicitly *not* `ffmpeg.wasm` —
+  so evaluate it for previews, quick trims, and offloading trivial jobs, not as the primary encoder.
+
 **Internal (`@repo/*`)**
 * `@repo/services` (S3, Dynamo, Cache, Sqs, Kms), `@repo/endpoint` (`Access`), `@repo/common` (`Type`). Fair-shared by **[dispatch](../../../packages/services/DISPATCH.md)**; consumed by **email / campaign / web**.
 
@@ -257,11 +299,58 @@ upload, processing, lifecycle**; fair-share processing rides [dispatch](../../..
 (quota) come from [account](../account/specs/SPECS.md) `ResolvedEntitlements`; consumed by **email / campaign /
 web** (attachments + assets).
 
-## media-1.0 Storage & object model — A
-- **media-1.1** Raw files in **S3**, per-account prefixes under a root bucket (`:accountId/{public|protected|private}/:guid`) — A
-- **media-1.2** **DynamoDB object index** (`PK accountId`, SK guid) — guid, filename, mime, extension, size, `accessRole`, `status`, tags, S3 `version`, `parentUid` (variants), createdAt, lastAccessedAt, meta (image w/h/quality · video frame) — A
-- **media-1.3** **Versioning** — a new version gets a **new URL** (`/public/:guid/:version`); always keep the **original** — A
-- **media-1.4** **Soft delete → sweep**; **TTL** (default / account / env) — B
+## media-1.0 Storage & object model — the ENVELOPE (media-22) — A
+
+A media **Asset is an ENVELOPE** — a package of content, not a single file. The envelope carries the
+library-level metadata (name, tags, kind, ownership, provenance) and holds a set of **items** (media files):
+the **original** plus all **derived media** produced from it. This is the single model for every media surface
+(upload, Browse import, AI Gen, transcode, transcribe, Studio outputs).
+
+- **media-1.1** **Envelope = the library object** (`Media.Asset`): `name`, `tags`, `kind` (= the **original's**
+  kind, denormalized for list/filter), `scope` (`ACCOUNT`|`USER`), `accessRole`, `tier`, `campaignIds`,
+  `source` (origin/provenance — see 1.7), `createdBy`, `createdAt`, `status` (rollup — see 1.8), `ttl`, and
+  **`items: Array<Media.Item>`**. Every envelope has exactly one item with `usage = ORIGINAL`. — A
+- **media-1.2** **Item = a contained media file** (`Media.Item`): `id`, **`usage`** (category enum), `profile?`
+  (discriminator within a usage — e.g. `tiktok`/`mobile`/`mms`), **`kind`** (the item's OWN media kind — a
+  VIDEO envelope may hold an IMAGE poster, an AUDIO track, a DOCUMENT transcript), `mime`, `extension`, `size`,
+  `version` (bumps on replace), `status`/`ready`, **`meta`** (per-kind metrics union — see 1.6), `derivation?`
+  (the job + params that produced a derived item), `createdAt`, `modifiedAt`. — A
+- **media-1.3** **Usage is a typed category; `profile` names the specific one.** `Media.Usage` =
+  `ORIGINAL · DISPLAY · THUMBNAIL · POSTER · COMPRESSED · AUDIO · TRANSCRIPT · PLATFORM · GENERATED · RENDER`
+  (closed set). The **item key is `usage[.profile]`** — unique within the envelope. Valid usages per original
+  kind are catalogued (`Media.USAGE_CATALOG`): image → display/thumbnail/platform; video →
+  compressed/audio/transcript/poster/platform; audio → transcript/compressed. Some usages are **single**
+  (`original`, `poster`), others **multi / 0-N** (`compressed`, `platform`). — A
+- **media-1.4** **Re-run = replace + version by `(usage, profile)`** — deriving the same key **replaces** the
+  current item and **bumps its `version`** (S3 versioning keeps history); the **original is never replaced**.
+  Each item records its **current S3 `versionId`**; the prior bytes stay in S3's version history. The UI can
+  **list an item's versions** (`GET /media/assets/{guid}/versions?item=<usage[.profile]>`, newest first) and
+  **revert** to one (`POST /media/assets/{guid}/revert` `{ item, versionId }`) — revert copies that version
+  back onto the current key (a NEW latest version; nothing is destroyed) and bumps the item's `version`. The
+  S3 facade wraps this as `s3.listVersions` / `s3.restoreVersion`. — A
+- **media-1.5** **S3 layout** — one prefix per envelope: `acct/<accountId>/media/<guid>/<usage[.profile]>.<ext>`
+  (owner roots per the `S3.Domain` registry; adding a root edits the enum). — A
+- **media-1.6** **Per-kind item metrics** — `meta` is a discriminated union by the item's `kind`: **image**
+  (w/h/format/space/…), **video** (w/h/duration/fps/codec/bitrate/…), **audio** (duration/bitrate/sampleRate),
+  **document/text** (length; a TRANSCRIPT item's meta holds the `text` + timed `segments`). — A
+- **media-1.7** **Provenance** — `source` on the **envelope** describes the object's ORIGIN (upload / provider /
+  generated + url / license / cost / prompt); a **derived item** carries its own `derivation` (producing job +
+  params) so it can be reproduced / re-run. — A
+- **media-1.8** **Status is per-item** (derivations complete independently — AI-gen candidates, transcribe,
+  compress each flip `ready` on their own); the **envelope `status`** is the original's readiness (gates
+  delivery) plus a rollup. — A
+- **media-1.9** **DDB: one row per envelope, items embedded** (`PK accountId`, `SK guid`) — keeps the package in
+  one place. Caveat: the 400 KB item limit — if an envelope's item count ever explodes, move items to child
+  rows; typical envelopes (original + a few derived) stay well under. Versioning keeps the **original**. — A
+- **media-1.10** **Soft delete → sweep**; **TTL** (default / account / env). — B
+- **media-1.11** **Ownership vs. campaign use** — the envelope is owned by an **account** (or a **user**, for an
+  avatar): `scope` = `ACCOUNT` | `USER` only. It is **used by 0..N campaigns** — a many-to-many association,
+  not ownership: `campaignIds` is a **denormalized filter**; the **source of truth is the campaign**. **An
+  envelope cannot be deleted while `campaignIds` is non-empty** (409 until every referencing campaign
+  detaches). — A
+- **media-1.12** **Studio alignment** — a Studio project is an envelope of editor **source** items + produced
+  **outputs** (`usage = RENDER`, `profile = lowres`/`highres`); the same envelope model carries editor assets →
+  final work (svg→jpeg, midi, video editor). — B
 
 ## media-2.0 Access & delivery — A
 - **media-2.1** **No direct S3** — all access via the **endpoint / CDN** with access control + **access logging** — A
@@ -282,6 +371,16 @@ web** (attachments + assets).
 - **media-4.3** Always retain the **original** — A
 - **media-4.4** **Variant strategy is configurable** — **application-layer default**, **account-admin override** (`ACCOUNT`+): **pre-process** all variants **or** **on-demand at the edge** (CloudFront + Lambda@Edge) + cache; both supported *(gap #4)* — B
 - **media-4.5** Process per **account rules** — B
+- **media-4.6** **Named variant profiles (`VariantSpec`) — media is a generic engine; consumers own the specs.**
+  A `VariantSpec` = `{ mime, label?, width?, height?, fit?, format?, maxBytes?, quality? }` — a render target
+  matched to a source by **`mime`** (`"image/*"` / exact). A **profile** is a NAME → `Array<VariantSpec>`, so
+  one profile spans media types + placements: e.g. `"instagram"` = `[ {mime:"image/*", label:"feed", 1080²},
+  {mime:"image/*", label:"story", 1080×1920}, {mime:"video/*", label:"reel", …} ]`. The processor selects the
+  specs matching the asset's mime and produces one variant each, **named `<profile>[.<label>]`** (the S3
+  variant stem, e.g. `instagram.feed`). **Media doesn't know platforms** — the generic **`display`** profile is
+  media's own; **platform profiles live in `MediaConfig` and are owned/seeded by their consumer** (social's
+  per-platform matrix is social's single source). Consumers discover them via **`GET /media/variant-specs`** and
+  request processing per profile (confirming their platform fit). `maxBytes` also serves the EVT video size-cap. — B
 
 ## media-5.0 Security scanning — B
 - **media-5.1** **Scan pipeline — stubbed now (SQS).** An **SQS scan stage + worker** in the upload flow; the **stub worker no-ops — returns done and updates `status` (→ `ok`)** and advances the item, wiring the upload → scan → quarantine plumbing **end-to-end** so the engine drops in later *(gap #3)* — A
@@ -308,6 +407,16 @@ web** (attachments + assets).
 - **media-9.2** **SQS** (S3-event → dispatch → scan/process → quarantine), **Lambda / ECS** (scan), **MediaConvert** (video) — A
 - **media-9.3** **Redis** (rate limits), **Sharp** / **ffmpeg** / **ffprobe** (image/video tooling) — A
 - **media-9.4** Consumed by **email / campaign / web** (attachments + assets); fair-shared by **dispatch** — A
+- **media-9.5** **Runtime config (AppConfig).** Non-secret operational policy in a single `MediaConfig` model
+  (`@repo/api`), served from the AppConfig `config/settings` profile and **seeded on boot with
+  `MediaConfig.DEFAULT`** (Console-editable, `SCHEMA`-linted, tunable **without a redeploy**):
+  **`upload`** (`maxSizeMb` + per-kind override · `allowedMime` allow-list · `presignTtlSec`) → PostUpload;
+  **`variants`** (`strategy` pre-process|on-demand [media-4.4] · `profiles` name→`VariantSpec[]`, incl. platform
+  profiles seeded by consumers [media-4.6]) → the pipeline + GET variant-specs; **`delivery`** (`signedUrlTtlSec`
+  · `defaultTier`) → GetMediaUrl / PostUpload; **`lifecycle`** (`glacierAfterDays` [media-6.1] ·
+  `softDeleteSweepDays` [media-6.2] · `defaultTtlDays` → asset TTL); **`scan`** (`enabled` — the [media-5.1]
+  stub gate switch); **`limits`** (`apiRatePerMinute` [media-7.2]). **NOT here:** plan/storage **quota**
+  (account `ResolvedEntitlements` [media-7.3]) and any **secrets** (Secrets Manager). — A
 
 ## media-10.0 Video compression (EVT — video texting) — B
 - **media-10.1** **Goal** — compress video to **MMS-sendable**: **≤ 45 s** + **< ~750 KB** (both configurable) — B
@@ -319,6 +428,31 @@ web** (attachments + assets).
 - **media-10.7** **Rate limit + surcharge** — per-account cap (e.g. 10/day) + **EVT surcharge** (e.g. $0.04) — B
 - **media-10.8** **AWS-managed path (later option)** — MediaConvert (job templates, **QVBR / 2-pass to a computed bitrate** ≈ `maxSize·8/duration`, EventBridge progress) replaces the ffmpeg encode; **CRF-retry → bitrate-target** — C
 - **media-10.9** **ffmpeg runtime** — **native binary** in a container/layer built with **`libx265` + `libfdk_aac`** (`--enable-gpl --enable-nonfree`), driven from Node (`fluent-ffmpeg`); **not `ffmpeg.wasm`**. Mind **HEVC patent licensing** (MediaConvert covers it; x265 self-host does not) — B
+- **media-10.10** **General compression variant + distribution targets** — beyond MMS, a user can **compress the
+  original video to a named distribution target** and keep the result as a **`compressed.<target>` variant**
+  (the original is always retained, media-1.3). Runs as the async **`MediaVideoJob`** (media-11.5) off a queue
+  (media-19), emitting `media.job` stage events. The user picks **how small / what target**; the job applies
+  the CRF **quality ladder** (media-10.5) to hit the goal.
+  - **Targets are config** (`MediaConfig.videoTargets`, Console-editable) — each a named goal:
+    `{ maxSizeKb?, maxSeconds?, maxWidth?, fpsCap?, codec (h264|hevc), audioKbps? }`. Seed a sensible set:
+
+    | Target | Goal (guideline) | Use |
+    |---|---|---|
+    | `mms` | ≤ 45 s · < 750 KB · ≤ 480 px · H.264 · mono 22 kHz | MMS / SMS (media-10.1) |
+    | `mobile` | ≤ 720 px · ~2 Mbps · H.264 | phones, chat apps, social DMs |
+    | `web-sd` | ≤ 480 px · ~1 Mbps · H.264 | fast web / email preview |
+    | `web-hd` | ≤ 1080 px · ~5 Mbps · H.264 | web embed, landing pages |
+    | `hevc-hd` | ≤ 1080 px · ~3 Mbps · HEVC | modern devices (smaller at equal quality) |
+
+  - **Guidelines the job encodes to** (media-10.4/10.5): pick **H.264 (`libx264`) for maximum compatibility**
+    (MMS/older devices), **HEVC (`libx265`) only where supported** (smaller files, but licensing — media-10.9);
+    `yuv420p` + BT.709; **resolution scales from source aspect** capped at the target's `maxWidth`; **fps capped**
+    (e.g. 30→24/15) for size; audio downmixed to the target's `audioKbps`. When a **`maxSizeKb`** goal is set,
+    run the **CRF ladder** and take the first output under the cap (2-pass/QVBR to a computed bitrate
+    `≈ maxSizeKb·8/duration` on the MediaConvert path, media-10.8); if none fit, surface a **failed** stage with
+    the smallest achieved size so the user can loosen the goal.
+  - **Endpoint** — `POST /media/assets/:guid/compress { target }` (or a custom `{ maxSizeKb, maxWidth, codec }`)
+    → enqueues `media-video`; the variant appears when the job completes (poll `GET /assets/:guid` / stage events).
 
 ## media-11.0 Service & Job topology — B
 - **media-11.1** **Domain bases** — `MediaService extends Service` + `MediaJob extends Job` hold the shared code (object index/model · S3 + presign · signed-URL/OAC · scan-status gate · scan/process factories · audit); **concrete roles extend the domain base** — B
@@ -327,6 +461,33 @@ web** (attachments + assets).
 - **media-11.4** **`MediaScanJob` gates the pipeline** — scan first; **quarantine on detection**, clean → trigger processing; nothing is processed or delivered before clean — A
 - **media-11.5** **`MediaVideoJob`** — heavy transcode on **Fargate / MediaConvert** (not Lambda) — B
 - **media-11.6** **On-demand variants = Lambda@Edge** at the CloudFront edge (not a standing Job); delivery is CloudFront, not the service — B
+
+## media-19.0 Async processing — everything heavy is a Job, and every Job emits Kafka stage events — A
+
+**Rule (applies to ALL current and future media processing): any operation that is CPU-heavy, long-running,
+or bound to an external API MUST run as an SQS-queued Job, never inline in an API request.** This covers
+transcode/conversion, audio/frame **extraction**, image variants, malware scan, AI **generation** (image /
+video / voice / sound), and **transcription** (audio→text) — and anything added later. The API endpoint stays
+**thin**: validate → create/mark the asset (`status: processing`) → **enqueue** → return `202 + guid`. A
+**Job** (Lambda in prod; drained by `MediaMainService` locally — same `MediaPipeline` code) does the work.
+This is what lets the platform scale under many concurrent users (held connections + gateway timeouts + a
+tipping fleet are the failure mode of doing it inline).
+
+- **media-19.1** **One queue per heavy operation** (auto-DLQ): `media-scan`, `media-process`, and new work
+  gets its own queue — `media-generate`, `media-transcribe`, … Consumers are Jobs; MAIN drains them locally.
+- **media-19.2** **Every Job emits Kafka STAGE events** — a Job publishes a `media.job` event at each stage
+  (`queued → started → running[progress%] → completed | failed`) via the standard `Events.Envelope`
+  (`@repo/system`), keyed by the asset `guid`. This is the single source the **UI subscribes to for live
+  progress** (over websockets, later) and the substrate **workflows** consume to sequence steps. Stage events
+  are best-effort (a bus miss is logged, never fails the Job). Documented in
+  [packages/system/EVENTS.md](../../../packages/system/EVENTS.md).
+- **media-19.3** **Status + stage** — the asset's `status` is the coarse lifecycle (`scanning`/`processing`/
+  `ok`/`failed`); the `media.job` stage stream is the fine-grained per-operation progress. The client polls
+  `GET /assets/:guid` today; the stage events replace polling once websockets land.
+- **media-19.4** **Terminal outcome** — a Job ends by writing the result to the asset (variant / transcript /
+  generated bytes) + a `completed`/`failed` stage event; failures set `status: failed` + a reason.
+- **media-19.5** **Idempotent + retry-safe** — keyed by `guid` (+ operation), so an SQS redelivery re-runs
+  cleanly; DLQ captures the poison-pill after `maxReceiveCount`.
 
 # Endpoints (first cut)
 
@@ -349,12 +510,15 @@ gate delivery on top of the ladder.
 ### Assets — index & metadata (media-1)
 | Method | URI | Purpose | Access | Req |
 |---|---|---|---|---|
-| GET | `/media/assets` | List account assets (filter: tag / mime / status) | USER | media-1.2 |
+| GET | `/media/assets` | List account assets (filter: **scope · campaignId** · kind / mime · status) | USER | media-1.2/1.5 |
 | GET | `/media/assets/{guid}` | Asset metadata | USER | media-1.2 |
 | GET | `/media/assets/{guid}/status` | Processing status (`uploading`…`ok`/`quarantined`) | USER | media-3.3 |
 | PATCH | `/media/assets/{guid}` | Update tags / metadata | USER | media-1.2 |
-| DELETE | `/media/assets/{guid}` | **Soft delete** | USER | media-1.4 |
+| DELETE | `/media/assets/{guid}` | **Soft delete** — **409** while used by any campaign (`campaignIds` non-empty) | USER | media-1.4/1.5 |
 | POST | `/media/assets/{guid}/restore` | Restore a soft-deleted asset | USER | media-1.4 |
+| GET | `/media/assets/{guid}/versions` | List an **item's** S3 version history (`?item=<usage[.profile]>`, newest first) | USER | media-1.4 |
+| POST | `/media/assets/{guid}/revert` | **Revert** an item to a prior version (`{ item, versionId }`) — copies it back as a new latest version | USER | media-1.4 |
+| GET | `/media/variant-specs` | List variant **profiles** (name → `VariantSpec[]`); consumers fetch to process an asset for their platform | USER | media-4.6 |
 
 ### Access / delivery (media-2, media-4)
 | Method | URI | Purpose | Access | Req |

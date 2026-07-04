@@ -52,13 +52,13 @@ export const CATALOG : Record<string, CatalogEntry> =
 };
 
 /** Order services appear in the top bar (groups related services; unknown ids append at the end). */
-export const CATALOG_ORDER : string[] =
+export const CATALOG_ORDER : Array<string> =
 [
     "web", "app",
-    "auth", "account", "registration",
+    "auth", "account", "media", "registration",
     "contact", "campaign", "workflow", "marketplace",
     "texting", "email", "voice", "print", "social", "survey",
-    "media", "links",
+    "links",
     "analytics", "report", "monitor", "audit", "search",
     "realtime", "collab"
 ];

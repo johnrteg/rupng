@@ -12,7 +12,7 @@ export const theme = createTheme( {
         success   : { main: "#3fb950" },
         warning   : { main: "#d29922" },
         error     : { main: "#f85149" },
-        background : { default: "#0e1116", paper: "#161b22" },
+        background : { default: "#15191f", paper: "#1c2129" },
         divider    : "#30363d"
     },
     shape       : { borderRadius: 8 },

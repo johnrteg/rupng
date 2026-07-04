@@ -35,6 +35,7 @@ export function invalidatePorts() : void
     cache = null;
 }
 
+/** Parse Ports.ts into service → { role → port }; returns {} if the file can't be read. */
 function parse() : PortMap
 {
     let text : string;
@@ -46,18 +47,19 @@ function parse() : PortMap
     // match only INNERMOST namespaces — body has no braces ([^{}]*), so the outer `Ports` wrapper
     // (whose body contains `{`) is skipped, and each service namespace is captured cleanly.
     const nsRe : RegExp = /namespace\s+(\w+)\s*\{([^{}]*)\}/g;
-    let ns : RegExpExecArray | null;
+    let nsMatch : RegExpExecArray | null;
 
-    while ( ( ns = nsRe.exec( text ) ) !== null )
+    while ( ( nsMatch = nsRe.exec( text ) ) !== null )
     {
-        const name : string = ns[ 1 ].toUpperCase();
-        const body : string = ns[ 2 ];
+        const name : string = nsMatch[ 1 ].toUpperCase();
+        const body : string = nsMatch[ 2 ];
 
         const roles : Record<string, number> = {};
+        // within a service namespace, each `const ROLE = <port>` becomes one role→port entry
         const constRe : RegExp = /const\s+(\w+)\s*=\s*(\d+)/g;
-        let c : RegExpExecArray | null;
-        while ( ( c = constRe.exec( body ) ) !== null )
-            roles[ c[ 1 ].toLowerCase() ] = Number( c[ 2 ] );
+        let constMatch : RegExpExecArray | null;
+        while ( ( constMatch = constRe.exec( body ) ) !== null )
+            roles[ constMatch[ 1 ].toLowerCase() ] = Number( constMatch[ 2 ] );
 
         if ( globalThis.Object.keys( roles ).length > 0 ) out[ name ] = roles;
     }

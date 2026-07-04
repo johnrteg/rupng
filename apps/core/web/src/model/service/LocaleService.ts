@@ -73,6 +73,20 @@ export class LocaleService
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Locale-formatted byte size (B / KB / MB / GB), using the locale number formatter for the value.
+    public bytes( value : number | null ) : string
+    {
+        if( value === null || value === undefined ) return "";
+        const kilobyte : number = 1024;
+        const megabyte : number = kilobyte * 1024;
+        const gigabyte : number = megabyte * 1024;
+        if( value < kilobyte ) return `${ this.number( value, 0 ) } B`;
+        if( value < megabyte ) return `${ this.number( value / kilobyte, 0 ) } KB`;
+        if( value < gigabyte ) return `${ this.number( value / megabyte, 1 ) } MB`;
+        return `${ this.number( value / gigabyte, 2 ) } GB`;
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
     public date( value : Date | null, format : LocaleService.Format ) : string
     {
         if( value === null || isNaN( value.getTime() ) )return "";

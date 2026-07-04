@@ -3,8 +3,9 @@ import { join } from "node:path";
 
 import { registerIpc } from "./ipc";
 import { processManager } from "./processManager";
+import { reapStale } from "./processScan";
 import { closeBrowser } from "./browser";
-import { PROXY_DEFAULT_PORT } from "../shared/types";
+import { IPC, PROXY_DEFAULT_PORT } from "../shared/types";
 
 //
 // Main process entry. Creates the window, loads the renderer (dev server URL in `electron-vite dev`,
@@ -26,6 +27,8 @@ process.on( "unhandledRejection", ( reason : unknown ) => { console.error( "[mai
 
 let mainWindow : BrowserWindow | null = null;
 
+/** Create the main console window, wire its lifecycle handlers, and load the renderer (dev URL in
+ *  `electron-vite dev`, the built index.html otherwise). */
 function createWindow() : void
 {
     mainWindow = new BrowserWindow( {
@@ -46,6 +49,13 @@ function createWindow() : void
     } );
 
     mainWindow.on( "ready-to-show", () => mainWindow?.show() );
+
+    // Quitting via the window's close button: intercept so we can run local services DOWN (and show the
+    // "please wait" overlay) BEFORE the window is destroyed — same graceful path as Cmd+Q / menu-quit.
+    mainWindow.on( "close", ( event : Electron.Event ) =>
+    {
+        if ( !shuttingDown ) { event.preventDefault(); void gracefulQuit(); }
+    } );
 
     // the in-app browser is its own window — when the main console window closes, close it too
     mainWindow.on( "closed", () => { closeBrowser(); mainWindow = null; } );
@@ -68,6 +78,13 @@ function createWindow() : void
 app.whenReady().then( () =>
 {
     registerIpc( () => mainWindow );
+
+    // sweep orphaned rup dev processes left by a prior (hard-killed) session BEFORE we start anything —
+    // so leftovers can't hold ports or shadow fresh runs with stale env. Nothing is tracked yet, so this
+    // reaps every rup process found (the console's own pid + ancestors are guarded inside reapStale).
+    const swept : number = reapStale( processManager.ownedPids() ).killed;
+    if ( swept > 0 ) console.log( `[startup] reaped ${swept} orphaned rup process tree(s) from a prior session` );
+
     createWindow();
 
     // start the local edge (webproxy) on launch — it serves the SPA + proxies APIs to running
@@ -80,9 +97,26 @@ app.whenReady().then( () =>
     } );
 } );
 
-// kill every spawned child (proxy, dev servers, …) on quit so nothing orphans — otherwise a leftover
-// proxy keeps holding :9000 and the next launch's auto-start reports "address already in use".
-app.on( "will-quit", () => processManager.shutdown() );
+// Graceful quit: show a "stopping local services…" overlay, then run EVERY spawned process tree down
+// (and wait for it) before exiting — so nothing orphans holding ports. Guarded so the multiple quit
+// entry points (Cmd+Q → before-quit, window close button, window-all-closed) only run it once.
+let shuttingDown : boolean = false;
+async function gracefulQuit() : Promise<void>
+{
+    if ( shuttingDown ) return;
+    shuttingDown = true;
+    try { mainWindow?.webContents.send( IPC.onShuttingDown ); } catch { /* window already gone */ }
+    await new Promise( ( resolve ) => setTimeout( resolve, 90 ) );   // let the overlay paint first
+    try { const stopped : number = await processManager.shutdownGraceful(); console.log( `[shutdown] stopped ${stopped} local process(es)` ); }
+    catch ( err ) { console.error( "[shutdown] error:", err ); processManager.shutdown(); }
+    app.exit( 0 );   // hard exit AFTER teardown — skips re-entrant before-quit/will-quit
+}
+
+// Cmd+Q / menu-quit comes through before-quit (window still alive → the overlay can paint).
+app.on( "before-quit", ( event ) => { if ( !shuttingDown ) { event.preventDefault(); void gracefulQuit(); } } );
+
+// belt-and-suspenders: if we ever exit a path that skipped gracefulQuit, still SIGKILL tracked children.
+app.on( "will-quit", () => { if ( !shuttingDown ) processManager.shutdown(); } );
 
 // quit when the last window closes — on every platform, including macOS (a single-purpose dev tool,
 // not a document app that should linger in the dock)

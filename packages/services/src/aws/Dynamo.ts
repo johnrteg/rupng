@@ -113,6 +113,21 @@ export class Dynamo
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     /**
+     * Query a table by its EXPLICIT physical name (not a logical key) — the escape hatch for reading a
+     * table this service doesn't own (e.g. the authorizer reading another service's membership table for
+     * per-request role resolution). Caller resolves the physical name (e.g. via `physicalName(...)`).
+     */
+    queryName<T>( tableName : string, input : Omit<QueryCommandInput, "TableName"> ) : Promise<Type.Result<Array<T>>>
+    {
+        return ResultUtils.from( async () : Promise<Array<T>> =>
+        {
+            const result : QueryCommandOutput = await this.client.send( new QueryCommand( { ...input, TableName: tableName } ) );
+            return ( result.Items ?? [] ) as Array<T>;
+        } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    /**
      * Query **one page** and surface the paging cursor — the cursor-aware counterpart to {@link query}
      * (which returns only the first page). Returns `{ items, cursor }`; pass `opts.cursor` back on the next
      * call to continue (forward cursor paging — DynamoDB has no offset / "jump to page N").

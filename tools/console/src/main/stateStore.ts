@@ -26,7 +26,8 @@ const AUDIT_FILE = "deploy-audit.jsonl";
 
 const EMPTY : DeployState = { dev: { ref: "" }, staging: { ref: "" }, production: { ref: "" } };
 
-const SAY = ( m : string ) : void => logStore.sys( DEPLOY_ID, "deploy", m );
+/** Emit a console annotation line on the deploy stream. */
+const SAY = ( message : string ) : void => logStore.sys( DEPLOY_ID, "deploy", message );
 
 /** Does a git ref resolve? (sync, quiet). */
 function hasRef( ref : string ) : boolean
@@ -46,14 +47,14 @@ export function auditBranch() : string
 /** Read a file as it exists at the audit branch tip (origin first, then local, then working tree). */
 function showFile( file : string ) : string | undefined
 {
-    const b : string = auditBranch();
-    for ( const ref of [ `origin/${b}`, b ] )
+    const branch : string = auditBranch();
+    for ( const ref of [ `origin/${branch}`, branch ] )
     {
         try { return execFileSync( "git", [ "show", `${ref}:${file}` ], { cwd: REPO_ROOT, encoding: "utf8", stdio: [ "ignore", "pipe", "ignore" ] } ); }
         catch { /* not on that ref */ }
     }
-    const p : string = join( REPO_ROOT, file );
-    return existsSync( p ) ? readFileSync( p, "utf8" ) : undefined;
+    const workingTreePath : string = join( REPO_ROOT, file );
+    return existsSync( workingTreePath ) ? readFileSync( workingTreePath, "utf8" ) : undefined;
 }
 
 /** Current env → deployed ref/tag pointers. */
@@ -70,15 +71,15 @@ export function readState() : DeployState
 }
 
 /** The most recent audit entries (newest last), up to `limit`. */
-export function readAudit( limit : number = 200 ) : AuditEntry[]
+export function readAudit( limit : number = 200 ) : Array<AuditEntry>
 {
     const text : string | undefined = showFile( AUDIT_FILE );
     if ( !text ) return [];
-    const lines : string[] = text.split( "\n" ).map( ( l ) => l.trim() ).filter( Boolean );
-    const out : AuditEntry[] = [];
-    for ( const l of lines.slice( -limit ) )
-        try { out.push( JSON.parse( l ) as AuditEntry ); } catch { /* skip malformed */ }
-    return out;
+    const lines : Array<string> = text.split( "\n" ).map( ( line ) => line.trim() ).filter( Boolean );
+    const entries : Array<AuditEntry> = [];
+    for ( const line of lines.slice( -limit ) )
+        try { entries.push( JSON.parse( line ) as AuditEntry ); } catch { /* skip malformed */ }
+    return entries;
 }
 
 /** The git identity running the console (for the audit `actor`). */
@@ -101,24 +102,25 @@ export function actor() : string
 export async function recordDeploy( env : DeployEnvName, envState : DeployEnvState, entry : AuditEntry ) : Promise<void>
 {
     const branch : string = auditBranch();
-    const wt : string = join( tmpdir(), `rupng-audit-${Date.now()}` );
+    const worktreeDir : string = join( tmpdir(), `rupng-audit-${Date.now()}` );
     const base : string = hasRef( `origin/${branch}` ) ? `origin/${branch}` : branch;
 
-    const git = ( args : string[] ) : Promise<{ stdout : string }> => execFileP( "git", args, { cwd: REPO_ROOT, maxBuffer: 16 * 1024 * 1024 } );
-    const gitWt = ( args : string[] ) : Promise<{ stdout : string }> => execFileP( "git", args, { cwd: wt, maxBuffer: 16 * 1024 * 1024 } );
+    // `git` runs against the real repo; `gitWt` runs inside the isolated detached worktree
+    const git = ( args : Array<string> ) : Promise<{ stdout : string }> => execFileP( "git", args, { cwd: REPO_ROOT, maxBuffer: 16 * 1024 * 1024 } );
+    const gitWt = ( args : Array<string> ) : Promise<{ stdout : string }> => execFileP( "git", args, { cwd: worktreeDir, maxBuffer: 16 * 1024 * 1024 } );
 
     try
     {
         try { await git( [ "fetch", "origin", branch, "--quiet" ] ); } catch { /* offline */ }
-        await git( [ "worktree", "add", "--detach", wt, base ] );
+        await git( [ "worktree", "add", "--detach", worktreeDir, base ] );
 
         // merge the env pointer + append the audit line (read the branch's current copies in the worktree)
-        const statePath : string = join( wt, STATE_FILE );
+        const statePath : string = join( worktreeDir, STATE_FILE );
         const state : DeployState = existsSync( statePath ) ? safeParseState( readFileSync( statePath, "utf8" ) ) : { ...EMPTY };
         state[ env ] = envState;
         writeFileSync( statePath, JSON.stringify( state, null, 2 ) + "\n" );
 
-        const auditPath : string = join( wt, AUDIT_FILE );
+        const auditPath : string = join( worktreeDir, AUDIT_FILE );
         const prior : string = existsSync( auditPath ) ? readFileSync( auditPath, "utf8" ) : "";
         const prefix : string = prior && !prior.endsWith( "\n" ) ? prior + "\n" : prior;
 
@@ -148,12 +150,13 @@ export async function recordDeploy( env : DeployEnvName, envState : DeployEnvSta
     }
     finally
     {
-        try { await git( [ "worktree", "remove", "--force", wt ] ); } catch { /* */ }
+        try { await git( [ "worktree", "remove", "--force", worktreeDir ] ); } catch { /* */ }
     }
 }
 
+/** Parse environments.json into a fully-populated DeployState, falling back to EMPTY on bad JSON. */
 function safeParseState( text : string ) : DeployState
 {
-    try { const p = JSON.parse( text ) as Partial<DeployState>; return { dev: p.dev ?? { ref: "" }, staging: p.staging ?? { ref: "" }, production: p.production ?? { ref: "" } }; }
+    try { const parsed = JSON.parse( text ) as Partial<DeployState>; return { dev: parsed.dev ?? { ref: "" }, staging: parsed.staging ?? { ref: "" }, production: parsed.production ?? { ref: "" } }; }
     catch { return { ...EMPTY }; }
 }

@@ -48,7 +48,9 @@ export namespace PostVerifyResend
 
     export interface Response
     {
-        sent : boolean;
+        sent              : boolean;
+        codeExpiresInSec  : number;   // validity of the freshly-resent code (resets the verify-screen expiry countdown)
+        resendCooldownSec : number;   // seconds before "Resend code" re-enables again
     }
 
     export enum Error

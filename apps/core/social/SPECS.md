@@ -9,6 +9,12 @@ The **`publish` channel** — post **organic** content to the account's connecte
 (comments, mentions, DMs). This is the platform's **1:many broadcast** primitive — the counterpart to
 the 1:1 `send` channels (texting/email/print) — surfaced to campaign/workflow as a `publish` node.
 
+Each network is integrated **natively** (its own API + OAuth) behind a provider-agnostic adapter — **we
+implement** the publish + inbound mechanics ourselves, **not** via a posting aggregator.
+**[Ayrshare](https://www.ayrshare.com)** is used only as a **reference benchmark** for the capability
+surface (see *Provider strategy*). **Phase 1** networks are FB / Instagram / X / TikTok / LinkedIn;
+**Phase 2** adds **Reddit, Pinterest, YouTube, Snapchat, Threads**.
+
 See `apps/CHANNELS.md` for why social is a different primitive than `send`.
 
 # Role & boundaries (read this first)
@@ -44,14 +50,21 @@ What it **delegates / does NOT do**:
 * **Full social listening / sentiment** — start with engagement on *our* posts + direct mentions; broad
   brand-monitoring is later.
 * **A built social inbox UI** — this service produces normalized inbound; the inbox UX is **web**.
+* **RSS auto-post** — auto-publishing from an external RSS feed source; not a v1 authoring path.
+* **AI content generation (compose assist)** — AI-drafted post copy / variants. Our v1 AI is the on-demand
+  **inbound summary** (analytics-owned), **not** authoring. *(Reference: Ayrshare "Max Pack".)*
+* **Post import / external history** — tracking / importing posts made outside the platform.
+* **DM auto-responders** — automated / canned message replies + read-receipt / reaction sync (see Inbound).
 
 # Core concepts
 
 * **ConnectedAccount** — an account's link to one social destination (a FB Page, IG business account, X
-  handle, TikTok account, LinkedIn org). **BYO credentials** — the account supplies **its own provider app
-  keys / OAuth**; they live in **marketplace**'s vault, this service references them. **The account owns the
-  provider tier** — any paywall / rate limit / paid stream (e.g. X) is **theirs to select + pay for**; we don't
-  absorb it, we **alert** them when a provider returns an error / limit.
+  handle, TikTok account, LinkedIn org). An account may hold **several of the same network** (2 Pages, 3
+  handles) up to a **plan quota** (see *Profiles-per-network quota*). **BYO credentials** — the account
+  supplies **its own provider app keys / OAuth**; they live in **marketplace**'s vault, this service
+  references them. **The account owns the provider tier** — any paywall / rate limit / paid stream (e.g. X)
+  is **theirs to select + pay for**; we don't absorb it, we **alert** them when a provider returns an error
+  / limit.
 * **Post** — the content to publish: body + media + per-platform options + the **targets** (which
   connected accounts) + schedule.
 * **Rendition** — the post adapted to one platform's rules (length, media, format).
@@ -76,13 +89,313 @@ Each is a **provider adapter** behind the channel interface; they differ a lot:
 The columns are the point — **one content idea, many renditions**; the adapter encapsulates each
 platform's format + 2-step media flows + rate limits.
 
+# Provider strategy — native adapters (Ayrshare as the reference)
+
+Each network is integrated **natively** — its own API, OAuth, formats, 2-step media flows, and rate
+limits — behind the **provider-agnostic** channel interface (see *Service & Job topology*). We **build the
+adapters ourselves**; we do **not** depend on a third-party posting aggregator.
+
+**[Ayrshare](https://www.ayrshare.com)** — a mature social API spanning ~15 networks — is used purely as a
+**reference benchmark**: its capability surface is the feature bar our native implementation should meet.
+
+> **Verify per platform at build time.** Platform APIs change often (especially X's access tiers); the
+> capabilities below are the design intent, confirmed per provider when each adapter is built.
+
+**Capability parity target** (what a mature social API offers → we implement natively, per platform):
+* **Unified publish** — one piece of content → **per-network renditions** in one publish operation (text +
+  media + per-network options: first comment, title, board, subreddit, thumbnail, visibility, …).
+* **Scheduling** — post at a future time via our **EventBridge Scheduler** + best-time recommendation.
+* **Media** — hosted URLs / uploads per platform (from our **[media](../media/SPECS.md)** service);
+  per-network video-spec validation.
+* **Analytics** — per-post + per-account engagement pulled/streamed → normalized to our events.
+* **Comments** — read + reply + delete on our posts → inbox (comments / mentions); **DMs where the platform
+  allows** (Meta yes; X/TikTok/LinkedIn limited — see the delivery-by-provider table).
+* **Webhooks + poll reconcile** — real-time where a platform pushes, poll where it doesn't.
+
+**Connection / OAuth is ours (BYO).** Each account connects its **own** per-network app credentials / OAuth;
+tokens are vaulted in **[marketplace](../marketplace/SPECS.md)**, and **the account owns the provider tier +
+cost** (X's paid tiers, etc.) — we **alert** on provider errors / limits, we don't absorb them. (An
+aggregator would centralize that cost on the platform, which is one reason we implement natively instead —
+see gap #11.)
+
+## Profiles-per-network quota — plan-configurable
+An account may connect **multiple profiles of the same network** (e.g. two Facebook Pages, three X
+handles). **How many is a plan entitlement**, configured per plan and enforced at connect time:
+
+* **Entitlement** — a per-plan limit, ideally **per network** (`maxProfiles[network]`) with an optional
+  **overall** cap; **owned by [account](../account/SPECS.md)** (plans / entitlements), **read** by social.
+* **Enforced on connect** — `POST /social/connections` checks the account's current count for that network
+  against the entitlement; over-limit is **rejected** with an upgrade hint (not silently dropped).
+* **Downgrade** — if a plan change lowers the limit below what's already connected, existing connections
+  keep working but **new connects are blocked** until the account is back under the cap (don't auto-sever a
+  live connection). Surface the over-cap state to the account.
+
+## Network coverage & phased rollout
+We integrate networks in phases (**verify each platform's API + required per-network fields at build time**
+— the platforms + their access tiers change often):
+
+| Phase | Networks |
+|---|---|
+| **Phase 1 (MVP)** | Facebook (Page), Instagram (Business), X / Twitter, TikTok, LinkedIn |
+| **Phase 2** | **Reddit, Pinterest, YouTube, Snapchat, Threads** |
+| **Later (candidates)** | Google Business Profile, Bluesky, Telegram — as demand + each platform's API warrant |
+
+Each Phase-2 network carries **network-specific required fields** (its own API's post params) the rendition
+layer must supply — e.g. **YouTube** (video + `title`, visibility), **Pinterest** (`board` + image/link),
+**Reddit** (`subreddit` + `title`), **Snapchat** (media specs), **Threads** (text / media). Each is a **new
+provider adapter behind the same interface** — **rendition + adapter work, not new architecture**;
+`SocialPublishWorker` stays provider-agnostic.
+
+# Feature comparison — our service vs Ayrshare + like products
+
+A capability scan of our `social` service against **[Ayrshare](https://www.ayrshare.com)** (our reference)
+and comparable posting products — **[Upload-Post](https://www.upload-post.com/)**,
+**[Blotato](https://www.blotato.com/)**, **[Zernio](https://zernio.com/)**,
+**[Post Bridge](https://www.post-bridge.com/)** — to sanity-check scope + spot gaps.
+
+**Our column = roadmap** (`MVP` / `Later` / `No`); the others = **does the product offer it** (✅ yes ·
+~ partial/unclear · ❌ no · — n/a). *Point-in-time scan — these products (and Ayrshare) change fast;
+**verify before relying on any cell.** Post Bridge's site blocked automated fetch, so its column is from
+public info + is the least certain.*
+
+| Feature | Our social | Ayrshare | Upload-Post | Blotato | Zernio | Post Bridge |
+|---|---|---|---|---|---|---|
+| Networks (breadth) | phased (10 → +5) | ~13 | 12 | 9+ | 15+ | ~9 |
+| Multi-network publish (organic) | **MVP** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Per-platform rendition / customization | **MVP** | ✅ | ✅ | ✅ | ~ | ~ |
+| Scheduling | **Later** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Best-time recommendation | **Later** | ~ | ❌ | ~ | ❌ | ~ |
+| Media — image / video (hosted) | **MVP** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Post formats — Stories / short-form (Reels/Shorts) | **Later** | ✅ | ~ | ✅ | ~ | ✅ |
+| Inbound — comments / mentions | **Later** | ✅ | ✅ | ❌ | ✅ | ❌ |
+| Inbound — DMs | **Later** | ✅ | ✅ | ❌ | ✅ | ❌ |
+| Inbound — reviews (GBP / FB) | **Later** | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Unified inbox + tagging + sentiment | **Later** | ~ (API only) | ❌ | ❌ | ❌ | ❌ |
+| Analytics — per-post engagement | **MVP** | ✅ | ✅ | ❌ | ✅ | ~ |
+| Analytics — account / audience (followers, demographics) | **Later** | ✅ | ~ | ❌ | ✅ | ❌ |
+| Approval workflow (N approvals) | **Later** | ❌ | ❌ | ❌ | ❌ | ❌ |
+| AI content generation (compose) | **No** (deferred) | ✅ | ❌ | ✅✅ (core) | ❌ | ~ |
+| AI summary of inbound | **Later** | ~ | ❌ | ❌ | ❌ | ❌ |
+| Webhooks (status / inbound) | **Later** | ✅ | ❌ | ~ | ❌ | ❌ |
+| RSS auto-post | **No** | ✅ | ❌ | ~ (scrape) | ❌ | ❌ |
+| Link shortening | via **links** svc | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Paid ads / boosting | **No** (out of scope) | ✅ (FB) | ❌ | ❌ | ✅ (multi-network) | ❌ |
+| Connection auth — **BYO** app keys / OAuth, vaulted | **MVP** (BYO) | ~ (managed; BYO opt.) | — | — | — | — |
+| Multi-tenant / white-label (per-account profiles) | **MVP** | ✅ | ✅ | ~ | ❌ | ~ |
+| Profiles-per-network quota (plan entitlement) | **MVP** | plan-tier | — | — | — | — |
+| Public developer API / MCP | internal svc | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+**Reading of the landscape:**
+* **Ayrshare & Zernio** are the closest to our *full* surface (publish + inbound comments/DMs + analytics),
+  and **Zernio** is the only comparable with **first-class multi-network ads** (we defer ads). Both are
+  developer APIs — same abstraction we're building, which validates the native-adapter interface.
+* **Upload-Post** is a lean publish/analytics API (comments/DMs via MCP), **no AI authoring, no webhooks**.
+* **Blotato** is **AI-authoring-first** (viral-post generation) with publishing bolted on — the opposite
+  emphasis from us (we *defer* AI compose; inbound/approval/compliance are our differentiators).
+* **Post Bridge** is a low-cost creator scheduler — publish + schedule, thin on inbound/analytics/ads.
+* **Our differentiators** (rare across this set): **reviews** ingestion, a **unified inbox with
+  keyword tagging + sentiment**, an **approval workflow**, **BYO-vaulted per-account credentials**, and
+  **plan-based profile quotas** — none of the pure API products offer the inbox/approval/governance layer.
+* **Our deliberate gaps** vs the field: **AI content generation** (Blotato/Ayrshare have it — we defer),
+  **paid ads** (Ayrshare/Zernio — out of scope), and **RSS auto-post** (Ayrshare — deferred).
+
 # Content & rendition
 
 * **Per-platform renditions** of one Post — X trimmed to 280, IG caption + hashtags + first-comment,
   TikTok video + cover, LinkedIn long-form — authored/derived per target, with a **preview per platform**.
+* **Post format is part of the rendition** — a target may be a **feed post**, an **ephemeral Story**
+  (IG / FB), or **short-form video** (Instagram **Reels** / TikTok / YouTube **Shorts** / Snapchat
+  **Spotlight**); each has its own media specs + required fields. The rendition picks the format per
+  platform (feed = default; Story / short-form when chosen **and** the platform supports it). *(Reference:
+  Ayrshare exposes Reels / Stories / Spotlight as post types.)*
 * **Media** comes from the **media** service (hosted URLs / uploads the platforms require); video specs
   (TikTok/Reels) validated before publish.
 * **Hashtags / mentions / links** handled per platform (e.g. link unfurling vs link-in-bio).
+
+# Per-platform media specs (reference)
+
+Per-platform media constraints + metadata fields — the inputs the **[media](../media/SPECS.md)** service
+must validate / transcode against and the **rendition** layer must supply. One table per platform (Phase 1
+then Phase 2).
+
+> **⚠ Verify every value at build time.** Platform limits change often + differ by post type / API tier /
+> account level; the numbers below are the *as-designed* targets, not a contract. `≈` = approximate.
+> Treat these as the **defaults the media pipeline codes to**, overridable per adapter.
+
+## Quick-scan matrix
+The hard limits at a glance (details in the per-platform tables below) — **platforms across the top,
+attributes down the side**.
+
+| Attribute | Facebook | Instagram | X / Twitter | TikTok | LinkedIn | Reddit | Pinterest | YouTube | Snapchat | Threads |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **Image max** | 30 MB | 8 MB | 5 MB (GIF 15) | photo mode | 10 MB | 20 MB | 20 MB | thumb ≤ 2 MB | — | ≈8 MB |
+| **Video max size** | 10 GB | ≈1 GB | 512 MB | 4 GB | 5 GB | 1 GB | 2 GB | 256 GB | ≈1 GB | — |
+| **Video max length** | 240 min · Reel 90 s | Reel 90 s · Story 15 s | 140 s (Premium+) | 10 min | 30 min | 15 min | 15 min | 12 h · Short ≤ 3 min | Spotlight 60 s | 5 min |
+| **Aspect(s)** | 1.91:1 · 1:1 · 4:5 · 9:16 | 4:5–1.91:1 · **9:16** | 16:9 · 1:1 | **9:16** (1:1,16:9) | 1.91:1 · 1:1 · portrait | flexible | **2:3** · 9:16 · 1:1 | 16:9 · **9:16** | **9:16** (mandatory) | portrait · landscape · square |
+| **Text limit** | 63,206 | 2,200 | **280** | ≈2,200 | 3,000 | 40,000 body | 500 desc | 5,000 desc | limited | 500 |
+| **Title** | — | — | — | — | article | **req** ≤ 300 | ≤ 100 | **req** ≤ 100 | — | — |
+| **Tags / hashtags** | hashtags | ≤ 30 | hashtags | in caption | hashtags | n/a | keywords / alt | tags ≤ 500 | topics | 1 tag |
+
+## Facebook — Page (Meta Graph)
+| Attribute | Spec |
+|---|---|
+| Post types | Feed (text/link/photo/video), Reel |
+| Image formats | JPG, PNG (GIF) |
+| Image size | ≤ 30 MB; min 600×315; recommended 1200×630 (link) / 1080×1080 (square) |
+| Image aspect | 1.91:1 (link), 1:1, up to 4:5 |
+| Video formats | MP4, MOV (H.264 + AAC) |
+| Video size / length | ≤ 10 GB / ≤ 240 min feed; **Reel** ≤ 90 s |
+| Video dims / aspect | ≥ 1280×720; feed 4:5–16:9, **Reel 9:16** |
+| Thumbnail / cover | Custom video cover / Reel cover |
+| Text (caption) | ≤ 63,206 (practical: short) |
+| Title | n/a (link title from Open Graph) |
+| Hashtags / mentions | supported (no hard cap) |
+| Link / SEO | link preview from **Open Graph** (`og:title/description/image`) |
+
+## Instagram — Business/Creator (Meta Graph)
+| Attribute | Spec |
+|---|---|
+| Post types | Feed (image/carousel/video), **Reel**, **Story** |
+| Image formats | JPG, PNG |
+| Image size | ≤ 8 MB; width 320–1440 (recommend 1080w) |
+| Image aspect | feed 1.91:1–4:5 (1:1 common); Reel/Story **9:16** |
+| Video formats | MP4, MOV |
+| Video size / length | feed ≈ 100 MB–1 GB; **Reel** ≤ 90 s; **Story** 15 s/segment |
+| Video dims / aspect | 1080×1920 (Reel/Story 9:16); feed 4:5–1.91:1 |
+| Thumbnail / cover | Reel cover image |
+| Text (caption) | ≤ 2,200 |
+| Hashtags / mentions | ≤ 30 hashtags |
+| Link / SEO | no clickable caption links (link-in-bio); carousel ≤ 10 items |
+| Notable | 2-step **container → publish**; media must be a **hosted URL** |
+
+## X / Twitter (API v2)
+| Attribute | Spec |
+|---|---|
+| Post types | Post (text + up to 4 images / 1 video / GIF) |
+| Image formats | JPG, PNG, WEBP, GIF |
+| Image size | photo ≤ 5 MB, GIF ≤ 15 MB; ≤ 4096×4096 |
+| Image aspect | 16:9, 1:1 (recommend 1600×900) |
+| Video formats | MP4, MOV (H.264 + AAC) |
+| Video size / length | ≤ 512 MB / ≤ 140 s (Premium: longer, up to hours) |
+| Video dims / aspect | 32×32–1920×1200; 16:9 or 1:1 (range 1:3–3:1) |
+| Thumbnail | auto or custom |
+| Text | **280 chars** (Premium ≈ 25,000) |
+| Hashtags / mentions | supported |
+| Link / SEO | `t.co` wrap; **Twitter Card** meta on the destination |
+
+## TikTok (Content Posting API)
+| Attribute | Spec |
+|---|---|
+| Post types | Video; **Photo mode** (carousel) |
+| Video formats | MP4, MOV, WEBM |
+| Video size / length | ≤ 4 GB / 3 s–10 min |
+| Video dims / aspect | ≥ 720×1280; **9:16** (also 1:1, 16:9) |
+| Cover / thumbnail | selectable cover frame |
+| Image (photo mode) | JPG, WEBP |
+| Text (caption) | ≈ 2,200 |
+| Title | n/a |
+| Hashtags / mentions | in caption |
+| Link / SEO | none in-post |
+| Notable | app **audit** required for direct publish; strict video specs |
+
+## LinkedIn — Organization page
+| Attribute | Spec |
+|---|---|
+| Post types | Post (text/link/image/video), Article, Document |
+| Image formats | JPG, PNG, GIF |
+| Image size | ≤ 10 MB; recommend 1200×627 (link) / 1200×1200 |
+| Image aspect | 1.91:1, 1:1 |
+| Video formats | MP4 (H.264 + AAC) |
+| Video size / length | 75 KB–5 GB / 3 s–30 min |
+| Video dims / aspect | 256×144–4096×2304; portrait–landscape (1:2.4–2.4:1) |
+| Text | ≤ 3,000 (post); Article longer |
+| Title | Article title |
+| Hashtags / mentions | supported |
+| Link / SEO | link preview from **Open Graph** |
+| Notable | org-admin OAuth scopes |
+
+## Reddit
+| Attribute | Spec |
+|---|---|
+| Post types | Text (self), Link, Image, Video, Gallery |
+| Image formats | JPG, PNG, GIF |
+| Image size | ≤ 20 MB |
+| Video formats | MP4, MOV |
+| Video size / length | ≤ 1 GB / ≤ 15 min |
+| Aspect | flexible |
+| **Title** | **required**, ≤ 300 chars |
+| Body | ≤ 40,000 chars (self post) |
+| Target | **subreddit required**; **flair** often required (per-sub rules) |
+| Hashtags | n/a (not used) |
+| Link / SEO | link posts; per-subreddit content rules |
+
+## Pinterest
+| Attribute | Spec |
+|---|---|
+| Post types | Pin (image / video) |
+| Image formats | JPG, PNG, WEBP |
+| Image size / aspect | ≤ 20 MB; **2:3** recommended (1000×1500); also 1:1, 9:16 |
+| Video formats | MP4, MOV, M4V |
+| Video size / length | ≤ 2 GB / 4 s–15 min |
+| Video aspect | 2:3, 9:16, 1:1 |
+| **Title** | ≤ 100 chars |
+| **Description** | ≤ 500 chars |
+| Target | **board required** |
+| Link / SEO | destination URL + **keywords / alt text** — Pinterest is a **visual search engine** (SEO-heavy) |
+
+## YouTube (Data API)
+| Attribute | Spec |
+|---|---|
+| Post types | Video, **Short** |
+| Video formats | MP4, MOV, AVI, WMV, FLV, WEBM |
+| Video size / length | ≤ 256 GB or 12 h; **Short** ≤ 3 min, **9:16** |
+| Video dims / aspect | up to 4K/8K; 1920×1080 (16:9) standard; Short 1080×1920 |
+| **Thumbnail** | JPG/PNG, ≤ 2 MB, **1280×720** (16:9), min 640w |
+| **Title** | **required**, ≤ 100 chars |
+| **Description** | ≤ 5,000 chars |
+| **Tags** | ≤ 500 chars total |
+| SEO | title / description / tags / captions **drive discovery**; category, chapters |
+| Notable | visibility (public/unlisted/private), made-for-kids flag |
+
+## Snapchat (Marketing / Creative API)
+| Attribute | Spec |
+|---|---|
+| Post types | Spotlight, Story, Ad creative |
+| Image formats | JPG, PNG |
+| Video formats | MP4, MOV (H.264) |
+| Aspect | **9:16 (1080×1920) mandatory** — vertical, with safe zones |
+| Video size / length | ≈ ≤ 1 GB; Spotlight ≤ 60 s |
+| Caption / text | limited overlay text |
+| Tags / topics | topics / hashtags for Spotlight discovery |
+| Notable | vertical-only; **safe-zone** margins for UI; API-gated |
+
+## Threads (Meta / Threads API)
+| Attribute | Spec |
+|---|---|
+| Post types | Text, Image, Video, Carousel |
+| Image formats | JPG, PNG |
+| Image size | ≈ ≤ 8 MB (IG-like) |
+| Video formats | MP4, MOV |
+| Video length | ≤ 5 min |
+| Aspect | portrait / landscape / square |
+| Text | ≤ 500 chars |
+| Hashtags | **one tag** per post (tag feature) |
+| Link / SEO | links allowed |
+| Notable | carousel ≤ 10 media |
+
+## What this implies for the media service (no spec change — just the drivers)
+The tables above define what **[media](../media/SPECS.md)** must be able to do so `social` can hand each
+adapter a compliant asset:
+* **Validate** on ingest + before publish — container/codec, byte size, dimensions, aspect ratio, duration
+  against the *target* platform+format (reject early with a clear error, not a provider failure).
+* **Transcode / re-encode** to each platform's codec (H.264/AAC MP4 is the safe common target) and
+  **resize / crop / pad** to the required aspect (feed 4:5–1.91:1, story/short **9:16**, Pinterest **2:3**).
+* **Thumbnail / cover generation** — pick or generate a cover frame (YouTube 1280×720, Reel/TikTok covers).
+* **Hosted-URL delivery** — several APIs (IG, TikTok) fetch media by **public URL**, not upload → media
+  must expose a stable, time-boxed hosted URL.
+* **Metadata fields** carried alongside the asset/rendition — **title** (YouTube/Pinterest/Reddit),
+  **description**, **tags/keywords + alt text** (YouTube/Pinterest SEO), and per-platform **text limits**.
+* **Safe-zone / aspect awareness** for vertical formats (Snapchat/Stories) so overlays/crops don't clip.
 
 # Scheduling & throughput
 
@@ -127,6 +440,11 @@ Inbound is **uneven and platform-specific** — ingested via each platform's **w
   routing) + analytics. Not a private thread.
 * **DMs** (Messenger, Instagram DM) — 1:1 but bound by a platform **reply window** (e.g. 24h); closer to
   a conversation. Identity is a **platform-scoped id/handle**, which **rarely maps to a known contact**.
+  *(DM **auto-responders** + read-receipt / reaction sync are **deferred** — v1 DMs are human-handled in
+  the inbox within the reply window.)*
+* **Reviews** (Google Business Profile, Facebook ratings) — a **distinct inbound type** (`review`) with a
+  **reply-to-review** response; ingested + normalized like comments but carry a rating. **Ships with the
+  networks that have reviews** (e.g. GBP — a later-phase network), not in the Phase-1 set.
 * Goes through the platform's **incoming-webhook intake → SQS → worker** (same fair-share pattern as the
   other channels), normalized to the analytics event schema (channel-specific attrs).
 
@@ -223,10 +541,14 @@ Publish + engagement emit normalized events (`sent`/`published`, plus channel-sp
 campaign/audience level**, not per-contact: social posts are anonymous broadcast (see analytics
 "Attribution" → identity caveat).
 
+Beyond per-post engagement, **account-level metrics** — **follower count + audience demographics /
+insights** per connected account — are pulled on the poll cadence and emitted as **account-scoped**
+analytics (distinct from campaign attribution; the profile's audience, not any contact).
+
 # Data model (sketch)
 
 ```
-ConnectedAccount  pk=ACCOUNT#<id>  sk=SOCIAL#<platform>#<connectionId>
+ConnectedAccount  pk=ACCOUNT#<id>  sk=SOCIAL#<platform>#<connectionId>   // multiple per platform (plan quota)
   { platform, handle, marketplaceConnectionId (BYO keys/OAuth in the vault), scopes, status,
     pull: { window?, cadence, cooldownSeconds,           // per-account poll schedule + refresh cooldown
             lastPullAt?, status: idle|in_flight,         // in_flight => manual Refresh is locked
@@ -249,8 +571,9 @@ PublishedPost     pk=ACCOUNT#<id>  sk=PUB#<postId>#<platform>
   // engagement snapshots stream to analytics (not stored as state here)
 
 InboundItem       pk=ACCOUNT#<id>  sk=INBOX#<receivedAt>#<itemId>
-  { type: dm|comment|mention|reaction, platform, authorHandle (platform-scoped),
-    text, campaignId?, publishedPostId?, replyWindowExpiresAt?,
+  { type: dm|comment|mention|reaction|review, platform, authorHandle (platform-scoped),
+    text, rating?,                                       // rating present when type=review (GBP/FB)
+    campaignId?, publishedPostId?, replyWindowExpiresAt?,
     tags[: good|bad|rude|…], sentiment, status: open|handled,
     receivedAt, ttl }                                    // DynamoDB per-item TTL — inbound not kept forever
   // persisted to back the inbox filters/tagging; also emitted (tagged+scored) to analytics
@@ -316,10 +639,14 @@ Application
 * **API Gateway** (or service HTTP, **webhook-sig** verified) — public **inbound-webhook intake** per platform.
 * **KMS** — encryption at rest. **OAuth tokens are NOT here** — they live in **marketplace**'s vault.
 
-**Third-party libraries / services** (the provider adapters)
+**Third-party libraries / services** (the native provider adapters)
 * **Meta Graph API** — Facebook Page + Instagram Business (container→publish 2-step).
 * **X API v2** · **TikTok Content Posting API** · **LinkedIn (org pages) API**.
+* **Phase 2 (native):** **Reddit API** · **Pinterest API** · **YouTube Data API** · **Snapchat Marketing/Creative
+  API** · **Threads API** — each a new adapter behind the same channel interface.
 * **OAuth / token lifecycle** — delegated to **marketplace** (grant/arctic + vault, refresh).
+* **Reference only (NOT a dependency):** **[Ayrshare](https://www.ayrshare.com)** — a mature social API used as a
+  **capability benchmark**; we implement the equivalent natively.
 
 **Internal (`@repo/*`)**
 * `@repo/services` (Dynamo, Sqs, Kafka, Scheduler, Kms, Cache), `@repo/endpoint` (`Access`), `@repo/common` (`Type`).
@@ -406,6 +733,22 @@ some PII (comment/DM author handles, message text) — mostly **forwarded, not r
 9. ✅ **Sentiment trend — APPROACH DECIDED (build later).** Rides the **cheap keyword score** (`bad` / `!bad`),
    **no per-item AI**; an **analytics** time-series read across one or more campaigns. Social emits the per-item
    keyword score; analytics owns the windowing/aggregation.
+11. ✅ **Native adapters vs aggregator — DECIDED: native.** We **implement** each network directly (its own API +
+    OAuth; **BYO credentials vaulted in marketplace**, account owns the tier + cost — gap #10). A posting **aggregator
+    (e.g. [Ayrshare](https://www.ayrshare.com)) is a reference benchmark only, not a dependency** — adopting one would
+    centralize provider cost on the platform + hold the network tokens off-platform, which we avoid. — `social-10.1`
+12. ✅ **Profiles-per-network quota — DECIDED: plan entitlement.** How many profiles of a network an account may
+    connect is a **per-plan limit** (ideally `maxProfiles[network]` + optional overall cap), **owned by account**,
+    **enforced by social at connect** (over-limit rejected with an upgrade hint); a downgrade keeps live connections
+    but blocks new connects until under the cap — `social-11.4/11.5/11.6`.
+13. ⚠ **Capability gap-check vs the Ayrshare reference — folded in.** Reviewing Ayrshare's API surface surfaced
+    capabilities we hadn't modeled; decisions: **(a)** **post formats** (Story / short-form Reels/Shorts/Spotlight)
+    are a **rendition axis** — `social-2.6` (C); **(b)** **reviews** (GBP / FB ratings) are a distinct inbound
+    `review` type with reply — `social-4.10` (C, ships with those networks); **(c)** **account/audience analytics**
+    (followers / demographics) — `social-5.5` (C); **(d)** **deferred** (Out of scope): **RSS auto-post**, **AI
+    compose assist** (our AI is inbound-summary only), **post import / external history**, **DM auto-responders +
+    read-receipt / reaction sync**. Ads already deferred (gap #1); URL shortening stays ours (links). *(Ayrshare is
+    reference-only; each capability is implemented **natively** per platform — verify at build time.)*
 
 # Requirements (traceable register)
 
@@ -429,6 +772,7 @@ owns attribution, **workflow/campaign** owns orchestration.
 - **social-2.3** **Provider adapters** behind the channel interface — Meta (FB Page + IG 2-step), X v2, TikTok, LinkedIn — A
 - **social-2.4** A failed publish surfaces as a **`Type.Result` error + failed-status event** (not a throw); **pacing/retry is dispatch** — A
 - **social-2.5** Media comes from **[media](../media/SPECS.md)** (hosted URLs / uploads); video specs (TikTok / Reels) **validated before publish** — A
+- **social-2.6** **Post format is part of the rendition** — **feed** / **Story** (IG / FB) / **short-form video** (Reels / Shorts / Spotlight); selected per platform where supported, with its own media specs + required fields *(gap #13)* — C
 
 ## social-3.0 Scheduling — B
 - **social-3.1** **Schedule** a post for a future time via **EventBridge Scheduler** (per-timezone) — B
@@ -445,12 +789,14 @@ owns attribution, **workflow/campaign** owns orchestration.
 - **social-4.7** **Per-item sentiment = the keyword signal** (`bad` / `!bad`); attached + emitted; **no per-item model calls** — this is what the trend reads — B
 - **social-4.8** **Engagement freshness — webhook-first, poll where required** — use webhooks where offered; pull-only surfaces poll on a **per-account schedule** (window e.g. work hours + cadence ~hourly) + an **on-demand "Refresh"**; see the delivery-by-provider table (Meta = webhook; X / TikTok / LinkedIn = pull) *(gap #5)* — B
 - **social-4.9** **Refresh abuse-guard** — manual pull is **async**; **locked while in flight** (no new pull until the prior finishes processing) + a **configurable cooldown**; a click while locked is **rejected with current state**, not queued *(gap #5)* — B
+- **social-4.10** **Reviews** — ingest + **reply to** platform reviews (Google Business Profile / Facebook ratings) as a distinct inbound **`review`** type (carries a rating); ships **with the networks that have reviews** (later phase) *(gap #13)* — C
 
 ## social-5.0 Events to analytics — A
 - **social-5.1** Emit normalized `published` + channel-specific `impression` / `like` / `share` / `comment` / `click` events, keyed by **account + campaign** — A
 - **social-5.2** **Attribution is campaign/audience-level, not per-contact** — posts are anonymous broadcast — A
 - **social-5.3** **Engagement freshness** — push (webhook) where available vs periodic pull *(gap #5)* — B
 - **social-5.4** Emit **keyword-tagged + sentiment-scored** inbound so **[analytics](../analytics/SPECS.md) / AI** can build the **on-demand AI summary + recommendations** *(gap #8)* and the **keyword-driven sentiment trend** *(gap #9)* — social emits signal, analytics aggregates; **AI is on-demand/batch, never per-item** — C
+- **social-5.5** **Account/audience analytics** — pull **follower count + audience demographics / insights** per connected account (poll cadence); emit **account-scoped** (not per-contact) *(gap #13)* — C
 
 ## social-6.0 Compliance & privacy — A
 - **social-6.1** **Delegated OAuth** — tokens vaulted in **marketplace**, never stored here — A
@@ -485,6 +831,20 @@ owns attribution, **workflow/campaign** owns orchestration.
 - **social-9.6** **Inbound is asymmetric** — `SocialWebhookService` (push: Meta) **+** `SocialPollJob` (poll: X/TikTok/LinkedIn, in-flight lock + cooldown) both feed one `SocialInboundJob` normalize + tag + sentiment pipeline — A
 - **social-9.7** **OAuth tokens are read from [marketplace](../marketplace/SPECS.md)'s vault, never stored in social**; **AI summary is analytics-owned** (social triggers) — A
 
+## social-10.0 Native provider adapters (Ayrshare = reference only) — A
+- **social-10.1** Each network is integrated **natively** — its own API + OAuth + formats — behind the **provider-agnostic** channel interface; **no third-party posting-aggregator dependency**; **[Ayrshare](https://www.ayrshare.com)** is a **capability benchmark only** *(gap #11)* — A
+- **social-10.2** **Capability-parity target** — mirror a mature social API's surface, implemented per platform: unified publish (per-network renditions in one op), scheduling, media, analytics, comments read/reply, webhooks + poll reconcile — B
+- **social-10.3** **Connection/OAuth is BYO + marketplace-vaulted** — the account owns the provider tier + cost; social stores **no** provider secrets *(unchanged — gap #10; see 1.4/6.1)* — A
+- **social-10.4** **Provider abstraction preserved** — no platform-SDK types leak past the adapter; adding a network doesn't touch publish-compose / inbox / analytics — A
+
+## social-11.0 Network rollout + per-network profile quota — A
+- **social-11.1** **Phase 1** networks: Facebook (Page), Instagram (Business), X / Twitter, TikTok, LinkedIn — A
+- **social-11.2** **Phase 2** networks: **Reddit, Pinterest, YouTube, Snapchat, Threads** — each a **new native adapter** behind the same interface, supplying its own **per-network required fields** in the rendition layer — C
+- **social-11.3** **Later candidates**: Google Business Profile, Bluesky, Telegram — as demand + each platform's API warrant — C
+- **social-11.4** **Profiles-per-network quota is a plan entitlement** — a per-plan limit, ideally **per network** (`maxProfiles[network]`) + optional overall cap; **owned by [account](../account/SPECS.md)**, **read** by social — A
+- **social-11.5** **Enforced on connect** — `POST /social/connections` checks the account's current count for that network against the entitlement; **over-limit is rejected with an upgrade hint**, not silently dropped — A
+- **social-11.6** **Downgrade is non-destructive** — a plan change below the current count **keeps live connections** but **blocks new connects** until back under the cap; the over-cap state is surfaced to the account — B
+
 # Endpoints (first cut)
 
 A first pass, in [`@repo/endpoint`](../../../packages/endpoint/SPECS.md) style — service-prefixed `/social/*`.
@@ -496,8 +856,8 @@ staff **`SUPPORT`<`APPLICATION`<`ROOT`** · **`Internal`** = VPC-only S2S · **`
 
 | Method | URI | Purpose | Access | Req |
 |---|---|---|---|---|
-| GET | `/social/connections` | List the account's connected destinations + status | USER | social-1.1 |
-| POST | `/social/connections` | Connect a destination (initiates **marketplace** OAuth) | ACCOUNT | social-1.2 |
+| GET | `/social/connections` | List the account's connected destinations + status (+ remaining quota per network) | USER | social-1.1 |
+| POST | `/social/connections` | Connect a destination (initiates **marketplace** OAuth) — **409** if over the plan's per-network profile quota | ACCOUNT | social-1.2/11.5 |
 | DELETE | `/social/connections/{connectionId}` | Disconnect a destination | ACCOUNT | social-1.2 |
 | GET, POST | `/social/posts` | List / create (+ schedule) a post | SENDER | social-2.1/3.1 |
 | GET | `/social/posts/{postId}` | Read a post + its `PublishedPost` results | SENDER | social-2.1 |

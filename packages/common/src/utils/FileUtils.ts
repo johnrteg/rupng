@@ -30,14 +30,15 @@ export class FileUtils
         {
             // image
             case "jpg":
-            case "jpeg"     : return "image/jpeg";
-            case "png"      : return "image/png";
-            case "gif"      : return "image/gif";
-            case "bmp"      : return "image/bmp";
-            case "webp"     : return "image/webp";
-            case "svg"      : return "image/svg+xml";
+            case "jpeg"     : return FileUtils.Mime.IMAGE_JPEG;
+            case "png"      : return FileUtils.Mime.IMAGE_PNG;
+            case "gif"      : return FileUtils.Mime.IMAGE_GIF;
+            case "bmp"      : return FileUtils.Mime.IMAGE_BMP;
+            case "webp"     : return FileUtils.Mime.IMAGE_WEBP;
+            case "svg"      : return FileUtils.Mime.IMAGE_SVG;
             case "tif":
-            case "tiff"     : return "image/tiff";
+            case "tiff"     : return FileUtils.Mime.IMAGE_TIFF;
+            case "avif"     : return FileUtils.Mime.IMAGE_AVIF;
 
             // video
             case "mp4"      : return FileUtils.Mime.VIDEO_MP4;
@@ -46,21 +47,23 @@ export class FileUtils
             case "wmv"      : return FileUtils.Mime.VIDEO_WMV;
             case "flv"      : return FileUtils.Mime.VIDEO_FLV;
             case "webm"     : return FileUtils.Mime.VIDEO_WEBM;
-            case "mkv"      : return "video/x-matroska";
-            case "m4v"      : return "video/x-m4v";
-            case "3gp"      : return "video/3gpp";
+            case "mkv"      : return FileUtils.Mime.VIDEO_MKV;
+            case "m4v"      : return FileUtils.Mime.VIDEO_M4V;
+            case "3gp"      : return FileUtils.Mime.VIDEO_3GP;
             case "mpeg":
             case "mpg"      : return FileUtils.Mime.VIDEO_MPEG;
 
             // audio
-            case "mp3"      : return "audio/mpeg";
-            case "wav"      : return "audio/wav";
-            case "ogg"      : return "audio/ogg";
-            case "aac"      : return "audio/aac";
+            case "mp3"      : return FileUtils.Mime.AUDIO_MPEG;
+            case "wav"      : return FileUtils.Mime.AUDIO_WAV;
+            case "ogg"      : return FileUtils.Mime.AUDIO_OGG;
+            case "aac"      : return FileUtils.Mime.AUDIO_AAC;
+            case "m4a"      : return FileUtils.Mime.AUDIO_M4A;
+            case "opus"     : return FileUtils.Mime.AUDIO_OPUS;
 
             // document
-            case "pdf"      : return "application/pdf";
-            case "vcf"      : return "text/vcard";
+            case "pdf"      : return FileUtils.Mime.PDF;
+            case "vcf"      : return FileUtils.Mime.VCARD;
 
             default         : return "";
         }
@@ -132,15 +135,49 @@ export namespace FileUtils
 {
     export const UNKNONW_FILE_SIZE : number = 9999;
 
+    /** The central mime-type vocabulary — the single source for mime literals across the platform (never
+     *  hand-write `"image/png"` etc.; use a member here). Grouped by family. */
     export enum Mime
     {
-        VIDEO_MP4 = "video/mp4",
-        VIDEO_MOV = "video/quicktime",
-        VIDEO_AVI = "video/x-msvideo",
-        VIDEO_WMV = "video/x-ms-wmv",
-        VIDEO_FLV = "video/x-flv",
+        // image
+        IMAGE_JPEG = "image/jpeg",
+        IMAGE_PNG  = "image/png",
+        IMAGE_GIF  = "image/gif",
+        IMAGE_BMP  = "image/bmp",
+        IMAGE_WEBP = "image/webp",
+        IMAGE_SVG  = "image/svg+xml",
+        IMAGE_TIFF = "image/tiff",
+        IMAGE_AVIF = "image/avif",
+
+        // video
+        VIDEO_MP4  = "video/mp4",
+        VIDEO_MOV  = "video/quicktime",
+        VIDEO_AVI  = "video/x-msvideo",
+        VIDEO_WMV  = "video/x-ms-wmv",
+        VIDEO_FLV  = "video/x-flv",
         VIDEO_WEBM = "video/webm",
-        VIDEO_MPEG = "video/mpeg"
+        VIDEO_MPEG = "video/mpeg",
+        VIDEO_MKV  = "video/x-matroska",
+        VIDEO_M4V  = "video/x-m4v",
+        VIDEO_3GP  = "video/3gpp",
+
+        // audio
+        AUDIO_MPEG = "audio/mpeg",
+        AUDIO_WAV  = "audio/wav",
+        AUDIO_OGG  = "audio/ogg",
+        AUDIO_AAC  = "audio/aac",
+        AUDIO_OPUS = "audio/opus",
+        AUDIO_WEBM = "audio/webm",
+        AUDIO_M4A  = "audio/mp4",
+        AUDIO_PCM  = "audio/pcm",
+
+        // application / document / text
+        PDF          = "application/pdf",
+        JSON         = "application/json",
+        ZIP          = "application/zip",
+        OCTET_STREAM = "application/octet-stream",
+        VCARD        = "text/vcard",
+        TEXT_PLAIN   = "text/plain",
     }
     export interface File
     {

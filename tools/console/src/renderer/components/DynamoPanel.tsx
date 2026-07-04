@@ -14,17 +14,23 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/DeleteOutline";
 
 import type { DynamoKeySchema, DynamoTable, TargetInfo } from "../../shared/types";
+import { TargetKind } from "../../shared/types";
 import { api } from "../api";
 import { MONO } from "../theme";
+import { JsonEditor } from "./JsonEditor";
 
 //
 // The Data tab — browse/edit a service's DynamoDB tables. Available to every service; the table
 // dropdown is empty when a service owns none. Scan a page of items, click one to edit its JSON, save
 // (put) or delete. Real AWS is read-only (same guard as Config).
 //
+/**
+ * The Data tab — browse/scan a service's DynamoDB tables and edit items as JSON
+ * (put/delete). Read-only when the target is real AWS.
+ */
 export function DynamoPanel( { service } : { service : string } )
 {
-    const [ tables, setTables ]   = useState<DynamoTable[]>( [] );
+    const [ tables, setTables ]   = useState<Array<DynamoTable>>( [] );
     const [ table, setTable ]     = useState<string>( "" );
     const [ keySchema, setKeySchema ] = useState<DynamoKeySchema | null>( null );
     const [ loadingTables, setLoadingTables ] = useState<boolean>( true );
@@ -51,13 +57,13 @@ export function DynamoPanel( { service } : { service : string } )
         let active : boolean = true;
         setLoadingTables( true ); setTreeError( "" ); setTables( [] ); setTable( "" );
         setItems( [] ); setDraft( "" ); setOriginal( "" );
-        void api.dynamoTables( service ).then( ( r ) =>
+        void api.dynamoTables( service ).then( ( result ) =>
         {
             if ( !active ) return;
             setLoadingTables( false );
-            if ( r.error ) { setTreeError( r.error ); return; }
-            setTables( r.tables );
-            if ( r.tables.length > 0 ) setTable( r.tables[ 0 ].name );
+            if ( result.error ) { setTreeError( result.error ); return; }
+            setTables( result.tables );
+            if ( result.tables.length > 0 ) setTable( result.tables[ 0 ].name );
         } );
         return () => { active = false; };
     }, [ service ] );
@@ -68,82 +74,91 @@ export function DynamoPanel( { service } : { service : string } )
         if ( !table ) { setKeySchema( null ); setItems( [] ); return; }
         let active : boolean = true;
         clearEditor();
-        void api.dynamoTableInfo( table ).then( ( r ) => { if ( active && r.keySchema ) setKeySchema( r.keySchema ); } );
+        void api.dynamoTableInfo( table ).then( ( result ) => { if ( active && result.keySchema ) setKeySchema( result.keySchema ); } );
         void scan( undefined, true );
         return () => { active = false; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [ table ] );
 
+    /** Scan one page of items; `replace` swaps the list (new table/refresh) vs appending (Load more). */
     async function scan( startKey? : Record<string, unknown>, replace : boolean = false ) : Promise<void>
     {
         if ( !table ) return;
         setLoading( true );
-        const r = await api.dynamoScan( table, startKey );
+        const result = await api.dynamoScan( table, startKey );
         setLoading( false );
-        if ( r.error ) { setMsg( { kind: "err", text: r.error } ); return; }
-        setItems( ( prev ) => replace ? r.items : [ ...prev, ...r.items ] );
-        setLastKey( r.lastKey );
+        if ( result.error ) { setMsg( { kind: "err", text: result.error } ); return; }
+        setItems( ( prev ) => replace ? result.items : [ ...prev, ...result.items ] );
+        setLastKey( result.lastKey );
     }
 
+    /** Reset the editor pane to an empty, non-dirty state. */
     function clearEditor() : void { setDraft( "" ); setOriginal( "" ); setIsNew( false ); setMsg( null ); }
 
+    /** Load an existing item into the editor for viewing/editing. */
     function openItem( item : Record<string, unknown> ) : void
     {
-        const text : string = JSON.stringify( item, null, 2 );
-        setDraft( text ); setOriginal( text ); setIsNew( false ); setMsg( null );
+        const itemJson : string = JSON.stringify( item, null, 2 );
+        setDraft( itemJson ); setOriginal( itemJson ); setIsNew( false ); setMsg( null );
     }
 
+    /** Start a brand-new item, seeding the editor with empty key fields from the table's key schema. */
     function newItem() : void
     {
-        const tmpl : Record<string, unknown> = {};
-        if ( keySchema?.partitionKey ) tmpl[ keySchema.partitionKey ] = "";
-        if ( keySchema?.sortKey ) tmpl[ keySchema.sortKey ] = "";
-        const text : string = JSON.stringify( tmpl, null, 2 );
-        setDraft( text ); setOriginal( "" ); setIsNew( true ); setMsg( null );
+        const template : Record<string, unknown> = {};
+        if ( keySchema?.partitionKey ) template[ keySchema.partitionKey ] = "";
+        if ( keySchema?.sortKey ) template[ keySchema.sortKey ] = "";
+        const templateJson : string = JSON.stringify( template, null, 2 );
+        setDraft( templateJson ); setOriginal( "" ); setIsNew( true ); setMsg( null );
     }
 
+    // Validate the editor draft: must be a (non-array) JSON object, or a parse-error message.
     const jsonError : string | null = useMemo<string | null>( () =>
     {
         if ( draft.trim() === "" ) return null;
-        try { const v = JSON.parse( draft ); if ( typeof v !== "object" || v === null || Array.isArray( v ) ) return "must be a JSON object"; return null; }
-        catch ( e ) { return ( e as Error ).message; }
+        try { const parsed : unknown = JSON.parse( draft ); if ( typeof parsed !== "object" || parsed === null || Array.isArray( parsed ) ) return "must be a JSON object"; return null; }
+        catch ( parseError ) { return ( parseError as Error ).message; }
     }, [ draft ] );
 
     const dirty : boolean = draft !== original;
 
+    /** Put the editor draft into the table (create or overwrite), then refresh the list. */
     async function onSave() : Promise<void>
     {
         if ( !table || jsonError || draft.trim() === "" ) return;
         setSaving( true ); setMsg( null );
-        const r = await api.dynamoPut( table, JSON.parse( draft ) );
+        const result = await api.dynamoPut( table, JSON.parse( draft ) );
         setSaving( false );
-        if ( !r.ok ) { setMsg( { kind: "err", text: r.error ?? "Save failed" } ); return; }
+        if ( !result.ok ) { setMsg( { kind: "err", text: result.error ?? "Save failed" } ); return; }
         setMsg( { kind: "ok", text: "Saved" } );
         setOriginal( draft ); setIsNew( false );
         void scan( undefined, true );
     }
 
+    /** Delete the item in the editor by its key, then refresh the list. */
     async function onDelete() : Promise<void>
     {
         if ( !table || !keySchema || draft.trim() === "" ) return;
         let item : Record<string, unknown>;
         try { item = JSON.parse( draft ); } catch { return; }
+        // Build the delete key from the draft's partition (and optional sort) key values.
         const key : Record<string, unknown> = { [ keySchema.partitionKey ]: item[ keySchema.partitionKey ] };
         if ( keySchema.sortKey ) key[ keySchema.sortKey ] = item[ keySchema.sortKey ];
         setSaving( true ); setMsg( null );
-        const r = await api.dynamoDelete( table, key );
+        const result = await api.dynamoDelete( table, key );
         setSaving( false );
-        if ( !r.ok ) { setMsg( { kind: "err", text: r.error ?? "Delete failed" } ); return; }
+        if ( !result.ok ) { setMsg( { kind: "err", text: result.error ?? "Delete failed" } ); return; }
         clearEditor();
         void scan( undefined, true );
     }
 
+    /** One-line list label for an item: "partitionKey · sortKey" (or a JSON snippet if no key schema). */
     function rowLabel( item : Record<string, unknown> ) : string
     {
         if ( !keySchema ) return JSON.stringify( item ).slice( 0, 60 );
-        const pk : string = String( item[ keySchema.partitionKey ] ?? "" );
-        const sk : string = keySchema.sortKey ? " · " + String( item[ keySchema.sortKey ] ?? "" ) : "";
-        return pk + sk;
+        const partitionValue : string = String( item[ keySchema.partitionKey ] ?? "" );
+        const sortValue : string = keySchema.sortKey ? " · " + String( item[ keySchema.sortKey ] ?? "" ) : "";
+        return partitionValue + sortValue;
     }
 
 
@@ -162,13 +177,13 @@ export function DynamoPanel( { service } : { service : string } )
             {/* toolbar */}
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider", flexWrap: "wrap" }}>
                 <Typography variant="caption" sx={{ color: "text.disabled" }}>table</Typography>
-                <Select size="small" value={table} onChange={( e ) => setTable( e.target.value )} sx={{ minWidth: 180, fontFamily: MONO, fontSize: 13 }}>
-                    {tables.map( ( t ) => <MenuItem key={t.name} value={t.name} sx={{ fontFamily: MONO, fontSize: 13 }}>{t.key}</MenuItem> )}
+                <Select size="small" value={table} onChange={( event ) => setTable( event.target.value )} sx={{ minWidth: 180, fontFamily: MONO, fontSize: 13 }}>
+                    {tables.map( ( tableInfo ) => <MenuItem key={tableInfo.name} value={tableInfo.name} sx={{ fontFamily: MONO, fontSize: 13 }}>{tableInfo.key}</MenuItem> )}
                 </Select>
                 {keySchema && <Chip size="small" variant="outlined" sx={{ fontFamily: MONO }} label={`PK ${keySchema.partitionKey}${keySchema.sortKey ? " · SK " + keySchema.sortKey : ""}`} />}
                 <Box sx={{ flexGrow: 1 }} />
                 <Tooltip title={readOnly ? "Real AWS — editing disabled (switch target to LocalStack)" : "Current AWS target"}>
-                    <Chip size="small" variant="outlined" color={readOnly ? "warning" : "default"} label={targetInfo ? ( targetInfo.target.kind === "aws" ? `aws · ${targetInfo.target.profile ?? ""}` : "localstack" ) : "…"} sx={{ fontFamily: MONO }} />
+                    <Chip size="small" variant="outlined" color={readOnly ? "warning" : "default"} label={targetInfo ? ( targetInfo.target.kind === TargetKind.AWS ? `aws · ${targetInfo.target.profile ?? ""}` : "localstack" ) : "…"} sx={{ fontFamily: MONO }} />
                 </Tooltip>
                 <Tooltip title="Refresh"><IconButton size="small" onClick={() => void scan( undefined, true )}><RefreshIcon fontSize="small" /></IconButton></Tooltip>
                 <Button size="small" variant="outlined" startIcon={<AddIcon />} disabled={readOnly} onClick={newItem}>New</Button>
@@ -178,10 +193,10 @@ export function DynamoPanel( { service } : { service : string } )
             <Box sx={{ display: "flex", flexGrow: 1, minHeight: 0 }}>
                 {/* list */}
                 <Box sx={{ width: 280, flexShrink: 0, borderRight: "1px solid", borderColor: "divider", overflow: "auto", bgcolor: "#0a0d12" }}>
-                    {items.map( ( it, i ) => (
-                        <Box key={i} onClick={() => openItem( it )}
+                    {items.map( ( item, index ) => (
+                        <Box key={index} onClick={() => openItem( item )}
                              sx={{ px: 1.25, py: 0.75, fontFamily: MONO, fontSize: 12, color: "#e6edf3", cursor: "pointer", borderBottom: "1px solid #161b22", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", "&:hover": { bgcolor: "#161b22" } }}>
-                            {rowLabel( it )}
+                            {rowLabel( item )}
                         </Box>
                     ) )}
                     {loading && <Box sx={{ p: 1, display: "flex", justifyContent: "center" }}><CircularProgress size={14} /></Box>}
@@ -202,14 +217,11 @@ export function DynamoPanel( { service } : { service : string } )
                                 : <Typography variant="caption" sx={{ color: msg!.kind === "ok" ? "#3fb950" : "#f85149", fontFamily: MONO }}>{msg!.text}</Typography>}
                         </Box>
                     )}
-                    <Box component="textarea"
-                         value={draft}
-                         spellCheck={false}
-                         readOnly={readOnly}
-                         placeholder={"select an item, or New…"}
-                         onChange={( e : React.ChangeEvent<HTMLTextAreaElement> ) => setDraft( e.target.value )}
-                         sx={{ flexGrow: 1, minHeight: 0, width: "100%", boxSizing: "border-box", resize: "none", border: "none", outline: "none",
-                               bgcolor: "#0a0d12", color: "#e6edf3", fontFamily: MONO, fontSize: 13, lineHeight: 1.5, p: 1.5 }} />
+                    {/* CodeMirror JSON editor (same one the Config tab uses) — syntax highlight + bracket
+                        matching; read-only against AWS targets just like the textarea was. */}
+                    <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>{ /* not a flex column: JsonEditor's height:100% needs a definite-height parent to scroll (matches ConfigPanel) */ }
+                        <JsonEditor value={draft} readOnly={readOnly} onChange={setDraft} />
+                    </Box>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.5, py: 0.75, borderTop: "1px solid", borderColor: "divider" }}>
                         <Button size="small" variant="contained" startIcon={saving ? <CircularProgress size={14} /> : <SaveIcon />}
                                 disabled={saving || readOnly || !!jsonError || !dirty || draft.trim() === ""} onClick={() => void onSave()}>

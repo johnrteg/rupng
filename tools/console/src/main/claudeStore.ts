@@ -31,20 +31,21 @@ function sessionPath( service : string ) : string
 }
 
 // in-memory cache so appends don't re-read the file each turn
-const cache = new Map<string, ClaudeMessage[]>();
+const cache : Map<string, Array<ClaudeMessage>> = new Map<string, Array<ClaudeMessage>>();
 
-export function loadConversation( service : string ) : ClaudeMessage[]
+/** Load a service's committed transcript (from cache if present, else the repo file; [] if neither). */
+export function loadConversation( service : string ) : Array<ClaudeMessage>
 {
-    const cached : ClaudeMessage[] | undefined = cache.get( service );
+    const cached : Array<ClaudeMessage> | undefined = cache.get( service );
     if ( cached ) return cached;
 
-    let messages : ClaudeMessage[] = [];
-    const p : string = convPath( service );
-    if ( existsSync( p ) )
+    let messages : Array<ClaudeMessage> = [];
+    const filePath : string = convPath( service );
+    if ( existsSync( filePath ) )
     {
         try
         {
-            const parsed = JSON.parse( readFileSync( p, "utf8" ) ) as { messages? : ClaudeMessage[] };
+            const parsed = JSON.parse( readFileSync( filePath, "utf8" ) ) as { messages? : Array<ClaudeMessage> };
             messages = parsed.messages ?? [];
         }
         catch { messages = []; }
@@ -53,7 +54,8 @@ export function loadConversation( service : string ) : ClaudeMessage[]
     return messages;
 }
 
-function write( service : string, messages : ClaudeMessage[] ) : void
+/** Persist the full transcript to the committed file and refresh the in-memory cache. */
+function write( service : string, messages : Array<ClaudeMessage> ) : void
 {
     cache.set( service, messages );
     try { writeFileSync( convPath( service ), JSON.stringify( { messages }, null, 4 ) + "\n" ); }
@@ -63,7 +65,7 @@ function write( service : string, messages : ClaudeMessage[] ) : void
 /** Append one turn to the committed transcript. */
 export function appendMessage( service : string, msg : ClaudeMessage ) : void
 {
-    const messages : ClaudeMessage[] = loadConversation( service ).slice();
+    const messages : Array<ClaudeMessage> = loadConversation( service ).slice();
     messages.push( msg );
     write( service, messages );
 }
@@ -72,8 +74,8 @@ export function appendMessage( service : string, msg : ClaudeMessage ) : void
 export function clearConversation( service : string ) : void
 {
     cache.set( service, [] );
-    const p : string = convPath( service );
-    try { if ( existsSync( p ) ) rmSync( p ); }
+    const filePath : string = convPath( service );
+    try { if ( existsSync( filePath ) ) rmSync( filePath ); }
     catch { /* best-effort */ }
     saveSessionId( service, undefined );
 }
@@ -83,11 +85,11 @@ export function clearConversation( service : string ) : void
 /** The Claude session id to resume for this service, if one was saved on this machine. */
 export function loadSessionId( service : string ) : string | undefined
 {
-    const p : string = sessionPath( service );
-    if ( !existsSync( p ) ) return undefined;
+    const filePath : string = sessionPath( service );
+    if ( !existsSync( filePath ) ) return undefined;
     try
     {
-        const parsed = JSON.parse( readFileSync( p, "utf8" ) ) as { sessionId? : string };
+        const parsed = JSON.parse( readFileSync( filePath, "utf8" ) ) as { sessionId? : string };
         return parsed.sessionId;
     }
     catch { return undefined; }
@@ -96,12 +98,12 @@ export function loadSessionId( service : string ) : string | undefined
 /** Save (or, with undefined, forget) the resume token for this service. */
 export function saveSessionId( service : string, sessionId : string | undefined ) : void
 {
-    const p : string = sessionPath( service );
+    const filePath : string = sessionPath( service );
     try
     {
-        if ( sessionId === undefined ) { if ( existsSync( p ) ) rmSync( p ); return; }
+        if ( sessionId === undefined ) { if ( existsSync( filePath ) ) rmSync( filePath ); return; }
         mkdirSync( join( LOG_DIR, service ), { recursive: true } );
-        writeFileSync( p, JSON.stringify( { sessionId }, null, 4 ) + "\n" );
+        writeFileSync( filePath, JSON.stringify( { sessionId }, null, 4 ) + "\n" );
     }
     catch { /* best-effort */ }
 }

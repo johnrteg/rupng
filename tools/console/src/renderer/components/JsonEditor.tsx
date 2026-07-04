@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useState, useLayoutEffect } from "react";
 import Box from "@mui/material/Box";
 
 import CodeMirror from "@uiw/react-codemirror";
@@ -18,6 +18,7 @@ import addFormats from "ajv-formats";
 // the same contract that validates server-side lints here.
 //
 
+/** CodeMirror-based JSON editor: assembles the editor extensions (JSON syntax, parse + optional schema linting, gutter, read-only) and renders the editing surface. */
 export function JsonEditor( props : JsonEditor.Props )
 {
     const extensions : Array<Extension> = useMemo( () =>
@@ -34,11 +35,37 @@ export function JsonEditor( props : JsonEditor.Props )
         return list;
     }, [ props.schema, props.readOnly ] );
 
+    // MEASURE the container and hand CodeMirror an explicit PIXEL height. Relying on `height:100%` cascading
+    // through react-codemirror's `.cm-theme` wrapper + the flex chain never bounded the editor (it grew to fit
+    // all content, so only horizontal scroll worked). A concrete px height makes `.cm-scroller` scroll. The box
+    // fills its (position:relative) parent via inset:0, so its height is the parent's — measured by a
+    // ResizeObserver; the observed height is independent of content, so there's no measure↔grow feedback loop.
+    const boxRef : React.RefObject<HTMLDivElement | null> = useRef<HTMLDivElement>( null );
+    const [ pixelHeight, setPixelHeight ] = useState< number >( 0 );
+    useLayoutEffect( () : ( () => void ) =>
+    {
+        const element : HTMLDivElement | null = boxRef.current;
+        if ( !element ) return () : void => { /* nothing to observe */ };
+        const observer : ResizeObserver = new ResizeObserver( ( entries : Array<ResizeObserverEntry> ) : void =>
+        {
+            const height : number = entries[ 0 ]?.contentRect.height ?? 0;
+            if ( height > 0 ) setPixelHeight( height );
+        } );
+        observer.observe( element );
+        return () : void => observer.disconnect();
+    }, [] );
+
     return (
-        <Box sx={{ height: "100%", minHeight: 0, "& .cm-editor": { height: "100%" }, "& .cm-scroller": { overflow: "auto" } }}>
+        <Box ref={ boxRef } sx={{
+                position: "absolute", inset: 0, overflow: "hidden",
+                // a visible, thin scrollbar so long items scroll vertically (and the affordance is obvious)
+                "& .cm-scroller": { overflow: "auto", scrollbarWidth: "thin" },
+                "& .cm-scroller::-webkit-scrollbar": { width: 10, height: 10 },
+                "& .cm-scroller::-webkit-scrollbar-thumb": { background: "#30363d", borderRadius: 5 },
+            }}>
             <CodeMirror
                 value={props.value}
-                height="100%"
+                height={ pixelHeight > 0 ? `${ pixelHeight }px` : "100%" }
                 theme={vscodeDark}
                 extensions={extensions}
                 readOnly={props.readOnly}
@@ -55,7 +82,7 @@ function schemaLinter( schema : object ) : Extension
 {
     const ajv : Ajv = new Ajv( { allErrors: true, allowUnionTypes: true } );
     addFormats( ajv );
-    const validate = ajv.compile( schema );
+    const validate : ReturnType<typeof ajv.compile> = ajv.compile( schema );
 
     return linter( ( view : EditorView ) : Array<Diagnostic> =>
     {
@@ -81,10 +108,13 @@ function locate( text : string, instancePath : string ) : { from : number; to : 
 {
     if ( !instancePath ) return { from: 0, to: Math.min( text.length, 1 ) };
 
-    const segments : Array<string> = instancePath.split( "/" ).filter( ( s ) => s !== "" );
+    // Split the JSON-pointer path into its property names, dropping the empty leading segment.
+    const segments : Array<string> = instancePath.split( "/" ).filter( ( segment ) => segment !== "" );
     const last : string = segments[ segments.length - 1 ];
+    // Array-index segments (purely numeric) have no quoted name to search for — point at the head instead.
     if ( last === undefined || /^\d+$/.test( last ) ) return { from: 0, to: Math.min( text.length, 1 ) };
 
+    // Locate the first occurrence of the quoted property name and span the marker over it.
     const needle : string = `"${last}"`;
     const at : number = text.indexOf( needle );
     if ( at < 0 ) return { from: 0, to: Math.min( text.length, 1 ) };

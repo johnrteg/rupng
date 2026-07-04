@@ -2,12 +2,13 @@
 //
 //
 import { RestfulService } from "@repo/endpoint";
-import { GetBootstrap } from "@repo/api";
+import { GetBootstrap, GetSession, PostSessionRefresh } from "@repo/api";
 
 import { DateUtils, NetworkUtils } from "@repo/common";
 
 import WebSocketService     from "./service/WebsocketService";
 import StorageService       from "./service/StorageService";
+import LocalStorage         from "./service/LocalStorage";
 import LogService           from "./service/LogService";
 import PubSubService        from "./service/PubSubService";
 import CacheService         from "./service/CacheService";
@@ -21,8 +22,8 @@ export class AppModel
 {
     private static _instance : AppModel;
 
-    /** localStorage key for the persisted auth session token. */
-    private static readonly SESSION_KEY : string = "auth.session";
+    /** guards refresh re-entry — so the refresh call's own 401 (or concurrent 401s) can't recurse/loop. */
+    private refreshInFlight : boolean = false;
 
     public loaded               : boolean = false;    // to deal with duplicate load events
 
@@ -37,6 +38,7 @@ export class AppModel
 
     // state
     public storage              : StorageService;
+    public localStorage         : LocalStorage;     // typed window.localStorage wrapper (session tokens + keys)
 
     public ui              : UiService;
 
@@ -55,7 +57,7 @@ export class AppModel
     constructor()
     {
         // determine the kind of host the client is running on
-        this.config = GetBootstrap.SEED;
+        this.config = GetBootstrap.DEFAULT;
 
         // setup api service to backend server
         // must be first thing to allow other service to leverage backend API
@@ -68,7 +70,8 @@ export class AppModel
                                         AppModel.ServerMonitor );
 
         // re-apply a persisted session token (survives reload) as the Authorization bearer
-        const savedSession : string | null = window.localStorage.getItem( AppModel.SESSION_KEY );
+        this.localStorage = new LocalStorage();
+        const savedSession : string | null = this.localStorage.sessionToken();
         if( savedSession ) this.server.setHeader( "Authorization", `Bearer ${savedSession}` );
 
         // init
@@ -81,6 +84,13 @@ export class AppModel
         this.ui         = new UiService( this );
         this.account    = new AccountService( this );
 
+        // restore the signed-in session from the cached token (survives a page refresh): decode its claims
+        // so validSession() is true and guarded pages render without a re-login. An expired token decodes
+        // but validSession() rejects it → the user lands on sign-in. (Bearer header was re-applied above.)
+        if( savedSession ) this.auth.setSession( savedSession );
+
+        // transparently recover from access-token expiry: on a 401, refresh once + retry the original call.
+        this.server.setUnauthorizedHandler( () => this.refreshSession() );
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -212,19 +222,69 @@ export class AppModel
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    /** Store the auth session token: send it as the `Authorization` bearer + persist it across reloads. */
-    public setSession( token : string ) : void
+    /** Store the auth session: send the access token as the `Authorization` bearer + persist it (and, when
+     *  given, the refresh token) across reloads, and decode its claims so the app knows it's signed in.
+     *  `refreshToken` is optional so a refresh (which returns only a new access token) keeps the cached one. */
+    public async setSession( token : string, refreshToken? : string ) : Promise<void>
     {
-        window.localStorage.setItem( AppModel.SESSION_KEY, token );
+        this.localStorage.storeSession( token, refreshToken );
         this.server.setHeader( "Authorization", `Bearer ${token}` );
+        this.auth.setSession( token );   // decode claims → mark authenticated so guarded pages (dashboard) render
+        await this.loadSessionUser();     // fetch + cache the user's profile (auth/GetSession) — non-blocking
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    /** Clear the auth session token (sign-out). */
-    public clearSession() : void
+    /** Fetch the signed-in user's profile (auth/GetSession) and cache it under `auth.user`, then publish a
+     *  LOGIN event so the UI (e.g. the account menu) re-renders with the real name. Best-effort + non-blocking
+     *  (token claims already authenticated the session); a failure leaves the menu on its token/"Account"
+     *  fallback. The 401 hook covers an expired token (refresh + retry). */
+    private async loadSessionUser() : Promise<void>
     {
-        window.localStorage.removeItem( AppModel.SESSION_KEY );
+        if( !this.auth.validSession() ) return;
+        const reply : RestfulService.Reply<GetSession.Response> = await this.server.fetch( new GetSession() );
+        if( reply.ok && reply.data )
+        {
+            this.auth.setUser( reply.data );
+            this.pubsub.publish( PubSubService.Type.LOGIN, reply.data );
+            await this.account.load();   // load the accounts the user can act in + pick the current one
+        }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** Log out (sign-out): drop both tokens, the bearer header, and the decoded session + cached profile. */
+    public logout() : void
+    {
+        this.localStorage.clearSession();
         this.server.deleteHeader( "Authorization" );
+        this.server.deleteHeader( "X-Account" );
+        this.auth.setSession( null );
+        this.account.makeEmpty();
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Exchange the cached refresh token for a fresh access token (Cognito REFRESH_TOKEN_AUTH via
+     * `POST /session/refresh`). Wired as the RestfulService 401-recovery hook AND called proactively on
+     * boot, so a session survives the ~1h access-token TTL without a re-login. Re-entry guarded so the
+     * refresh call's OWN 401 (or concurrent 401s) can't recurse. On success the new access token is stored
+     * (the refresh token is unchanged); on failure the session is cleared and the user must sign in again.
+     */
+    public async refreshSession() : Promise<boolean>
+    {
+        if( this.refreshInFlight ) return false;
+        const refreshToken : string | null = this.localStorage.refreshToken();
+        if( !refreshToken ) return false;
+
+        this.refreshInFlight = true;
+        try
+        {
+            const reply : RestfulService.Reply<PostSessionRefresh.Response> = await this.server.fetch( new PostSessionRefresh( { refreshToken } ) );
+            if( reply.ok && reply.data?.sessionToken ) { this.setSession( reply.data.sessionToken ); return true; }
+            this.logout();                // refresh token rejected/expired → force a fresh sign-in
+            return false;
+        }
+        catch { this.logout(); return false; }
+        finally { this.refreshInFlight = false; }
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -276,7 +336,7 @@ export class AppModel
     */
     public notifyAccountReadiness( status : AppModel.AccountNotifyStatus ) : void
     {
-        if( this.loaded && this.auth.validSession() && this.account.id !== "" )
+        if( this.loaded && this.auth.validSession() && this.account.current !== null )
         {
             //this.pubsub.publish( PubSubService.Type.ACCOUNT, { status : status } as Rup.AccountNotify );
         }
@@ -289,12 +349,18 @@ export class AppModel
     */
     public async hasActiveSession() : Promise<void>
     {
+        // boot: if the cached access token is missing/expired but we still hold a refresh token, mint a fresh
+        // access token NOW (before routing decides) so a returning user stays signed in across the access TTL.
+        if( !this.auth.validSession() && this.localStorage.refreshToken() )
+            await this.refreshSession();          // refresh path: setSession already fetches the profile
+        else if( this.auth.validSession() )
+            await this.loadSessionUser();         // cached-valid-token path: setSession wasn't called → fetch it now
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
     public hasSessionCookie() : boolean
     {
-        return false;
+        return this.auth.validSession();
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////

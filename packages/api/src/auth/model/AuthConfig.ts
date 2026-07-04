@@ -4,7 +4,7 @@
 // verification, WebAuthn/passkey RP config, abuse rate-limits, and SSO.
 //
 // Lives in @repo/api (not the service) so the ONE definition is shared: the auth service reads it live +
-// seeds `SEED`; the Console's AppConfig editor lints edits against `SCHEMA`; the web admin UI validates
+// seeds `DEFAULT`; the Console's AppConfig editor lints edits against `SCHEMA`; the web admin UI validates
 // with `validate()`. Secrets (Cognito client secret, the session-signing secret, SSO client secrets) do
 // NOT belong here — they live in Secrets Manager. This profile is non-secret operational policy.
 //
@@ -191,7 +191,7 @@ export namespace AuthConfig
     export const validate : Validation.Validator<Config> = Validation.compile<Config>( SCHEMA );
 
     /** Seed for a fresh environment — safe, conservative defaults. */
-    export const SEED : Config =
+    export const DEFAULT : Config =
     {
         lockout: {
             maxFailedAttempts:     5,

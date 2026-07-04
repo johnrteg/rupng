@@ -5,6 +5,8 @@
 //
 import { KMSClient, DecryptCommand } from "@aws-sdk/client-kms";
 import type { DecryptCommandOutput } from "@aws-sdk/client-kms";
+import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
+import type { GetSecretValueCommandOutput } from "@aws-sdk/client-secrets-manager";
 
 /** Resolves a stored key reference to its plaintext value. */
 export interface KeyProvider
@@ -43,6 +45,41 @@ export class KmsKeyProvider implements KeyProvider
             new DecryptCommand( { CiphertextBlob: Buffer.from( ciphertextB64, "base64" ) } ) );
         if( out.Plaintext === undefined ) throw new Error( "KmsKeyProvider: KMS Decrypt returned no plaintext" );
         return Buffer.from( out.Plaintext ).toString( "utf8" );
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+/**
+ * Resolves a key held in **AWS Secrets Manager** — the platform AI provider keys (media-17). The `ref` is
+ * either the name of an environment variable holding the secret's ARN/id (the platform convention: the CDK
+ * injects `SECRET_<KEY>` into every service), or a secret ARN/name directly. The value is fetched once
+ * (the adapter caches it) and returned as-is. LocalStack works via the SDK's `AWS_ENDPOINT_URL`.
+ */
+export class SecretsKeyProvider implements KeyProvider
+{
+    /** The Secrets Manager client used for GetSecretValue. */
+    private readonly client : SecretsManagerClient;
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** @param region AWS region (defaults to `AWS_REGION`, else `us-east-1`). */
+    constructor( region : string = process.env.AWS_REGION ?? "us-east-1" )
+    {
+        this.client = new SecretsManagerClient( { region } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Resolve a secret to its plaintext value. If `ref` names a set environment variable, that variable's
+     * value (the ARN/id) is used as the secret id; otherwise `ref` is treated as the id/ARN directly.
+     * @param ref an env var name holding the secret ARN/id, or a secret ARN/name.
+     * @throws if the secret has no string value.
+     */
+    async resolve( ref : string ) : Promise<string>
+    {
+        const secretId : string = process.env[ ref ] ?? ref;
+        const out : GetSecretValueCommandOutput = await this.client.send( new GetSecretValueCommand( { SecretId: secretId } ) );
+        if( out.SecretString === undefined ) throw new Error( `SecretsKeyProvider: secret '${secretId}' has no string value` );
+        return out.SecretString;
     }
 }
 

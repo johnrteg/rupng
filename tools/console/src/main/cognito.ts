@@ -20,22 +20,23 @@ const USER_PAGE : number = 60;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 /** The Cognito user pools owned by a service (by physical-name convention). */
-export async function cognitoPools( service : string ) : Promise<{ pools : CognitoPool[]; error? : string }>
+export async function cognitoPools( service : string ) : Promise<{ pools : Array<CognitoPool>; error? : string }>
 {
     try
     {
-        const pools : CognitoPool[] = [];
+        const pools : Array<CognitoPool> = [];
         let token : string | undefined;
         do
         {
             const page = await cognitoClient().send( new ListUserPoolsCommand( { MaxResults: 50, NextToken: token } ) );
-            ( page.UserPools ?? [] ).forEach( ( p ) => { if ( p.Id && p.Name ) pools.push( { id: p.Id, name: p.Name } ); } );
+            ( page.UserPools ?? [] ).forEach( ( pool ) => { if ( pool.Id && pool.Name ) pools.push( { id: pool.Id, name: pool.Name } ); } );
             token = page.NextToken;
         }
         while ( token );
 
+        // keep only this service's pools (physical-name convention)
         const marker : string = `-${service}-userpool-`;
-        return { pools: pools.filter( ( p ) => p.name.includes( marker ) ) };
+        return { pools: pools.filter( ( pool ) => pool.name.includes( marker ) ) };
     }
     catch ( err )
     {
@@ -45,16 +46,17 @@ export async function cognitoPools( service : string ) : Promise<{ pools : Cogni
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 /** List users in a pool. `filter` (optional) matches the email prefix. */
-export async function cognitoUsers( poolId : string, filter? : string ) : Promise<{ users : CognitoUser[]; error? : string }>
+export async function cognitoUsers( poolId : string, filter? : string ) : Promise<{ users : Array<CognitoUser>; error? : string }>
 {
     try
     {
-        const out = await cognitoClient().send( new ListUsersCommand( {
+        const listed = await cognitoClient().send( new ListUsersCommand( {
             UserPoolId: poolId,
             Limit:      USER_PAGE,
+            // `^=` is the Cognito filter operator for a prefix match on the email attribute
             Filter:     filter && filter.trim() !== "" ? `email ^= "${filter.trim()}"` : undefined,
         } ) );
-        return { users: ( out.Users ?? [] ).map( mapUser ) };
+        return { users: ( listed.Users ?? [] ).map( mapUser ) };
     }
     catch ( err )
     {
@@ -152,30 +154,34 @@ export async function cognitoSetPassword( poolId : string, username : string, pa
 
 
 // ── helpers ───────────────────────────────────────────────────────────────────────────────────
-function mapUser( u : UserType ) : CognitoUser
+/** Project a Cognito SDK user into the console's flat CognitoUser shape. */
+function mapUser( user : UserType ) : CognitoUser
 {
     return {
-        username:   u.Username ?? "",
-        status:     u.UserStatus,
-        enabled:    u.Enabled ?? true,
-        attributes: attrsToRecord( u.Attributes ),
-        createdAt:  u.UserCreateDate?.toISOString(),
-        modifiedAt: u.UserLastModifiedDate?.toISOString(),
+        username:   user.Username ?? "",
+        status:     user.UserStatus,
+        enabled:    user.Enabled ?? true,
+        attributes: attrsToRecord( user.Attributes ),
+        createdAt:  user.UserCreateDate?.toISOString(),
+        modifiedAt: user.UserLastModifiedDate?.toISOString(),
     };
 }
 
-function attrsToRecord( list? : AttributeType[] ) : Record<string, string>
+/** Collapse Cognito's name/value attribute list into a plain `{ name: value }` record. */
+function attrsToRecord( attributes? : Array<AttributeType> ) : Record<string, string>
 {
-    const out : Record<string, string> = {};
-    ( list ?? [] ).forEach( ( a : AttributeType ) => { if ( a.Name ) out[ a.Name ] = a.Value ?? ""; } );
-    return out;
+    const record : Record<string, string> = {};
+    ( attributes ?? [] ).forEach( ( attribute : AttributeType ) => { if ( attribute.Name ) record[ attribute.Name ] = attribute.Value ?? ""; } );
+    return record;
 }
 
-function toAttrList( o : Record<string, string> ) : AttributeType[]
+/** Expand a plain `{ name: value }` record into Cognito's name/value attribute list. */
+function toAttrList( attributes : Record<string, string> ) : Array<AttributeType>
 {
-    return Object.entries( o ).map( ( [ Name, Value ] ) => ( { Name, Value: String( Value ) } ) );
+    return Object.entries( attributes ).map( ( [ Name, Value ] ) => ( { Name, Value: String( Value ) } ) );
 }
 
+/** The refusal result returned for any mutation while pointed at a real AWS account. */
 function readOnly() : CognitoResult
 {
     return { ok: false, error: "Read-only on a real AWS account — switch the target to LocalStack to edit." };

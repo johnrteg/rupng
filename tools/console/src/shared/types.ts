@@ -45,7 +45,7 @@ export interface ServiceInfo
     /** apps/core/<id> — absolute path on disk. */
     dir : string;
     /** Roles/ports this service runs locally. */
-    roles : ServiceRole[];
+    roles : Array<ServiceRole>;
     /** One-line description for the tooltip / panel header. */
     blurb : string;
     /** Version from apps/core/<id>/package.json (undefined if not scaffolded). */
@@ -56,7 +56,8 @@ export interface ServiceInfo
 /** The staged pipeline. A run executes a selected subset IN THIS ORDER, halting on first failure. */
 export type StageId = "build" | "image" | "deploy";
 
-export const STAGE_ORDER : StageId[] = [ "build", "image", "deploy" ];
+/** Canonical order stages execute in (a run halts on the first failure). */
+export const STAGE_ORDER : Array<StageId> = [ "build", "image", "deploy" ];
 
 /** Pseudo-service id for the local-edge dev proxy (apps/core/webproxy) — for its process/log slot. */
 export const WEBPROXY_ID = "webproxy";
@@ -103,6 +104,8 @@ export interface BuildSettings
     docker : boolean;
     /** [LocalStack] Auto-deploy after the chain (frontend: sync bin→bucket + refresh; backend: cdklocal). */
     deploy : boolean;
+    /** Run this service locally when the Console starts (auto-run services start in sequence on launch). */
+    autoRun : boolean;
 }
 
 /** Deploy's prerequisite in the chain: an image first (backend) or just a build (frontend, no image). */
@@ -114,9 +117,9 @@ export function deployPrereqMet( s : BuildSettings, isFrontend : boolean ) : boo
 /** The auto-on pipeline STAGES to run, in order (build → image → deploy), per target + cascade.
  *  (Local-target "run" is a lifecycle action the orchestrator does after build, not a stage here.)
  *  `canDeploy` gates the deploy step — a service with no cloud stack can never deploy. */
-export function autoSteps( s : BuildSettings, isFrontend : boolean, canDeploy : boolean = true ) : StageId[]
+export function autoSteps( s : BuildSettings, isFrontend : boolean, canDeploy : boolean = true ) : Array<StageId>
 {
-    const steps : StageId[] = [];
+    const steps : Array<StageId> = [];
     if ( s.build ) steps.push( "build" );
     if ( s.target === "localstack" )
     {
@@ -137,7 +140,7 @@ export interface ManifestDrift
 /** Live state of the sequential build queue — drives the progress bar under the service buttons. */
 export interface BuildQueue
 {
-    queue : string[];          // services still waiting
+    queue : Array<string>;          // services still waiting
     current : string | null;   // the one building now
     done : number;             // completed in the current run
     total : number;            // total in the current run
@@ -154,7 +157,7 @@ export interface BuildQueue
 /** The real AWS environments code can be promoted to (LOCAL is the per-service LocalStack pipeline). */
 export type DeployEnvName = "dev" | "staging" | "production";
 
-export const DEPLOY_ENVS : DeployEnvName[] = [ "dev", "staging", "production" ];
+export const DEPLOY_ENVS : Array<DeployEnvName> = [ "dev", "staging", "production" ];
 
 /** Environment → its long-lived git branch (the branch tip IS what belongs in that account). See RELEASE.md. */
 export const ENV_BRANCH : Record<DeployEnvName, string> = { dev: "development", staging: "staging", production: "production" };
@@ -173,7 +176,7 @@ export interface DeployRequest
 {
     env : DeployEnvName;
     /** Service ids (apps/core/<id>) → stacks `<id>-<env>`. */
-    services : string[];
+    services : Array<string>;
     /** Also (re)deploy the shared `platform-<env>` stack. */
     platform : boolean;
     /** Committed git ref (a `release/X.Y` line, or a `vX.Y.Z` tag for rollback) to deploy from. */
@@ -218,6 +221,7 @@ export interface DeployState
     production : DeployEnvState;
 }
 
+/** The kind of action an audit-trail entry records. */
 export type AuditAction = "deploy" | "rollback" | "hotfix" | "promote";
 
 /** One append-only line in deploy-audit.jsonl (see RELEASE.md → Compliance & Controls). */
@@ -278,7 +282,9 @@ export interface DeployMap
 
 // ── Repo (git check-out / check-in) ──────────────────────────────────────────────────────────────
 
+/** Which kind of workspace area a path belongs to (drives grouping + version-bump rules). */
 export type RepoAreaKind = "service" | "package" | "cloud" | "console" | "root";
+/** Semantic-version bump applied to an area's package.json. */
 export type BumpKind = "patch" | "minor" | "major";
 
 /** A workspace area (service/package/cloud/…) with pending git changes. */
@@ -288,22 +294,23 @@ export interface RepoArea
     name : string;        // display name, e.g. "app", "api", "cloud"
     kind : RepoAreaKind;
     changed : number;     // number of changed files in this area
-    files : string[];     // the changed file paths in this area (for precise staging)
+    files : Array<string>;     // the changed file paths in this area (for precise staging)
     version? : string;    // current package.json version (if the area has one)
     deleted? : boolean;   // the directory no longer exists on disk (fully removed)
 }
 
+/** Working-tree snapshot: current branch, the areas with pending changes, and any merge conflicts. */
 export interface RepoStatus
 {
     branch : string;
-    areas : RepoArea[];
-    conflicts : string[];   // conflicted file paths (merge needs resolving)
+    areas : Array<RepoArea>;
+    conflicts : Array<string>;   // conflicted file paths (merge needs resolving)
     clean : boolean;        // nothing changed
     error? : string;
 }
 
 /** Local + remote branches (origin/ stripped, de-duped) and the current one. */
-export interface RepoBranches { current : string; branches : string[]; }
+export interface RepoBranches { current : string; branches : Array<string>; }
 
 /** An outdated npm dependency (from `npm outdated`) — installed vs available. */
 export interface NpmOutdated
@@ -318,14 +325,14 @@ export interface NpmOutdated
 /** One package.json declaring a dependency at a given version. */
 export interface VersionOccurrence { area : string; version : string; dev : boolean; }
 /** A library declared at >1 version across package.json files — the newest is the sync target. */
-export interface VersionConflict { name : string; newest : string; occurrences : VersionOccurrence[]; }
+export interface VersionConflict { name : string; newest : string; occurrences : Array<VersionOccurrence>; }
 
 /** One reverse-proxied upstream in the webproxy config (a path-prefix → target host). */
 export interface ProxyUpstream
 {
     name : string;
     target : string;            // effective target the proxy uses
-    prefixes : string[];
+    prefixes : Array<string>;
     ws? : string;
     outside? : string;          // candidate target when the service runs locally (default: target)
     inside? : string;           // candidate target when the service is deployed (LocalStack/remote gateway)
@@ -343,8 +350,9 @@ export interface ProxyWeb { root : string; index? : string; prefix? : string; sp
  */
 export interface ProxyRoute { method : string; path : string; target : string; }
 /** A webproxy environment config file (apps/core/webproxy/src/config/<name>.json). */
-export interface ProxyConfig { web : ProxyWeb; upstreams : ProxyUpstream[]; routes? : ProxyRoute[]; }
+export interface ProxyConfig { web : ProxyWeb; upstreams : Array<ProxyUpstream>; routes? : Array<ProxyRoute>; }
 
+/** Lifecycle status of a single pipeline stage. */
 export type StageStatus = "idle" | "running" | "success" | "failed" | "skipped";
 
 /** Where a deploy stage targets. v1 is LocalStack-only (compose + cdklocal). */
@@ -370,9 +378,10 @@ export interface LogLine
     text : string;
 }
 
+/** A log stream is one of the pipeline stages, or the running process's "runtime" follow. */
 export type LogStream = StageId | "runtime";
 
-export const LOG_STREAMS : LogStream[] = [ "build", "image", "deploy", "runtime" ];
+export const LOG_STREAMS : Array<LogStream> = [ "build", "image", "deploy", "runtime" ];
 
 /** Live state of a running/finished child process for a service+stream. */
 export interface ProcState
@@ -418,12 +427,26 @@ export interface LocalStackState
     ts : number;
 }
 
+/** Host↔LocalStack-container clock comparison — drift here breaks time-based codes (TOTP MFA, ±30s). */
+export interface ClockSkew
+{
+    /** false when the container isn't running or docker/exec failed (see `detail`). */
+    ok : boolean;
+    /** container epoch − host epoch, in seconds (positive = container ahead). */
+    skewSec? : number;
+    /** the container the clock was read from. */
+    container? : string;
+    /** failure reason when !ok. */
+    detail? : string;
+    ts : number;
+}
+
 /** A request to run the pipeline for one service. */
 export interface PipelineRequest
 {
     service : string;
     /** Which stages to run (in STAGE_ORDER). */
-    stages : StageId[];
+    stages : Array<StageId>;
     /** Deploy mechanism when the `deploy` stage is included. */
     target : DeployTarget;
     /**
@@ -463,6 +486,7 @@ export const CLAUDE_MODES : { value : ClaudeMode; label : string; hint : string 
     { value: "fix",      label: "Fix upon approval",    hint: "Auto-runs on failure; can edit/run with per-action approval." }
 ];
 
+/** The kind of transcript item rendered in the Claude panel. */
 export type ClaudeMsgKind = "status" | "user" | "assistant" | "tool" | "tool_result" | "result" | "error";
 
 /** One rendered item in the Claude panel transcript. */
@@ -486,6 +510,7 @@ export interface ClaudeApprovalRequest
     summary : string;
 }
 
+/** Live state of a service's Claude session (open + whether it's mid-turn). */
 export interface ClaudeSessionState
 {
     service : string;
@@ -571,18 +596,20 @@ export interface CloudNode
     logGroup? : string;
 }
 
+/** A directed dependency edge between two CloudNodes (Ref / Fn::GetAtt / DependsOn). */
 export interface CloudEdge
 {
     from : string;
     to : string;
 }
 
+/** The whole derived cloud graph: active stacks, their resource nodes, and the edges between them. */
 export interface CloudGraph
 {
     /** Active stack names found. */
-    stacks : string[];
-    nodes : CloudNode[];
-    edges : CloudEdge[];
+    stacks : Array<string>;
+    nodes : Array<CloudNode>;
+    edges : Array<CloudEdge>;
     /** Non-fatal note (e.g. CLI missing, LocalStack down). */
     error? : string;
     ts : number;
@@ -620,9 +647,23 @@ export interface S3Listing
     bucket : string;
     prefix : string;
     /** "Sub-folder" common prefixes under this prefix. */
-    folders : string[];
-    objects : S3Object[];
+    folders : Array<string>;
+    objects : Array<S3Object>;
     truncated : boolean;
+    error? : string;
+}
+
+/** One object's metadata (HeadObject) for the detail panel. */
+export interface S3ObjectHead
+{
+    key : string;
+    size : number;
+    lastModified? : string;
+    contentType? : string;
+    etag? : string;
+    storageClass? : string;
+    versionId? : string;
+    metadata? : Record<string, string>;
     error? : string;
 }
 
@@ -640,7 +681,7 @@ export interface ApiGwInfo
     name? : string;
     protocol? : string;
     endpoint? : string;
-    routes : ApiGwRoute[];
+    routes : Array<ApiGwRoute>;
     error? : string;
 }
 
@@ -663,6 +704,7 @@ export interface ContainerInfo
 }
 
 /** Live state of a deployed ECS service (DescribeServices). */
+/** Live counts + status of a deployed ECS service (from DescribeServices). */
 export interface EcsServiceState
 {
     status? : string;
@@ -680,21 +722,31 @@ export interface EcsServiceState
 // ALB target group (the common LocalStack data-path gap). Shareable as evidence for support.
 //
 
+/** Severity of one diagnosis finding (drives row color). */
 export type DiagLevel = "ok" | "warn" | "error";
 
+/** One human-readable finding from the data-path walk. */
 export interface DiagFinding { level : DiagLevel; title : string; detail : string; }
 
+/** A single ECS task observed during the walk. */
 export interface DiagTask { taskArn : string; lastStatus : string; healthStatus : string; ip? : string; }
-export interface DiagService { cluster : string; service : string; desired : number; running : number; tasks : DiagTask[]; }
+/** An ECS service: its desired/running counts + the tasks behind it. */
+export interface DiagService { cluster : string; service : string; desired : number; running : number; tasks : Array<DiagTask>; }
 
+/** One registered target in an ALB target group (and why it's in/out of service). */
 export interface DiagTarget { id : string; port? : number; state : string; reason? : string; }
-export interface DiagTargetGroup { name : string; protocol? : string; port? : number; targetType? : string; targets : DiagTarget[]; }
+/** An ALB target group + the targets registered in it (the common LocalStack data-path gap). */
+export interface DiagTargetGroup { name : string; protocol? : string; port? : number; targetType? : string; targets : Array<DiagTarget>; }
 
+/** A load balancer observed on the path. */
 export interface DiagLoadBalancer { name : string; type? : string; scheme? : string; state? : string; dnsName? : string; }
+/** A VpcLink connecting the HTTP API to the private ALB. */
 export interface DiagVpcLink { id : string; name? : string; status? : string; }
 
+/** An API Gateway route integration (how a route reaches its backend). */
 export interface DiagIntegration { id : string; connectionType? : string; connectionId? : string; uri? : string; }
-export interface DiagApi { apiId : string; name? : string; protocol? : string; endpoint? : string; routes : string[]; integrations : DiagIntegration[]; }
+/** An HTTP API + its routes and integrations, as seen during the walk. */
+export interface DiagApi { apiId : string; name? : string; protocol? : string; endpoint? : string; routes : Array<string>; integrations : Array<DiagIntegration>; }
 
 /** Result of actually invoking a route through the gateway (the "Test routing" button). */
 export interface RouteTest
@@ -710,16 +762,17 @@ export interface RouteTest
     error? : string;
 }
 
+/** The full read-only API Gateway → VpcLink → ALB → ECS diagnosis (shareable as support evidence). */
 export interface VpcLinkDiagnosis
 {
-    targetKind : "localstack" | "aws";
+    targetKind : TargetKind;
     generatedAt : number;
-    services : DiagService[];
-    targetGroups : DiagTargetGroup[];
-    loadBalancers : DiagLoadBalancer[];
-    vpcLinks : DiagVpcLink[];
-    apis : DiagApi[];
-    findings : DiagFinding[];
+    services : Array<DiagService>;
+    targetGroups : Array<DiagTargetGroup>;
+    loadBalancers : Array<DiagLoadBalancer>;
+    vpcLinks : Array<DiagVpcLink>;
+    apis : Array<DiagApi>;
+    findings : Array<DiagFinding>;
     error? : string;
 }
 
@@ -731,8 +784,15 @@ export interface VpcLinkDiagnosis
 // mutating actions — you never invoke functions on AWS just to read stats.
 //
 
-export type TargetKind = "localstack" | "aws";
+/** Which backend the cloud SDK clients point at: throwaway LocalStack or a real (read-only) AWS account.
+ *  String-valued so the on-the-wire / persisted shape stays `"localstack"` / `"aws"`. */
+export enum TargetKind
+{
+    LOCALSTACK = "localstack",
+    AWS        = "aws",
+}
 
+/** The active cloud target (and, for AWS, which profile + region to use). */
 export interface Target
 {
     kind : TargetKind;
@@ -749,9 +809,9 @@ export interface TargetInfo
     /** true when targeting a real AWS account → destructive actions disabled. */
     readOnly : boolean;
     /** profiles discovered in ~/.aws (config + credentials). */
-    profiles : string[];
+    profiles : Array<string>;
     /** common regions offered in the selector. */
-    regions : string[];
+    regions : Array<string>;
 }
 
 //
@@ -814,8 +874,8 @@ export interface SavedRequest
     /** role port to hit (direct service port) + path; the URL is assembled at send time. */
     port : number;
     path : string;
-    headers : KeyVal[];
-    query : KeyVal[];
+    headers : Array<KeyVal>;
+    query : Array<KeyVal>;
     body? : string;
 }
 
@@ -833,8 +893,8 @@ export interface ServiceConfigTree
 {
     applicationId?   : string;
     applicationName? : string;
-    environments     : ConfigEnvironment[];
-    profiles         : ConfigProfile[];
+    environments     : Array<ConfigEnvironment>;
+    profiles         : Array<ConfigProfile>;
     error?           : string;
 }
 
@@ -844,14 +904,43 @@ export interface ConfigContent { content : string; version? : number; contentTyp
 /** Result of saving (new hosted version + deployment). */
 export interface ConfigSaveResult { ok : boolean; version? : number; deployment? : number; error? : string; }
 
+// ── Secrets Manager (the Secrets tab) — a service's secrets + platform-shared AI keys ───────────
+/** One Secrets Manager secret relevant to a service. `scope` distinguishes the service's OWN secrets
+ *  from the PLATFORM-shared ones (AI keys) every service reads. `hasValue` = a value has been set. */
+export interface SecretSummary
+{
+    name        : string;                       // physical name (e.g. local-media-secret-browse-pexels)
+    arn         : string;
+    key         : string;                       // the logical key (name minus env/service/kind prefix)
+    scope       : "service" | "platform";
+    description? : string;
+    hasValue    : boolean;
+    lastChanged? : string;                       // ISO timestamp of the last value change
+    isJson      : boolean;                       // the stored value parses as a JSON object (multi-field secret)
+}
+
+/** The secrets relevant to a service: its own + the platform-shared AI keys. */
+export interface SecretList { secrets : Array<SecretSummary>; error? : string; }
+
+/** The (revealed) plaintext value of a secret. */
+export interface SecretValue { value : string; error? : string; }
+
+/** Outcome of setting a secret value. */
+export interface SecretSaveResult { ok : boolean; error? : string; }
+
 // ── DynamoDB (the Data tab) — a service's tables + item browse/edit ─────────────────────────────
 export interface DynamoTable { name : string; key : string; }                 // physical name + logical key
+/** A table's primary key shape (partition + optional sort). */
 export interface DynamoKeySchema { partitionKey : string; sortKey? : string; }
+/** A page of scanned items + the pagination cursor for the next page. */
 export interface DynamoScanResult { items : Array<Record<string, unknown>>; lastKey? : Record<string, unknown>; error? : string; }
+/** Outcome of a put/delete. */
 export interface DynamoSaveResult { ok : boolean; error? : string; }
 
 // ── Cognito (the Cognito tab) — user pool + user browse/edit ────────────────────────────────────
+/** A Cognito user pool the service owns. */
 export interface CognitoPool { id : string; name : string; }
+/** One user in a pool, with its status, enabled flag, and attribute map. */
 export interface CognitoUser
 {
     username    : string;
@@ -861,15 +950,16 @@ export interface CognitoUser
     createdAt?  : string;
     modifiedAt? : string;
 }
+/** Outcome of a Cognito mutation (create/update/enable/delete/set-password). */
 export interface CognitoResult { ok : boolean; error? : string; }
 
 // ── Kafka monitor (the Events sub-tab) ─────────────────────────────────────────────────────────
 /** A binding edge in the topology — one service's publish or subscribe of a topic. */
 export interface MonitorBinding { topic : string; group? : string; }
 /** A service node in the radial graph + the topics it publishes/subscribes (mirrors the manifests). */
-export interface MonitorService { id : string; publishes : string[]; subscribes : MonitorBinding[]; }
+export interface MonitorService { id : string; publishes : Array<string>; subscribes : Array<MonitorBinding>; }
 /** The whole topology: service nodes + the distinct set of topics (pipes radiate to the central hub). */
-export interface MonitorTopology { services : MonitorService[]; topics : string[]; }
+export interface MonitorTopology { services : Array<MonitorService>; topics : Array<string>; }
 
 /** One observed Kafka event (an Events.Envelope the monitor consumed), enriched for the UI. */
 export interface MonitorEvent
@@ -882,14 +972,14 @@ export interface MonitorEvent
     targetType : string;
     targetId   : string;
     publisher  : string;          // service that publishes this topic (from topology), or "?"
-    subscribers : string[];       // consumer groups bound to this topic (from topology)
+    subscribers : Array<string>;       // consumer groups bound to this topic (from topology)
     occurredAt : string;          // envelope time
     arrivedAt  : number;          // epoch ms the monitor received it (TTL clock)
     partition  : number;
     offset     : string;
     sizeBytes  : number;          // JSON byte size of envelope.data (drives circle radius)
     envelope   : unknown;         // full envelope (the model-data inspector)
-    delivered  : string[];        // subscriber groups confirmed past this offset
+    delivered  : Array<string>;        // subscriber groups confirmed past this offset
     finishedAt? : number;         // set once ALL subscriber groups consumed it → it's in the bin
 }
 
@@ -900,7 +990,7 @@ export interface MonitorState
     brokers   : string;
     error?    : string;
     topology  : MonitorTopology;
-    events    : MonitorEvent[];   // everything within the TTL window (live + binned; bin = finishedAt set)
+    events    : Array<MonitorEvent>;   // everything within the TTL window (live + binned; bin = finishedAt set)
     ttlMs     : number;
     maxTtlMs  : number;
 }
@@ -908,9 +998,58 @@ export interface MonitorState
 /** Periodic reconciliation pushed to the renderer: delivery progress + which events aged out. */
 export interface MonitorSync
 {
-    delivered : Array<{ eventId : string; delivered : string[]; finishedAt? : number }>;
-    removed   : string[];         // eventIds pruned (older than TTL)
+    delivered : Array<{ eventId : string; delivered : Array<string>; finishedAt? : number }>;
+    removed   : Array<string>;         // eventIds pruned (older than TTL)
 }
+
+// ── SES viewer (Monitor → Email) — captured outgoing mail from LocalStack's /_aws/ses ──────────
+/** One captured SES message (normalized from LocalStack's case-varying shape). */
+export interface SesMessage
+{
+    id          : string;
+    timestamp?  : string;
+    region?     : string;
+    source?     : string;                         // From
+    destination? : { ToAddresses? : Array<string>; CcAddresses? : Array<string>; BccAddresses? : Array<string> };
+    subject?    : string;
+    body?       : { text_part? : string; html_part? : string };
+    raw?        : string;                         // raw MIME (SendRawEmail)
+    template?   : string;                         // template name (SendTemplatedEmail)
+    templateData? : string;
+}
+/** Result of fetching the LocalStack SES capture. */
+export interface SesListing { ok : boolean; messages : Array<SesMessage>; endpoint : string; error? : string; }
+
+/** A Cognito verification code captured from the LocalStack log (dev-only — no SES delivery there). */
+export interface CognitoCode { user : string; code : string; at : number; }
+/** The latest captured Cognito code per user, newest first. */
+export interface CognitoCodeListing { ok : boolean; codes : Array<CognitoCode>; error? : string; }
+
+/** What kind of rup process this is (drives the row icon + how the monitor describes it). */
+export type RupProcessKind = "service" | "proxy" | "web" | "turbo" | "cdklocal" | "other";
+
+/** One rup-related OS process the monitor knows about — a service dev server, the web/vite dev server,
+ *  a top-level `turbo run dev`, a `cdklocal` deploy, or the webproxy. `owned` = spawned by THIS console
+ *  session (current); otherwise it's an orphan/stale leftover (a prior session or a manual dev run). */
+export interface RupProcess
+{
+    pid       : number;
+    ppid      : number;
+    kind      : RupProcessKind;
+    service?  : string;        // inferred service id (from cwd / listening port)
+    role?     : string;        // inferred role (from the listening port)
+    port?     : number;        // the port it LISTENs on, if any
+    command   : string;        // trimmed command line
+    startedAt? : number;       // epoch ms (best-effort, from ps lstart)
+    ageSec    : number;        // seconds since start
+    owned     : boolean;       // tracked by the current console session (vs orphan/stale)
+}
+
+/** The monitor's process listing. */
+export interface ProcessListing { ok : boolean; processes : Array<RupProcess>; error? : string; }
+
+/** Result of a reap (kill of stale/orphan rup process trees). */
+export interface ReapResult { ok : boolean; killed : number; error? : string; }
 
 /** IPC channel names — referenced by both preload and main so they can't drift. */
 export const IPC =
@@ -931,6 +1070,7 @@ export const IPC =
     pingAll            : "health:ping-all",
     composeDown        : "compose:down",
     localstackStatus   : "localstack:status",
+    localstackClockSkew : "localstack:clock-skew",
     localstackUp       : "localstack:up",
     localstackDown     : "localstack:down",
     repoRoot           : "repo:root",
@@ -953,6 +1093,9 @@ export const IPC =
     cloudHealth        : "cloud:health",
     cloudTail          : "cloud:tail",
     s3List             : "cloud:s3-list",
+    s3Buckets          : "cloud:s3-buckets",
+    s3Head             : "cloud:s3-head",
+    s3PresignGet       : "cloud:s3-presign-get",
     apigwRoutes        : "cloud:apigw-routes",
     dockerContainers   : "cloud:containers",
     ecsService         : "cloud:ecs-service",
@@ -1022,6 +1165,11 @@ export const IPC =
     configProfiles     : "config:profiles",
     configGet          : "config:get",
     configSave         : "config:save",
+    // secrets manager (the Secrets tab)
+    secretsList        : "secrets:list",
+    secretsGet         : "secrets:get",
+    secretsSave        : "secrets:save",
+    secretsClear       : "secrets:clear",
     // dynamodb (the Data tab)
     dynamoTables       : "dynamo:tables",
     dynamoTableInfo    : "dynamo:table-info",
@@ -1048,7 +1196,16 @@ export const IPC =
     monitorState       : "monitor:state",
     monitorSetTtl      : "monitor:set-ttl",
     monitorClear       : "monitor:clear",
+    // ses viewer (the Email sub-tab)
+    sesMessages        : "ses:messages",
+    sesClear           : "ses:clear",
+    cognitoCodes       : "cognito:codes",   // captured Cognito verification codes (dev)
+    // process monitor (the Processes sub-tab)
+    processList        : "proc:list",
+    processKill        : "proc:kill",
+    processReap        : "proc:reap",
     // events (main → renderer, pushed)
+    onShuttingDown     : "evt:shutting-down",
     onLog              : "evt:log",
     onProc             : "evt:proc",
     onStage            : "evt:stage",

@@ -44,7 +44,7 @@ export function FileDropZone( props: FileDropZone.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////
-    function validateFiles( files: FileList)  : File[] | null
+    function validateFiles( files: FileList)  : Array<File> | null
     {
         let valid : Array<File> = [];
         if( props.maxFiles && files.length > props.maxFiles )
@@ -238,7 +238,7 @@ export namespace FileDropZone
     {
         title               : string;
         maxFiles?           : number;
-        allowedExtensions?  : string[]; // e.g. ['csv', 'xlsx']
+        allowedExtensions?  : Array<string>; // e.g. ['csv', 'xlsx']
         maxSize?            : number;
         dialog?             : boolean;
         disabled?           : boolean;

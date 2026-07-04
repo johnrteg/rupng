@@ -33,6 +33,7 @@
         "@fastify/http-proxy": "11.5.0",
         "@fastify/static": "9.1.3",
         "@opensearch-project/opensearch": "3.6.0",
+        "@repo/ai": "*",
         "@repo/api": "*",
         "@repo/cloud-manifest": "*",
         "@repo/common": "*",

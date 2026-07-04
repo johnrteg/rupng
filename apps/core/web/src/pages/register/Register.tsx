@@ -19,8 +19,8 @@ import AppleIcon            from '@mui/icons-material/Apple';
 import BusinessIcon         from '@mui/icons-material/Business';
 
 //
-import { EmailUtils } from "@repo/common";
-import { PostRegister, PostRegisterVerify } from "@repo/api";
+import { EmailUtils, NetworkUtils } from "@repo/common";
+import { PostRegister, PostRegisterVerify, PostVerifyResend, ContactMethod } from "@repo/api";
 import { RestfulService } from "@repo/endpoint";
 
 //
@@ -35,6 +35,7 @@ import ImageInput           from "@widgets/core/ImageInput";
 import EmailInput           from "@widgets/core/EmailInput";
 import TelephoneInput       from "@widgets/core/TelephoneInput";
 import PasswordInput        from "@widgets/core/PasswordInput";
+import PasswordChecklist     from "@widgets/core/PasswordChecklist";
 import TextInput            from "@widgets/core/TextInput";
 import CheckboxInput        from "@widgets/core/CheckboxInput";
 import ButtonIcon           from "@widgets/core/ButtonIcon";
@@ -69,7 +70,7 @@ export function Register( props : Register.Props ) : JSX.Element
 
     // wizard position + which contact method identifies the account
     const [step,setStep]            = React.useState< Register.Step >( Register.Step.IDENTIFIER );
-    const [method,setMethod]        = React.useState< Register.Method >( Register.Method.EMAIL );
+    const [method,setMethod]        = React.useState< ContactMethod >( ContactMethod.EMAIL );
 
     // IDENTIFIER
     const [email,setEmail]              = React.useState< string >( "" );
@@ -78,7 +79,6 @@ export function Register( props : Register.Props ) : JSX.Element
     // PROFILE
     const [firstName,setFirstName]      = React.useState< string >( "" );
     const [lastName,setLastName]        = React.useState< string >( "" );
-    const [accountName,setAccountName]  = React.useState< string >( "" );
 
     // PASSWORD
     const [password,setPassword]        = React.useState< string >( "" );
@@ -89,27 +89,59 @@ export function Register( props : Register.Props ) : JSX.Element
 
     // VERIFY
     const [code,setCode]                = React.useState< string >( "" );
+    const [codeExpiresAt,setCodeExpiresAt] = React.useState< number >( 0 );   // epoch ms the current code expires (0 = none yet)
+    const [resendAt,setResendAt]        = React.useState< number >( 0 );      // epoch ms the "Resend code" link re-enables
+    const [now,setNow]                  = React.useState< number >( Date.now() );   // 1s ticker, only while on VERIFY
 
     // server flow — the token from POST /register threaded into POST /register/verify; submitting gates buttons
     const [registrationToken,setRegistrationToken] = React.useState< string >( "" );
+    const [botToken,setBotToken]        = React.useState< string >( "" );       // anti-bot proof (stub until the widget is wired)
     const [submitting,setSubmitting]    = React.useState< boolean >( false );
 
     const [error,setError]              = React.useState< string >( "" );
+    const [existsConflict,setExistsConflict] = React.useState< boolean >( false );   // identifier already registered (revealed only post-bot-check)
 
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // per-step validity
-    const identifierValid : boolean = method === Register.Method.EMAIL ? EmailUtils.isValid( email ) : appmodel.ui.locale.phoneValid( phone );
-    const profileValid    : boolean = firstName.trim().length > 0 && lastName.trim().length > 0 && accountName.trim().length > 0;
-    const passwordValid   : boolean = password.length >= Register.MIN_PASSWORD;
+    const identifierValid : boolean = method === ContactMethod.EMAIL ? EmailUtils.isValid( email ) : appmodel.ui.locale.phoneValid( phone );
+    const profileValid    : boolean = firstName.trim().length > 0 && lastName.trim().length > 0;
+    // the active password policy (from bootstrap config) drives BOTH the live checklist and this gate,
+    // so the client pre-checks exactly what the auth service enforces.
+    const passwordPolicy            = appmodel.config.passwordPolicy;
+    const passwordValid   : boolean = PasswordChecklist.satisfies( passwordPolicy, password );
     const confirmMatches  : boolean = confirm.length > 0 && confirm === password;
     const passwordStepValid : boolean = passwordValid && confirmMatches;
     const termsValid      : boolean = agreed;   // ToS accepted on the final step
 
     const codeValid : boolean = code.trim().length === Register.CODE_LENGTH;
 
+    // tick once a second while on the VERIFY step so the two countdowns (code expiry + resend cooldown) update.
+    React.useEffect( () =>
+    {
+        if( step !== Register.Step.VERIFY ) return;
+        const id : ReturnType<typeof setInterval> = setInterval( () => setNow( Date.now() ), 1000 );
+        return () => clearInterval( id );
+    }, [ step ] );
+
+    // derived countdowns (seconds remaining; 0 when elapsed / not yet started)
+    const codeRemainingSec   : number = codeExpiresAt > 0 ? Math.max( 0, Math.ceil( ( codeExpiresAt - now ) / 1000 ) ) : 0;
+    const resendRemainingSec : number = resendAt     > 0 ? Math.max( 0, Math.ceil( ( resendAt     - now ) / 1000 ) ) : 0;
+    const codeExpired   : boolean = codeExpiresAt > 0 && codeRemainingSec === 0;
+    const canResend     : boolean = resendRemainingSec === 0 && !submitting;
+
+    // format a seconds count as "M:SS" (or "H:MM:SS" once it passes an hour) — used by both countdowns.
+    const fmtClock = ( totalSec : number ) : string =>
+    {
+        const pad = ( n : number ) : string => String( n ).padStart( 2, "0" );
+        const hours : number = Math.floor( totalSec / 3600 );
+        const minutes : number = Math.floor( ( totalSec % 3600 ) / 60 );
+        const seconds : number = totalSec % 60;
+        return hours > 0 ? `${hours}:${pad( minutes )}:${pad( seconds )}` : `${minutes}:${pad( seconds )}`;
+    };
+
     // human-readable identifier echoed on the verify step (phone pretty-printed via locale)
-    const identifierDisplay : string = method === Register.Method.EMAIL ? email : appmodel.ui.locale.phone( phone );
+    const identifierDisplay : string = method === ContactMethod.EMAIL ? email : appmodel.ui.locale.phone( phone );
 
     // confirm-password gets an inline error once something's typed and it doesn't match
     const confirmError : string = confirm.length > 0 && !confirmMatches ? "Passwords do not match" : "";
@@ -131,7 +163,7 @@ export function Register( props : Register.Props ) : JSX.Element
         if( !identifierValid ) return;
         setError( "" );
 
-        const identifier : string = method === Register.Method.EMAIL ? email : phone;
+        const identifier : string = method === ContactMethod.EMAIL ? email : phone;
         if( accountExists( identifier ) )
         {
             // TODO: route to sign-in (pre-filled) / "account exists — sign in instead" messaging.
@@ -166,12 +198,16 @@ export function Register( props : Register.Props ) : JSX.Element
     function onContinueBot() : void
     {
         setError( "" );
+        // STUB: no real widget yet, so mark the bot check "passed" with a dev token. The server only
+        // honors this in the LOCAL env (auth BotCheck.verifyBotToken) — in prod the real widget supplies a
+        // verified token. Until then, the already-registered reveal stays gated behind this proof-of-human.
+        setBotToken( "dev-captcha-stub" );
         setStep( Register.Step.TERMS );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // the account identifier (email or E.164 phone) for the current method.
-    const identifier : string = method === Register.Method.EMAIL ? email : phone;
+    const identifier : string = method === ContactMethod.EMAIL ? email : phone;
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // TERMS "Agree & Create Account" → create the account. POST /register creates the pending account
@@ -181,16 +217,24 @@ export function Register( props : Register.Props ) : JSX.Element
     {
         if( !termsValid || submitting ) return;
         setError( "" );
+        setExistsConflict( false );
         setSubmitting( true );
         try
         {
             const reply : RestfulService.Reply<PostRegister.Response> = await appmodel.server.fetch( new PostRegister( {
-                method, account: identifier, firstName, lastName, accountName, password, acceptedTerms: agreed,
+                method, account: identifier, firstName, lastName, password, acceptedTerms: agreed, botToken,
             } ) );
             if( reply.ok && reply.data?.registrationToken )
             {
                 setRegistrationToken( reply.data.registrationToken );
+                startCodeTimers( reply.data.codeExpiresInSec, reply.data.resendCooldownSec );
                 setStep( Register.Step.VERIFY );
+            }
+            else if( reply.status === NetworkUtils.Status.CONFLICT )
+            {
+                // already-registered, revealed only now that the bot check passed → guide them to sign in
+                setExistsConflict( true );
+                setError( "An account already exists for this email or phone. Please sign in instead." );
             }
             else
             {
@@ -235,10 +279,39 @@ export function Register( props : Register.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // TODO: re-send the verification code — POST /api/auth/v1/register/resend.
-    function onResend() : void
+    // Arm the verify-screen countdowns from a server response: when the code expires + when resend re-enables.
+    function startCodeTimers( codeExpiresInSec : number, resendCooldownSec : number ) : void
     {
-        appmodel.log.info( "register.resend", { method } );
+        const at : number = Date.now();
+        setCodeExpiresAt( codeExpiresInSec > 0 ? at + codeExpiresInSec * 1000 : 0 );
+        setResendAt( resendCooldownSec > 0 ? at + resendCooldownSec * 1000 : 0 );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Re-send the verification code (POST /api/auth/v1/verify/resend). Gated by the resend cooldown; on
+    // success a fresh code is sent and BOTH countdowns reset. Enumeration-neutral (always reports sent).
+    async function onResend() : Promise<void>
+    {
+        if( !canResend ) return;
+        setError( "" );
+        setSubmitting( true );
+        try
+        {
+            const reply : RestfulService.Reply<PostVerifyResend.Response> = await appmodel.server.fetch(
+                new PostVerifyResend( { registrationToken } ) );
+            if( reply.ok )
+            {
+                setCode( "" );
+                startCodeTimers( reply.data?.codeExpiresInSec ?? 0, reply.data?.resendCooldownSec ?? 0 );
+            }
+            else setError( "We couldn't resend the code. Please try again." );
+        }
+        catch( err )
+        {
+            appmodel.log.warn( "register.resend", err );
+            setError( "We couldn't resend the code. Please try again." );
+        }
+        finally { setSubmitting( false ); }
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -306,7 +379,7 @@ export function Register( props : Register.Props ) : JSX.Element
         : step === Register.Step.PASSWORD   ? "Set your password"
         : step === Register.Step.BOT        ? "Verify you're human"
         : step === Register.Step.TERMS      ? "Review & accept the terms"
-        : step === Register.Step.VERIFY     ? "Verify your " + ( method === Register.Method.EMAIL ? "email" : "phone" )
+        : step === Register.Step.VERIFY     ? "Verify your " + ( method === ContactMethod.EMAIL ? "email" : "phone" )
         :                                     "You're all set";
 
 
@@ -342,15 +415,15 @@ export function Register( props : Register.Props ) : JSX.Element
                                                         fullWidth
                                                         size="small"
                                                         value={ method }
-                                                        onChange={ ( _e : React.MouseEvent, value : Register.Method | null ) => { if( value ) setMethod( value ); } }>
-                                            <ToggleButton value={ Register.Method.EMAIL }>Email</ToggleButton>
-                                            <ToggleButton value={ Register.Method.PHONE }>Phone</ToggleButton>
+                                                        onChange={ ( _e : React.MouseEvent, value : ContactMethod | null ) => { if( value ) setMethod( value ); } }>
+                                            <ToggleButton value={ ContactMethod.EMAIL }>Email</ToggleButton>
+                                            <ToggleButton value={ ContactMethod.PHONE }>Phone</ToggleButton>
                                         </ToggleButtonGroup>
 
-                                        <Show show={ method === Register.Method.EMAIL }>
+                                        <Show show={ method === ContactMethod.EMAIL }>
                                             <EmailInput id="register-email" label="Email" value={ email } autoComplete="email" onChange={ setEmail } />
                                         </Show>
-                                        <Show show={ method === Register.Method.PHONE }>
+                                        <Show show={ method === ContactMethod.PHONE }>
                                             <TelephoneInput id="register-phone" label="Phone" value={ phone } fullWidth autoComplete="tel" onChange={ setPhone } />
                                         </Show>
 
@@ -372,7 +445,6 @@ export function Register( props : Register.Props ) : JSX.Element
                                             <TextInput id="register-first" label={"First name"} value={ firstName } autoComplete="given-name" onChange={ setFirstName } />
                                             <TextInput id="register-last"  label={"Last name"}  value={ lastName }  autoComplete="family-name" onChange={ setLastName } />
                                         </Stack>
-                                        <TextInput id="register-account" label={"Account name"} value={ accountName } autoComplete="organization" onChange={ setAccountName } />
 
                                         <Button type="submit" variant="contained" fullWidth disabled={ !profileValid }>Continue</Button>
                                     </Show>
@@ -380,7 +452,12 @@ export function Register( props : Register.Props ) : JSX.Element
                                     {/* STEP 3 — PASSWORD */}
                                     <Show show={ step === Register.Step.PASSWORD }>
                                         <PasswordInput id="register-password" label={"Password"} value={ password } autoComplete="new-password" onChange={ setPassword } />
+                                        {/* live rule checklist — checks off each policy requirement as it's met */}
+                                        <PasswordChecklist policy={ passwordPolicy } password={ password } />
                                         <PasswordInput id="register-confirm" label={"Confirm password"} value={ confirm } autoComplete="verify-password" onChange={ setConfirm } />
+                                        <Show show={ confirmError !== "" }>
+                                            <TextLabel variant="caption" color="error" value={ confirmError } />
+                                        </Show>
 
                                         <Button type="submit" variant="contained" fullWidth disabled={ !passwordStepValid }>Continue</Button>
                                     </Show>
@@ -397,16 +474,25 @@ export function Register( props : Register.Props ) : JSX.Element
                                     {/* STEP 5 — VERIFY the contact method */}
                                     <Show show={ step === Register.Step.VERIFY }>
                                         <TextLabel align="center"
-                                                value={ ( method === Register.Method.EMAIL ? "We emailed a code to " : "We texted a code to " ) + identifierDisplay } />
+                                                value={ ( method === ContactMethod.EMAIL ? "We emailed a code to " : "We texted a code to " ) + identifierDisplay } />
                                         <TextInput id="register-code"
                                                     label={"Verification code"}
                                                     value={ code }
                                                     allNumeric
                                                     maxLength={ Register.CODE_LENGTH }
                                                     align="center"
-                                                    onChange={ setCode } />
-                                        <Button type="submit" variant="contained" fullWidth disabled={ !codeValid || submitting }>{ submitting ? "Verifying…" : "Verify" }</Button>
-                                        <LinkButton label={"Resend code"} onClick={ onResend } sx={{ width: "auto", alignSelf: "center" }} />
+                                                    onChange={ ( value : string ) => { setCode( value ); if( error ) setError( "" ); } } />
+                                        <Button type="submit" variant="contained" fullWidth disabled={ !codeValid || submitting || codeExpired }>{ submitting ? "Verifying…" : "Verify" }</Button>
+                                        {/* code-expiry countdown — turns into a prompt to resend once it hits zero */}
+                                        <TextLabel align="center" color="secondary"
+                                                value={ codeExpired
+                                                            ? "Your code has expired — request a new one."
+                                                            : ( codeRemainingSec > 0 ? "Code expires in " + fmtClock( codeRemainingSec ) : "" ) } />
+                                        {/* resend, gated by the cooldown (shows the remaining wait while disabled) */}
+                                        <LinkButton label={ canResend ? "Resend code" : "Resend code in " + fmtClock( resendRemainingSec ) }
+                                                disabled={ !canResend }
+                                                onClick={ () => { void onResend(); } }
+                                                sx={{ width: "auto", alignSelf: "center" }} />
                                     </Show>
 
                                     {/* STEP 6 — TERMS: review + accept, then create the account (stub) */}
@@ -433,7 +519,11 @@ export function Register( props : Register.Props ) : JSX.Element
                                             <TextLabel value={"Scroll to the bottom of the Terms of Service to continue."} />
                                         </Show>
 
-                                        <Button type="submit" variant="contained" fullWidth disabled={ !termsValid || submitting }>{ submitting ? "Creating account…" : "Agree & Create Account" }</Button>
+                                        <Button type="submit" variant="contained" fullWidth disabled={ !termsValid || submitting || existsConflict }>{ submitting ? "Creating account…" : "Agree & Create Account" }</Button>
+                                        {/* already-registered (revealed post-bot-check) → offer a direct, pre-filled sign-in */}
+                                        <Show show={ existsConflict }>
+                                            <Button type="button" variant="outlined" fullWidth onClick={ onComplete }>Sign in instead</Button>
+                                        </Show>
                                     </Show>
 
                                     {/* STEP 7 — SUCCESS: account created + verified → invite them to sign in */}
@@ -486,12 +576,6 @@ export namespace Register
         TERMS      = "terms",        // review + accept ToS → create the account (POST /register)
         VERIFY     = "verify",       // emailed/texted code (POST /register/verify)
         SUCCESS    = "success",      // account created + verified → sign-in CTA
-    }
-
-    export enum Method
-    {
-        EMAIL = "email",
-        PHONE = "phone",
     }
 
     // social / consumer SSO providers (enterprise SAML/OIDC handled separately)

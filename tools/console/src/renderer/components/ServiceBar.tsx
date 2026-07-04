@@ -9,9 +9,9 @@ import { ServiceButton, type ServiceDot } from "./ServiceButton";
 export function ServiceBar(
     { services, selected, statusOf, onSelect } :
     {
-        services : ServiceInfo[];
+        services : Array<ServiceInfo>;
         selected : string | null;
-        statusOf : ( id : string ) => ServiceDot[];
+        statusOf : ( id : string ) => Array<ServiceDot>;
         onSelect : ( id : string ) => void;
     }
 )
@@ -34,13 +34,13 @@ export function ServiceBar(
                 "&::-webkit-scrollbar-thumb": { background: "#30363d", borderRadius: 4 }
             }}
         >
-            {services.map( ( svc ) => (
+            {services.map( ( service : ServiceInfo ) => (
                 <ServiceButton
-                    key={svc.id}
-                    service={svc}
-                    selected={selected === svc.id}
-                    dots={statusOf( svc.id )}
-                    onSelect={() => onSelect( svc.id )}
+                    key={service.id}
+                    service={service}
+                    selected={selected === service.id}
+                    dots={statusOf( service.id )}
+                    onSelect={() => onSelect( service.id )}
                 />
             ) )}
         </Box>

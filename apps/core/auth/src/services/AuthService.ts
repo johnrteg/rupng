@@ -1,11 +1,12 @@
 //
 
-import { Application, Service, Ports, Register, Cognito, Dynamo, Kafka } from "@repo/services";
+import { Application, Service, Ports, Register, Cognito, Dynamo, Kafka, Events } from "@repo/services";
 
 import { AuthConfig } from "@repo/api";
 
 import UserStore from "./UserStore";
 import PasskeyStore from "./PasskeyStore";
+import ApiKeyStore from "./ApiKeyStore";
 
 // read-side endpoint impls
 import GetUsersImpl      from '../endpoints/GetUsersImpl';
@@ -15,6 +16,7 @@ import GetSessionImpl    from '../endpoints/GetSessionImpl';
 import GetSessionsImpl   from '../endpoints/GetSessionsImpl';
 import GetAccountsImpl   from '../endpoints/GetAccountsImpl';
 import GetPasskeysImpl   from '../endpoints/GetPasskeysImpl';
+import GetApiKeysImpl    from '../endpoints/GetApiKeysImpl';
 
 // write-side endpoint impls (stepped sign-in, registration, sessions, password reset, passkeys, metadata)
 import PostLoginIdentifyImpl        from '../endpoints/PostLoginIdentifyImpl';
@@ -39,6 +41,11 @@ import PostPasskeyRegisterVerifyImpl  from '../endpoints/PostPasskeyRegisterVeri
 import PostLoginPasskeyOptionsImpl    from '../endpoints/PostLoginPasskeyOptionsImpl';
 import PostLoginPasskeyVerifyImpl     from '../endpoints/PostLoginPasskeyVerifyImpl';
 import DeletePasskeyImpl              from '../endpoints/DeletePasskeyImpl';
+import PostMfaTotpBeginImpl           from '../endpoints/PostMfaTotpBeginImpl';
+import PostMfaTotpVerifyImpl          from '../endpoints/PostMfaTotpVerifyImpl';
+import DeleteMfaTotpImpl              from '../endpoints/DeleteMfaTotpImpl';
+import PostApiKeyImpl                 from '../endpoints/PostApiKeyImpl';
+import DeleteApiKeyImpl               from '../endpoints/DeleteApiKeyImpl';
 
 //
 // common auth server base
@@ -56,6 +63,7 @@ export class AuthService extends Service
     private _kafka?    : Kafka;
     private _users?    : UserStore;
     private _passkeys? : PasskeyStore;
+    private _apiKeys?  : ApiKeyStore;
 
     ///////////////////////////////////////////////////////////////////////////////////////
     constructor( role : AuthService.Role )
@@ -80,11 +88,59 @@ export class AuthService extends Service
     /** Kafka facade — publishes auth entity events (e.g. auth.user.created). Lazy + cached. */
     public get kafka() : Kafka { return this._kafka ??= new Kafka( this.cloud ); }
 
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** Publish an `auth.*` lifecycle event (events dictionary). Best-effort — a bus miss is logged, never
+     *  fails the request. Identity-centric: `accountId` scopes by the acting account when known, else the
+     *  userId (no account context at login/registration). `actorUserId` (if given) makes it USER-actored. */
+    public async emit( object : Events.Object, verb : Events.Verb, targetType : string, targetId : string, accountId : string, data : unknown, actorUserId? : string ) : Promise<void>
+    {
+        const env : Events.Envelope = Events.envelope( { object, verb, accountId, target: { type: targetType, id: targetId }, data, actorUserId } );
+        const published = await this.kafka.publishEvent( env );
+        if( !published.ok ) this.log.warn( "auth event publish failed", { action: env.action, targetId, error: published.error } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** Publish `auth.session.created` — a LOGIN, from ANY path (password / passkey / MFA). The account
+     *  service consumes it to stamp the user's `lastLoginAt`. Best-effort. No acting account at login →
+     *  scope by userId. */
+    public async publishLogin( userId : string, username? : string ) : Promise<void>
+    {
+        if( !userId ) return;
+        await this.emit( Events.Object.AUTH_SESSION, Events.Verb.CREATED, "session", userId, userId, { userId, username, at: new Date().toISOString() }, userId );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** The `sub` (userId) from an access token's payload — decode-only (no verification; the token was just
+     *  minted). Used so a login event can carry the userId regardless of which flow issued the token. */
+    public subFromToken( accessToken? : string ) : string
+    {
+        try
+        {
+            const payload : string | undefined = accessToken?.split( "." )[ 1 ];
+            if( !payload ) return "";
+            const claims = JSON.parse( Buffer.from( payload, "base64url" ).toString( "utf8" ) ) as { sub? : string; username? : string };
+            return String( claims.sub ?? claims.username ?? "" );
+        }
+        catch { return ""; }
+    }
+
+    /** On shutdown, disconnect the Kafka producer/consumers BEFORE the base closes the HTTP server —
+     *  open broker connections (and any consumer run-loop) otherwise keep the process alive, so it lingers
+     *  past SIGINT and the dev watcher has to force-kill it. */
+    protected async aboutToQuit() : Promise<void>
+    {
+        if( this._kafka ) { try { await this._kafka.disconnect(); } catch( err ) { this.log.error( "kafka disconnect failed", err ); } }
+        await super.aboutToQuit();
+    }
+
     /** UserStore — the auth data layer (Cognito credentials + DynamoDB metadata). Lazy + cached. */
     public get users() : UserStore { return this._users ??= new UserStore( this.cognito, this.dynamo ); }
 
     /** PasskeyStore — WebAuthn (FIDO2) ceremonies + credential storage. Lazy + cached. */
     public get passkeys() : PasskeyStore { return this._passkeys ??= new PasskeyStore( this.dynamo ); }
+
+    /** ApiKeyStore — developer API key mint/list/revoke (the `api_keys` table). Lazy + cached. */
+    public get apiKeys() : ApiKeyStore { return this._apiKeys ??= new ApiKeyStore( this.dynamo ); }
 
     ///////////////////////////////////////////////////////////////////////////////////////
     protected async init() : Promise<void>
@@ -92,11 +148,11 @@ export class AuthService extends Service
         super.init();
 
         // Ensure the runtime config (AppConfig config/settings) exists — seed a fresh environment with
-        // AuthConfig.SEED so the service (and the Console Config tab) have usable defaults without a
+        // AuthConfig.DEFAULT so the service (and the Console Config tab) have usable defaults without a
         // manual step. Idempotent: returns the live value once seeded.
-        const seeded = await this.appConfig.ensureSeeded( "config", "settings", AuthConfig.SEED );
+        const seeded = await this.appConfig.ensureSeeded( "config", "settings", AuthConfig.DEFAULT );
         if( seeded.ok ) this.log.info( "auth config ready" );
-        else this.log.warn( "auth config seed failed — using SEED until deployed", { error: seeded.error } );
+        else this.log.warn( "auth config seed failed — using DEFAULT until deployed", { error: seeded.error } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
@@ -111,6 +167,7 @@ export class AuthService extends Service
         this.register( new GetSessionsImpl( this ) );
         this.register( new GetAccountsImpl( this ) );
         this.register( new GetPasskeysImpl( this ) );
+        this.register( new GetApiKeysImpl( this ) );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
@@ -149,6 +206,15 @@ export class AuthService extends Service
         this.register( new PostLoginPasskeyOptionsImpl( this ) );
         this.register( new PostLoginPasskeyVerifyImpl( this ) );
         this.register( new DeletePasskeyImpl( this ) );
+
+        // authenticator-app (TOTP) MFA enrolment
+        this.register( new PostMfaTotpBeginImpl( this ) );
+        this.register( new PostMfaTotpVerifyImpl( this ) );
+        this.register( new DeleteMfaTotpImpl( this ) );
+
+        // developer API keys (mint / revoke) — the list is a read endpoint
+        this.register( new PostApiKeyImpl( this ) );
+        this.register( new DeleteApiKeyImpl( this ) );
 
         // user metadata (writes)
         this.register( new PostUserMetaImpl( this ) );

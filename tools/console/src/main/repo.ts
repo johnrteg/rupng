@@ -15,11 +15,13 @@ import { processManager } from "./processManager";
 // go through the process manager so their output streams to the Repo console.
 //
 
-function git( args : string[] ) : string
+/** Run a git command synchronously in the repo root and return its stdout. */
+function git( args : Array<string> ) : string
 {
     return execFileSync( "git", args, { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 } );
 }
 
+/** The name of the currently checked-out branch. */
 function currentBranch() : string { return git( [ "rev-parse", "--abbrev-ref", "HEAD" ] ).trim(); }
 
 /** Local + remote branches (origin/ stripped, de-duped, current first) — for the pull/push selectors. */
@@ -27,16 +29,17 @@ export function branches() : import("../shared/types").RepoBranches
 {
     try
     {
-        const cur : string = currentBranch();
-        const raw : string[] = git( [ "branch", "-a", "--format=%(refname:short)" ] ).split( "\n" ).map( ( s ) => s.trim() ).filter( Boolean );
+        const current : string = currentBranch();
+        const rawBranches : Array<string> = git( [ "branch", "-a", "--format=%(refname:short)" ] ).split( "\n" ).map( ( line ) => line.trim() ).filter( Boolean );
         const names : Set<string> = new Set();
-        for ( const r of raw )
+        for ( const branchName of rawBranches )
         {
-            if ( r.startsWith( "origin/" ) ) { if ( r !== "origin/HEAD" ) names.add( r.slice( "origin/".length ) ); }
-            else names.add( r );
+            // collapse origin/<x> down to <x> (and drop the origin/HEAD pointer) so local + remote de-dupe
+            if ( branchName.startsWith( "origin/" ) ) { if ( branchName !== "origin/HEAD" ) names.add( branchName.slice( "origin/".length ) ); }
+            else names.add( branchName );
         }
-        const list : string[] = [ ...names ].filter( ( b ) => b !== cur ).sort();
-        return { current: cur, branches: [ cur, ...list ] };
+        const others : Array<string> = [ ...names ].filter( ( name ) => name !== current ).sort();
+        return { current, branches: [ current, ...others ] };
     }
     catch { return { current: "?", branches: [] }; }
 }
@@ -44,7 +47,7 @@ export function branches() : import("../shared/types").RepoBranches
 /** Map a repo-relative file path to the workspace area that owns it. */
 function areaFor( file : string ) : { path : string; name : string; kind : RepoAreaKind }
 {
-    const parts : string[] = file.split( "/" );
+    const parts : Array<string> = file.split( "/" );
     if ( file.startsWith( "apps/" ) && parts.length >= 3 )      return { path: parts.slice( 0, 3 ).join( "/" ), name: parts[ 2 ], kind: "service" };
     if ( file.startsWith( "packages/" ) && parts.length >= 2 )  return { path: `packages/${parts[ 1 ]}`, name: parts[ 1 ], kind: "package" };
     if ( file.startsWith( "cloud/" ) )                          return { path: "cloud", name: "cloud", kind: "cloud" };
@@ -52,11 +55,12 @@ function areaFor( file : string ) : { path : string; name : string; kind : RepoA
     return { path: ".", name: "(root)", kind: "root" };
 }
 
+/** The version declared in an area's package.json, or undefined if there's none / it's unreadable. */
 function versionAt( areaPath : string ) : string | undefined
 {
-    const p : string = join( REPO_ROOT, areaPath, "package.json" );
-    if ( !existsSync( p ) ) return undefined;
-    try { return ( JSON.parse( readFileSync( p, "utf8" ) ) as { version? : string } ).version; }
+    const packageJsonPath : string = join( REPO_ROOT, areaPath, "package.json" );
+    if ( !existsSync( packageJsonPath ) ) return undefined;
+    try { return ( JSON.parse( readFileSync( packageJsonPath, "utf8" ) ) as { version? : string } ).version; }
     catch { return undefined; }
 }
 
@@ -66,8 +70,8 @@ export function repoStatus() : RepoStatus
     try
     {
         const branch : string = git( [ "rev-parse", "--abbrev-ref", "HEAD" ] ).trim();
-        const porcelain : string[] = git( [ "status", "--porcelain" ] ).split( "\n" ).filter( Boolean );
-        const conflicts : string[] = git( [ "diff", "--name-only", "--diff-filter=U" ] ).split( "\n" ).filter( Boolean );
+        const porcelain : Array<string> = git( [ "status", "--porcelain" ] ).split( "\n" ).filter( Boolean );
+        const conflicts : Array<string> = git( [ "diff", "--name-only", "--diff-filter=U" ] ).split( "\n" ).filter( Boolean );
 
         const grouped : Map<string, RepoArea> = new Map();
         for ( const line of porcelain )
@@ -76,14 +80,14 @@ export function repoStatus() : RepoStatus
             const arrow : number = file.indexOf( " -> " );        // renames: "old -> new"
             if ( arrow >= 0 ) file = file.slice( arrow + 4 );
             file = file.replace( /^"|"$/g, "" );
-            const a = areaFor( file );
-            const existing : RepoArea | undefined = grouped.get( a.path );
+            const area = areaFor( file );
+            const existing : RepoArea | undefined = grouped.get( area.path );
             if ( existing ) { existing.changed += 1; existing.files.push( file ); }
-            else grouped.set( a.path, { path: a.path, name: a.name, kind: a.kind, changed: 1, files: [ file ],
-                                        version: versionAt( a.path ), deleted: !existsSync( join( REPO_ROOT, a.path ) ) } );
+            else grouped.set( area.path, { path: area.path, name: area.name, kind: area.kind, changed: 1, files: [ file ],
+                                        version: versionAt( area.path ), deleted: !existsSync( join( REPO_ROOT, area.path ) ) } );
         }
 
-        const areas : RepoArea[] = [ ...grouped.values() ].sort( ( x, y ) => x.path.localeCompare( y.path ) );
+        const areas : Array<RepoArea> = [ ...grouped.values() ].sort( ( left, right ) => left.path.localeCompare( right.path ) );
 
         return { branch, areas, conflicts, clean: porcelain.length === 0 };
     }
@@ -93,22 +97,22 @@ export function repoStatus() : RepoStatus
 /** Bump an area's package.json version (semver core x.y.z). Returns the new version. */
 export function bumpVersion( areaPath : string, kind : BumpKind ) : { ok : boolean; version? : string; error? : string }
 {
-    const p : string = join( REPO_ROOT, areaPath, "package.json" );
-    if ( !existsSync( p ) ) return { ok: false, error: "no package.json in this area" };
+    const packageJsonPath : string = join( REPO_ROOT, areaPath, "package.json" );
+    if ( !existsSync( packageJsonPath ) ) return { ok: false, error: "no package.json in this area" };
     try
     {
-        const pkg = JSON.parse( readFileSync( p, "utf8" ) ) as { version? : string };
-        const cur : string = pkg.version ?? "0.0.0";
-        const m : RegExpMatchArray | null = cur.match( /^(\d+)\.(\d+)\.(\d+)(.*)$/ );
-        if ( !m ) return { ok: false, error: `unparseable version "${cur}"` };
-        let [ maj, min, pat ] : number[] = [ Number( m[ 1 ] ), Number( m[ 2 ] ), Number( m[ 3 ] ) ];
-        if ( kind === "major" ) { maj += 1; min = 0; pat = 0; }
-        else if ( kind === "minor" ) { min += 1; pat = 0; }
-        else pat += 1;
-        const next : string = `${maj}.${min}.${pat}`;
+        const pkg = JSON.parse( readFileSync( packageJsonPath, "utf8" ) ) as { version? : string };
+        const current : string = pkg.version ?? "0.0.0";
+        const match : RegExpMatchArray | null = current.match( /^(\d+)\.(\d+)\.(\d+)(.*)$/ );
+        if ( !match ) return { ok: false, error: `unparseable version "${current}"` };
+        let [ major, minor, patch ] : Array<number> = [ Number( match[ 1 ] ), Number( match[ 2 ] ), Number( match[ 3 ] ) ];
+        if ( kind === "major" ) { major += 1; minor = 0; patch = 0; }
+        else if ( kind === "minor" ) { minor += 1; patch = 0; }
+        else patch += 1;
+        const next : string = `${major}.${minor}.${patch}`;
         pkg.version = next;
-        writeFileSync( p, JSON.stringify( pkg, null, 4 ) + "\n" );
-        logStore.sys( REPO_ID, "runtime", `⇧ ${areaPath}: ${cur} → ${next}` );
+        writeFileSync( packageJsonPath, JSON.stringify( pkg, null, 4 ) + "\n" );
+        logStore.sys( REPO_ID, "runtime", `⇧ ${areaPath}: ${current} → ${next}` );
         return { ok: true, version: next };
     }
     catch ( err ) { return { ok: false, error: ( err as Error ).message }; }
@@ -125,16 +129,16 @@ export function bumpVersion( areaPath : string, kind : BumpKind ) : { ok : boole
 export async function pull( branch? : string ) : Promise<number>
 {
     // pull a specific branch from origin, or the tracked upstream of the current branch
-    const from : string[] = branch && branch !== currentBranch() ? [ "origin", branch ] : [];
-    if ( from.length ) logStore.sys( REPO_ID, "runtime", `pulling origin/${branch} into ${currentBranch()}…` );
+    const source : Array<string> = branch && branch !== currentBranch() ? [ "origin", branch ] : [];
+    if ( source.length ) logStore.sys( REPO_ID, "runtime", `pulling origin/${branch} into ${currentBranch()}…` );
 
-    const code : number = await processManager.exec( REPO_ID, "runtime", "git", [ "pull", "--no-edit", ...from ], REPO_ROOT );
+    const code : number = await processManager.exec( REPO_ID, "runtime", "git", [ "pull", "--no-edit", ...source ], REPO_ROOT );
     if ( code === 0 ) return 0;
 
     logStore.sys( REPO_ID, "runtime",
         "⚠ plain pull couldn't merge cleanly (local changes or divergent history). " +
         "Retrying with rebase + autostash — stashing your changes, rebasing the remote in, then reapplying them…" );
-    return processManager.exec( REPO_ID, "runtime", "git", [ "pull", "--rebase", "--autostash", ...from ], REPO_ROOT );
+    return processManager.exec( REPO_ID, "runtime", "git", [ "pull", "--rebase", "--autostash", ...source ], REPO_ROOT );
 }
 
 /** Delete every node_modules across the workspaces, then `npm install` + `npm run build`. */
@@ -158,7 +162,7 @@ export async function reinstall() : Promise<number>
  * slow). npm exits 1 when anything is outdated but still prints JSON to stdout, so we parse stdout
  * regardless of exit code. Each package may have one entry or several (one per dependent).
  */
-export function npmOutdated() : Promise<{ deps : NpmOutdated[]; error? : string }>
+export function npmOutdated() : Promise<{ deps : Array<NpmOutdated>; error? : string }>
 {
     return new Promise( ( resolve ) =>
     {
@@ -169,11 +173,12 @@ export function npmOutdated() : Promise<{ deps : NpmOutdated[]; error? : string 
             try
             {
                 const json = JSON.parse( text ) as Record<string, unknown>;
-                const deps : NpmOutdated[] = [];
+                const deps : Array<NpmOutdated> = [];
                 for ( const [ name, info ] of Object.entries( json ) )
-                    for ( const e of ( Array.isArray( info ) ? info : [ info ] ) as Array<Record<string, string>> )
-                        deps.push( { name, current: e.current ?? "—", wanted: e.wanted ?? "", latest: e.latest ?? "", dependent: e.dependent ?? "" } );
-                deps.sort( ( a, b ) => a.name.localeCompare( b.name ) );
+                    // npm reports either a single object or an array (one entry per dependent) — normalize to an array
+                    for ( const entry of ( Array.isArray( info ) ? info : [ info ] ) as Array<Record<string, string>> )
+                        deps.push( { name, current: entry.current ?? "—", wanted: entry.wanted ?? "", latest: entry.latest ?? "", dependent: entry.dependent ?? "" } );
+                deps.sort( ( left, right ) => left.name.localeCompare( right.name ) );
                 resolve( { deps } );
             }
             catch ( err ) { resolve( { deps: [], error: ( err as Error ).message } ); }
@@ -183,31 +188,36 @@ export function npmOutdated() : Promise<{ deps : NpmOutdated[]; error? : string 
 
 // ── cross-workspace version reconciliation (Sync Version) ─────────────────────────────────────────
 
-function isSemver( v : string ) : boolean { return /^\d+\.\d+\.\d+/.test( v ); }
+/** Does the string start with an x.y.z semver core? */
+function isSemver( version : string ) : boolean { return /^\d+\.\d+\.\d+/.test( version ); }
+
+/** Compare two semver cores: negative if a < b, positive if a > b, 0 if equal/unparseable. */
 function semverCmp( a : string, b : string ) : number
 {
-    const pa = a.match( /(\d+)\.(\d+)\.(\d+)/ ), pb = b.match( /(\d+)\.(\d+)\.(\d+)/ );
-    if ( !pa || !pb ) return 0;
-    for ( let i = 1; i <= 3; i++ ) { const d : number = Number( pa[ i ] ) - Number( pb[ i ] ); if ( d !== 0 ) return d; }
+    const partsA = a.match( /(\d+)\.(\d+)\.(\d+)/ ), partsB = b.match( /(\d+)\.(\d+)\.(\d+)/ );
+    if ( !partsA || !partsB ) return 0;
+    for ( let segment = 1; segment <= 3; segment++ ) { const diff : number = Number( partsA[ segment ] ) - Number( partsB[ segment ] ); if ( diff !== 0 ) return diff; }
     return 0;
 }
-function newestOf( versions : string[] ) : string { return versions.filter( isSemver ).reduce( ( a, b ) => ( semverCmp( a, b ) >= 0 ? a : b ) ); }
+
+/** The highest semver among the given versions (ignores non-semver entries). */
+function newestOf( versions : Array<string> ) : string { return versions.filter( isSemver ).reduce( ( a, b ) => ( semverCmp( a, b ) >= 0 ? a : b ) ); }
 
 /** Every rupng workspace package.json (root, cloud, packages, apps). Excludes tools/* — the console
  *  manages its own deps; the Repo tab must never update/sync the running tool's dependencies. */
-function packageFiles() : string[] {
-    const files : string[] = [];
-    const add = ( dir : string ) : void => { const p = join( dir, "package.json" ); if ( existsSync( p ) ) files.push( p ); };
+function packageFiles() : Array<string> {
+    const files : Array<string> = [];
+    const add = ( dir : string ) : void => { const packageJsonPath = join( dir, "package.json" ); if ( existsSync( packageJsonPath ) ) files.push( packageJsonPath ); };
     add( REPO_ROOT );
     add( join( REPO_ROOT, "cloud" ) );
-    for ( const p of safeDirs( join( REPO_ROOT, "packages" ) ) ) add( p );
-    for ( const grp of safeDirs( join( REPO_ROOT, "apps" ) ) ) for ( const svc of safeDirs( grp ) ) add( svc );
+    for ( const packageDir of safeDirs( join( REPO_ROOT, "packages" ) ) ) add( packageDir );
+    for ( const groupDir of safeDirs( join( REPO_ROOT, "apps" ) ) ) for ( const serviceDir of safeDirs( groupDir ) ) add( serviceDir );
     return files;
 }
 
 /** name → its occurrences (area + version + dev) across every package.json. */
-function scanDeps() : Map<string, VersionOccurrence[]> {
-    const map : Map<string, VersionOccurrence[]> = new Map();
+function scanDeps() : Map<string, Array<VersionOccurrence>> {
+    const map : Map<string, Array<VersionOccurrence>> = new Map();
     for ( const file of packageFiles() )
     {
         const area : string = relative( REPO_ROOT, dirname( file ) ) || ".";
@@ -217,29 +227,29 @@ function scanDeps() : Map<string, VersionOccurrence[]> {
             for ( const [ name, version ] of Object.entries( pkg[ block ] ?? {} ) )
             {
                 if ( typeof version !== "string" || !isSemver( version ) ) continue;
-                const arr : VersionOccurrence[] = map.get( name ) ?? [];
-                arr.push( { area, version, dev } );
-                map.set( name, arr );
+                const occurrences : Array<VersionOccurrence> = map.get( name ) ?? [];
+                occurrences.push( { area, version, dev } );
+                map.set( name, occurrences );
             }
     }
     return map;
 }
 
 /** Libraries declared at more than one version across the workspaces (newest = the sync target). */
-export function versionConflicts() : { conflicts : VersionConflict[]; error? : string } {
+export function versionConflicts() : { conflicts : Array<VersionConflict>; error? : string } {
     try
     {
-        const map : Map<string, VersionOccurrence[]> = scanDeps();
-        const conflicts : VersionConflict[] = [];
-        for ( const [ name, occ ] of map )
+        const map : Map<string, Array<VersionOccurrence>> = scanDeps();
+        const conflicts : Array<VersionConflict> = [];
+        for ( const [ name, occurrences ] of map )
         {
-            const distinctVersions : Set<string> = new Set( occ.map( ( o ) => o.version ) );
-            const distinctAreas : Set<string> = new Set( occ.map( ( o ) => o.area ) );
+            const distinctVersions : Set<string> = new Set( occurrences.map( ( occurrence ) => occurrence.version ) );
+            const distinctAreas : Set<string> = new Set( occurrences.map( ( occurrence ) => occurrence.area ) );
             // only libraries used in MORE THAN ONE package, and not already on the same version
             if ( distinctAreas.size > 1 && distinctVersions.size > 1 )
-                conflicts.push( { name, newest: newestOf( occ.map( ( o ) => o.version ) ), occurrences: occ.sort( ( a, b ) => semverCmp( a.version, b.version ) ) } );
+                conflicts.push( { name, newest: newestOf( occurrences.map( ( occurrence ) => occurrence.version ) ), occurrences: occurrences.sort( ( left, right ) => semverCmp( left.version, right.version ) ) } );
         }
-        conflicts.sort( ( a, b ) => a.name.localeCompare( b.name ) );
+        conflicts.sort( ( left, right ) => left.name.localeCompare( right.name ) );
         return { conflicts };
     }
     catch ( err ) { return { conflicts: [], error: ( err as Error ).message }; }
@@ -248,27 +258,27 @@ export function versionConflicts() : { conflicts : VersionConflict[]; error? : s
 /** Set a dependency's version in one package.json (raw-text edit, preserves formatting). */
 function setDepVersion( file : string, name : string, version : string ) : boolean {
     const text : string = readFileSync( file, "utf8" );
-    const esc : string = name.replace( /[.*+?^${}()|[\]\\]/g, "\\$&" );
-    const re = new RegExp( `("${esc}"\\s*:\\s*")[^"]*(")`, "g" );
-    const next : string = text.replace( re, `$1${version}$2` );
+    const escapedName : string = name.replace( /[.*+?^${}()|[\]\\]/g, "\\$&" );
+    const declarationPattern = new RegExp( `("${escapedName}"\\s*:\\s*")[^"]*(")`, "g" );
+    const next : string = text.replace( declarationPattern, `$1${version}$2` );
     if ( next === text ) return false;
     writeFileSync( file, next );
     return true;
 }
 
 /** Align each named library to its newest version across all package.json, then `npm install`. */
-export async function syncVersions( names : string[] ) : Promise<number> {
-    const map : Map<string, VersionOccurrence[]> = scanDeps();
+export async function syncVersions( names : Array<string> ) : Promise<number> {
+    const map : Map<string, Array<VersionOccurrence>> = scanDeps();
     let changed : number = 0;
     for ( const name of names )
     {
-        const occ : VersionOccurrence[] | undefined = map.get( name );
-        if ( !occ || occ.length === 0 ) continue;
-        const newest : string = newestOf( occ.map( ( o ) => o.version ) );
+        const occurrences : Array<VersionOccurrence> | undefined = map.get( name );
+        if ( !occurrences || occurrences.length === 0 ) continue;
+        const newest : string = newestOf( occurrences.map( ( occurrence ) => occurrence.version ) );
         for ( const file of packageFiles() )
         {
             const area : string = relative( REPO_ROOT, dirname( file ) ) || ".";
-            if ( occ.some( ( o ) => o.area === area && o.version !== newest ) && setDepVersion( file, name, newest ) )
+            if ( occurrences.some( ( occurrence ) => occurrence.area === area && occurrence.version !== newest ) && setDepVersion( file, name, newest ) )
             { changed += 1; logStore.sys( REPO_ID, "runtime", `⇧ ${area}: ${name} → ${newest}` ); }
         }
     }
@@ -284,21 +294,21 @@ export async function syncVersions( names : string[] ) : Promise<number> {
  * a workspace like packages/services, not the root — so `npm install pkg@latest` at the root is a
  * no-op against a pinned workspace version). Then `reinstall()` installs the new versions.
  */
-export async function updateDeps( names : string[] ) : Promise<number>
+export async function updateDeps( names : Array<string> ) : Promise<number>
 {
     if ( names.length > 0 )
     {
         const { deps } = await npmOutdated();
-        const latest : Map<string, string> = new Map( deps.map( ( d ) => [ d.name, d.latest ] ) );
+        const latest : Map<string, string> = new Map( deps.map( ( dep ) => [ dep.name, dep.latest ] ) );
         let changed : number = 0;
         for ( const file of packageFiles() )
         {
             const area : string = relative( REPO_ROOT, dirname( file ) ) || ".";
             for ( const name of names )
             {
-                const v : string | undefined = latest.get( name );
-                if ( v && isSemver( v ) && setDepVersion( file, name, v ) )
-                { changed += 1; logStore.sys( REPO_ID, "runtime", `⇧ ${area}: ${name} → ${v}` ); }
+                const latestVersion : string | undefined = latest.get( name );
+                if ( latestVersion && isSemver( latestVersion ) && setDepVersion( file, name, latestVersion ) )
+                { changed += 1; logStore.sys( REPO_ID, "runtime", `⇧ ${area}: ${name} → ${latestVersion}` ); }
             }
         }
         logStore.sys( REPO_ID, "runtime", `updated ${changed} dependency declaration(s) to latest — reinstalling…` );
@@ -310,7 +320,7 @@ export async function updateDeps( names : string[] ) : Promise<number>
  * Run unit tests once (vitest run). With area paths → just those areas' tests (per-area); empty →
  * the whole repo (all). `--passWithNoTests` so an impacted area without tests doesn't fail the gate.
  */
-export function test( areas : string[] = [] ) : Promise<number>
+export function test( areas : Array<string> = [] ) : Promise<number>
 {
     if ( areas.length === 0 )
         return processManager.exec( REPO_ID, "runtime", "npm", [ "test", "--", "--run", "--passWithNoTests" ], REPO_ROOT );
@@ -323,47 +333,49 @@ export function test( areas : string[] = [] ) : Promise<number>
  * We don't `git checkout` the target: that fails on a dirty tree. Committing where you are and
  * pushing to the chosen ref is safe and needs no clean working tree.
  */
-export async function commitPush( branch : string, message : string, paths : string[] = [] ) : Promise<number>
+export async function commitPush( branch : string, message : string, paths : Array<string> = [] ) : Promise<number>
 {
-    const cur : string = currentBranch();
-    const add : string[] = paths.length > 0 ? [ "add", "--", ...paths ] : [ "add", "-A" ];
+    const current : string = currentBranch();
+    const addArgs : Array<string> = paths.length > 0 ? [ "add", "--", ...paths ] : [ "add", "-A" ];
     logStore.sys( REPO_ID, "runtime", `staging: ${paths.length > 0 ? paths.join( ", " ) : "all changes"}` );
-    if ( await processManager.exec( REPO_ID, "runtime", "git", add, REPO_ROOT ) !== 0 ) return 1;
+    if ( await processManager.exec( REPO_ID, "runtime", "git", addArgs, REPO_ROOT ) !== 0 ) return 1;
     if ( await processManager.exec( REPO_ID, "runtime", "git", [ "commit", "-m", message ], REPO_ROOT ) !== 0 ) return 1;
 
-    const cross : boolean = !!branch && branch !== cur;
-    if ( cross ) logStore.sys( REPO_ID, "runtime", `pushing ${cur} → origin/${branch}` );
-    const push : string[] = cross ? [ "push", "origin", `HEAD:${branch}` ] : [ "push", "-u", "origin", "HEAD" ];
-    return processManager.exec( REPO_ID, "runtime", "git", push, REPO_ROOT );
+    // pushing to a different branch than the one checked out → push HEAD to that ref (creates it if new)
+    const crossBranch : boolean = !!branch && branch !== current;
+    if ( crossBranch ) logStore.sys( REPO_ID, "runtime", `pushing ${current} → origin/${branch}` );
+    const pushArgs : Array<string> = crossBranch ? [ "push", "origin", `HEAD:${branch}` ] : [ "push", "-u", "origin", "HEAD" ];
+    return processManager.exec( REPO_ID, "runtime", "git", pushArgs, REPO_ROOT );
 }
 
 /** Commit + push the selected paths, then open a PR (head = the pushed branch) via the GitHub CLI. */
-export async function createPR( branch : string, title : string, paths : string[] = [] ) : Promise<number>
+export async function createPR( branch : string, title : string, paths : Array<string> = [] ) : Promise<number>
 {
-    const cur : string = currentBranch();
+    const current : string = currentBranch();
     const code : number = await commitPush( branch, title, paths );
     if ( code !== 0 ) return code;
-    const head : string[] = branch && branch !== cur ? [ "--head", branch ] : [];
-    return processManager.exec( REPO_ID, "runtime", "gh", [ "pr", "create", "--fill", "--title", title, ...head ], REPO_ROOT );
+    const headArgs : Array<string> = branch && branch !== current ? [ "--head", branch ] : [];
+    return processManager.exec( REPO_ID, "runtime", "gh", [ "pr", "create", "--fill", "--title", title, ...headArgs ], REPO_ROOT );
 }
 
 /** Locate node_modules dirs at the root + each workspace (one level deep — not nested ones). */
-function nodeModulesDirs() : string[]
+function nodeModulesDirs() : Array<string>
 {
     // NOTE: deliberately excludes tools/* (the console itself) — it isn't a root workspace, so a root
     // `npm install` wouldn't restore it, and wiping the running app's own deps is self-destructive.
-    const out : string[] = [];
-    const add = ( dir : string ) : void => { const nm = join( dir, "node_modules" ); if ( existsSync( nm ) ) out.push( nm ); };
+    const dirs : Array<string> = [];
+    const add = ( dir : string ) : void => { const nodeModules = join( dir, "node_modules" ); if ( existsSync( nodeModules ) ) dirs.push( nodeModules ); };
     add( REPO_ROOT );
     add( join( REPO_ROOT, "cloud" ) );
-    for ( const p of safeDirs( join( REPO_ROOT, "packages" ) ) ) add( p );
-    for ( const grp of safeDirs( join( REPO_ROOT, "apps" ) ) ) for ( const svc of safeDirs( grp ) ) add( svc );
-    return out;
+    for ( const packageDir of safeDirs( join( REPO_ROOT, "packages" ) ) ) add( packageDir );
+    for ( const groupDir of safeDirs( join( REPO_ROOT, "apps" ) ) ) for ( const serviceDir of safeDirs( groupDir ) ) add( serviceDir );
+    return dirs;
 }
 
-function safeDirs( parent : string ) : string[]
+/** Immediate subdirectories of `parent` as absolute paths. [] if `parent` is missing/unreadable. */
+function safeDirs( parent : string ) : Array<string>
 {
     if ( !existsSync( parent ) ) return [];
-    try { return readdirSync( parent ).map( ( n ) => join( parent, n ) ).filter( ( p ) => statSync( p ).isDirectory() ); }
+    try { return readdirSync( parent ).map( ( name ) => join( parent, name ) ).filter( ( path ) => statSync( path ).isDirectory() ); }
     catch { return []; }
 }

@@ -65,8 +65,9 @@ export function ActionToolbar(
     const [ drifted, setDrifted ] = useState<boolean>( false );
     useEffect( () =>
     {
+        // guard against a late async resolve writing state after unmount / service change
         let active : boolean = true;
-        const check = () : void => { void api.manifestDrift( service.id ).then( ( d ) => { if ( active ) setDrifted( d.drifted ); } ); };
+        const check = () : void => { void api.manifestDrift( service.id ).then( ( result ) => { if ( active ) setDrifted( result.drifted ); } ); };
         check();
         const off = api.onBuildQueue( () => check() );
         return () => { active = false; off(); };
@@ -75,18 +76,21 @@ export function ActionToolbar(
     const localStack : boolean = settings.target === "localstack";
 
     // LocalStack-chain steps that apply to this service (Docker only for backends that can image)
-    const steps : typeof STEPS = STEPS.filter( ( d ) => d.step !== "image" || ( !frontend && caps.canImage ) );
+    const steps : typeof STEPS = STEPS.filter( ( entry ) => entry.step !== "image" || ( !frontend && caps.canImage ) );
 
+    // whether a given chain step's checkbox is actionable for this service
     const enabled = ( step : StageId ) : boolean =>
         step === "image" ? settings.build
         : deployPrereqMet( settings, frontend ) && caps.canDeploy;   // deploy
 
+    // tooltip explaining why a step is disabled (empty string when the step is enabled)
     const disabledHint = ( step : StageId ) : string =>
         step === "deploy" && !caps.canDeploy ? "No cloud stack for this service — add src/CloudManifest.ts and register it in cloud/src/app.ts"
         : step === "image" && !settings.build ? "Enable Build first"
         : step === "deploy" && !deployPrereqMet( settings, frontend ) ? ( frontend ? "Enable Build first" : "Enable Build + Docker first" )
         : "";
 
+    // merge a partial change into the persisted build settings
     const update = ( patch : Partial<BuildSettings> ) : void =>
     {
         const next : BuildSettings = { ...settings, ...patch };
@@ -94,14 +98,14 @@ export function ActionToolbar(
         saveBuildSettings( service.id, next );   // persists + fires the event → DevelopView re-pushes config
     };
 
-    const setTarget = ( t : BuildTarget ) : void => update( { target: t } );
+    const setTarget = ( target : BuildTarget ) : void => update( { target } );
 
     const canRunNow : boolean = autoSteps( settings, frontend, caps.canDeploy ).length > 0 && !busy;
 
     return (
         <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1.25 }}>
             {/* where this service runs */}
-            <ToggleButtonGroup size="small" exclusive value={settings.target} onChange={( _e, v : BuildTarget | null ) => v && setTarget( v )}>
+            <ToggleButtonGroup size="small" exclusive value={settings.target} onChange={( _event, nextTarget : BuildTarget | null ) => nextTarget && setTarget( nextTarget )}>
                 <ToggleButton value="local" sx={{ px: 1.25, py: 0.2 }}>Local</ToggleButton>
                 <ToggleButton value="localstack" sx={{ px: 1.25, py: 0.2 }}>LocalStack</ToggleButton>
             </ToggleButtonGroup>
@@ -111,9 +115,20 @@ export function ActionToolbar(
             {/* Build applies to both targets */}
             <FormControlLabel
                 sx={{ mr: 0 }}
-                control={<Checkbox size="small" checked={settings.build} onChange={( e ) => update( { build: e.target.checked } )} sx={{ p: 0.5 }} />}
+                control={<Checkbox size="small" checked={settings.build} onChange={( event ) => update( { build: event.target.checked } )} sx={{ p: 0.5 }} />}
                 label={<Typography variant="caption">Build</Typography>}
             />
+
+            {/* Local target: run this service automatically (in sequence) when the Console starts */}
+            {!localStack && !frontend && (
+                <Tooltip title="Run this service locally when the Console starts (auto-run services start in sequence)">
+                    <FormControlLabel
+                        sx={{ mr: 0 }}
+                        control={<Checkbox size="small" checked={settings.autoRun} onChange={( event ) => update( { autoRun: event.target.checked } )} sx={{ p: 0.5 }} />}
+                        label={<Typography variant="caption">Run on start</Typography>}
+                    />
+                </Tooltip>
+            )}
 
             {/* Docker + Deploy only when targeting LocalStack */}
             {localStack && steps.map( ( { step, key, label } ) =>
@@ -125,7 +140,7 @@ export function ActionToolbar(
                 const control = (
                     <FormControlLabel
                         sx={{ mr: 0.25 }}
-                        control={<Checkbox size="small" checked={checked} disabled={!on} onChange={( e ) => update( { [ key ]: e.target.checked } )} sx={{ p: 0.5 }} />}
+                        control={<Checkbox size="small" checked={checked} disabled={!on} onChange={( event ) => update( { [ key ]: event.target.checked } )} sx={{ p: 0.5 }} />}
                         label={<Typography variant="caption" sx={{ color: on ? "text.primary" : "text.disabled" }}>{label}</Typography>}
                     />
                 );

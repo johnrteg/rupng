@@ -11,6 +11,7 @@ import ArrowBackIcon        from '@mui/icons-material/ArrowBack';
 
 //
 import { EmailUtils } from "@repo/common";
+import { ContactMethod } from "@repo/api";
 
 //
 import AppModel             from "@model/AppModel";
@@ -38,12 +39,12 @@ export function ForgotPassword( props : ForgotPassword.Props ) : JSX.Element
 {
     const appmodel : AppModel = AppModel.instance();
 
-    const [method,setMethod]    = React.useState< ForgotPassword.Method >( ForgotPassword.Method.EMAIL );
+    const [method,setMethod]    = React.useState< ContactMethod >( ContactMethod.EMAIL );
     const [email,setEmail]      = React.useState< string >( "" );
     const [phone,setPhone]      = React.useState< string >( "" );
     const [sent,setSent]        = React.useState< boolean >( false );
 
-    const valid : boolean = method === ForgotPassword.Method.EMAIL ? EmailUtils.isValid( email ) : appmodel.ui.locale.phoneValid( phone );
+    const valid : boolean = method === ContactMethod.EMAIL ? EmailUtils.isValid( email ) : appmodel.ui.locale.phoneValid( phone );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     function onSubmit( event : React.FormEvent<HTMLFormElement> ) : void
@@ -85,15 +86,15 @@ export function ForgotPassword( props : ForgotPassword.Props ) : JSX.Element
                                                         fullWidth
                                                         size="small"
                                                         value={ method }
-                                                        onChange={ ( _e : React.MouseEvent, value : ForgotPassword.Method | null ) => { if( value ) setMethod( value ); } }>
-                                            <ToggleButton value={ ForgotPassword.Method.EMAIL }>Email</ToggleButton>
-                                            <ToggleButton value={ ForgotPassword.Method.PHONE }>Phone</ToggleButton>
+                                                        onChange={ ( _e : React.MouseEvent, value : ContactMethod | null ) => { if( value ) setMethod( value ); } }>
+                                            <ToggleButton value={ ContactMethod.EMAIL }>Email</ToggleButton>
+                                            <ToggleButton value={ ContactMethod.PHONE }>Phone</ToggleButton>
                                         </ToggleButtonGroup>
 
-                                        <Show show={ method === ForgotPassword.Method.EMAIL }>
+                                        <Show show={ method === ContactMethod.EMAIL }>
                                             <EmailInput id="forgot-password-email" label="Email" value={ email } autoComplete="email" onChange={ setEmail } />
                                         </Show>
-                                        <Show show={ method === ForgotPassword.Method.PHONE }>
+                                        <Show show={ method === ContactMethod.PHONE }>
                                             <TelephoneInput id="forgot-password-phone" label="Phone" value={ phone } fullWidth autoComplete="tel" onChange={ setPhone } />
                                         </Show>
 
@@ -119,12 +120,6 @@ export function ForgotPassword( props : ForgotPassword.Props ) : JSX.Element
 
 export namespace ForgotPassword
 {
-    export enum Method
-    {
-        EMAIL = "email",
-        PHONE = "phone",
-    }
-
     export interface Props
     {
     }

@@ -6,7 +6,7 @@ import type { MonitorTopology, MonitorService } from "./types";
 // declarations; it lives here (rather than being imported from the apps) because the console isn't a
 // dependency of the services. Keep it in sync with the manifests — or generate it from them later.
 //
-const SERVICES : MonitorService[] =
+const SERVICES : Array<MonitorService> =
 [
     {
         id:         "auth",
@@ -30,15 +30,16 @@ const SERVICES : MonitorService[] =
 ];
 
 /** All distinct topics across every binding — what the monitor consumer subscribes to. */
-function allTopics( services : MonitorService[] ) : string[]
+function allTopics( services : Array<MonitorService> ) : Array<string>
 {
-    const set : Set<string> = new Set<string>();
-    for ( const svc of services )
+    // Collect both published and subscribed topics into a set so each distinct topic appears once.
+    const topics : Set<string> = new Set<string>();
+    for ( const service of services )
     {
-        for ( const t of svc.publishes ) set.add( t );
-        for ( const s of svc.subscribes ) set.add( s.topic );
+        for ( const topic of service.publishes ) topics.add( topic );
+        for ( const binding of service.subscribes ) topics.add( binding.topic );
     }
-    return [ ...set ].sort();
+    return [ ...topics ].sort();
 }
 
 export const TOPOLOGY : MonitorTopology = { services: SERVICES, topics: allTopics( SERVICES ) };
@@ -46,21 +47,21 @@ export const TOPOLOGY : MonitorTopology = { services: SERVICES, topics: allTopic
 /** The service that publishes a topic (or undefined — e.g. a topic whose producer service isn't present). */
 export function publisherOf( topic : string ) : string | undefined
 {
-    return SERVICES.find( ( s ) => s.publishes.includes( topic ) )?.id;
+    return SERVICES.find( ( service ) => service.publishes.includes( topic ) )?.id;
 }
 
 /** The consumer groups subscribed to a topic (across all services). */
-export function subscriberGroupsOf( topic : string ) : string[]
+export function subscriberGroupsOf( topic : string ) : Array<string>
 {
-    const groups : string[] = [];
-    for ( const svc of SERVICES )
-        for ( const s of svc.subscribes )
-            if ( s.topic === topic && s.group && !groups.includes( s.group ) ) groups.push( s.group );
+    const groups : Array<string> = [];
+    for ( const service of SERVICES )
+        for ( const binding of service.subscribes )
+            if ( binding.topic === topic && binding.group && !groups.includes( binding.group ) ) groups.push( binding.group );
     return groups;
 }
 
 /** The services subscribed to a topic (for drawing hub→subscriber pipes). */
-export function subscriberServicesOf( topic : string ) : string[]
+export function subscriberServicesOf( topic : string ) : Array<string>
 {
-    return SERVICES.filter( ( s ) => s.subscribes.some( ( b ) => b.topic === topic ) ).map( ( s ) => s.id );
+    return SERVICES.filter( ( service ) => service.subscribes.some( ( binding ) => binding.topic === topic ) ).map( ( service ) => service.id );
 }

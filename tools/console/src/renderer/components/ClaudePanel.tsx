@@ -36,15 +36,16 @@ import { MONO } from "../theme";
 
 const KIND_COLOR = { status: "#8b949e", user: "#58c4ff", assistant: "#c9d1d9", tool: "#d29922", tool_result: "#8b949e", result: "#3fb950", error: "#f85149" } as const;
 
+/** In-app Claude chat for a single service: mode select, streamed transcript, inline tool approvals, and a follow-up input. */
 export function ClaudePanel(
     { service, mode, onMode } :
     { service : string; mode : ClaudeMode; onMode : ( m : ClaudeMode ) => void }
 )
 {
-    const [ messages, setMessages ]     = useState<ClaudeMessage[]>( [] );
+    const [ messages, setMessages ]     = useState<Array<ClaudeMessage>>( [] );
     const [ running, setRunning ]       = useState<boolean>( false );
     const [ thinking, setThinking ]     = useState<boolean>( false );
-    const [ approvals, setApprovals ]   = useState<ClaudeApprovalRequest[]>( [] );
+    const [ approvals, setApprovals ]   = useState<Array<ClaudeApprovalRequest>>( [] );
     const [ draft, setDraft ]           = useState<string>( "" );
     const [ confirmClear, setConfirmClear ] = useState<boolean>( false );
     const endRef = useRef<HTMLDivElement | null>( null );
@@ -55,28 +56,31 @@ export function ClaudePanel(
         setApprovals( [] );
         setDraft( "" );
         let alive : boolean = true;
-        void api.claudeHistory( service ).then( ( h ) => { if ( alive ) setMessages( h ); } );
+        void api.claudeHistory( service ).then( ( history : Array<ClaudeMessage> ) => { if ( alive ) setMessages( history ); } );
         return () => { alive = false; };
     }, [ service ] );
 
+    // subscribe to the live streams for this service: transcript messages, approval requests, run/think state
     useEffect( () =>
     {
-        const offMsg = api.onClaudeMessage( ( m ) => { if ( m.service === service ) setMessages( ( p ) => [ ...p, m ] ); } );
-        const offApp = api.onClaudeApproval( ( r ) => { if ( r.service === service ) setApprovals( ( p ) => [ ...p, r ] ); } );
-        const offState = api.onClaudeState( ( s ) => { if ( s.service === service ) { setRunning( s.running ); setThinking( !!s.thinking ); } } );
+        const offMsg : () => void = api.onClaudeMessage( ( msg : ClaudeMessage ) => { if ( msg.service === service ) setMessages( ( prev ) => [ ...prev, msg ] ); } );
+        const offApp : () => void = api.onClaudeApproval( ( req : ClaudeApprovalRequest ) => { if ( req.service === service ) setApprovals( ( prev ) => [ ...prev, req ] ); } );
+        const offState : () => void = api.onClaudeState( ( state ) => { if ( state.service === service ) { setRunning( state.running ); setThinking( !!state.thinking ); } } );
         return () => { offMsg(); offApp(); offState(); };
     }, [ service ] );
 
     useLayoutEffect( () => { endRef.current?.scrollIntoView( { block: "end" } ); }, [ messages, approvals ] );
 
+    /** Approve or reject a pending tool-call request and drop it from the list. */
     const decide = ( req : ClaudeApprovalRequest, allow : boolean ) : void =>
     {
         void api.claudeApprove( req.id, allow );
-        setApprovals( ( p ) => p.filter( ( r ) => r.id !== req.id ) );
+        setApprovals( ( prev ) => prev.filter( ( pending ) => pending.id !== req.id ) );
     };
 
     const disabled : boolean = mode === "off";
 
+    /** Send the trimmed draft to Claude (starts a session if none is running) and clear the input. */
     const submit = () : void =>
     {
         const text : string = draft.trim();
@@ -85,11 +89,13 @@ export function ClaudePanel(
         setDraft( "" );
     };
 
+    /** Enter sends; Shift+Enter inserts a newline. */
     const onKeyDown = ( e : KeyboardEvent<HTMLDivElement> ) : void =>
     {
         if ( e.key === "Enter" && !e.shiftKey ) { e.preventDefault(); submit(); }
     };
 
+    /** Delete this service's saved conversation and reset the local view. */
     const clearConversation = () : void =>
     {
         void api.claudeClear( service );
@@ -104,9 +110,9 @@ export function ClaudePanel(
                 <AutoAwesomeIcon fontSize="small" sx={{ color: "secondary.main" }} />
                 <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Claude</Typography>
 
-                <Tooltip title={CLAUDE_MODES.find( ( m ) => m.value === mode )?.hint ?? ""}>
+                <Tooltip title={CLAUDE_MODES.find( ( option ) => option.value === mode )?.hint ?? ""}>
                     <Select size="small" value={mode} onChange={( e ) => onMode( e.target.value as ClaudeMode )} sx={{ minWidth: 190 }}>
-                        {CLAUDE_MODES.map( ( m ) => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem> )}
+                        {CLAUDE_MODES.map( ( option ) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem> )}
                     </Select>
                 </Tooltip>
 
@@ -140,29 +146,29 @@ export function ClaudePanel(
                     </Typography>
                 )}
 
-                {messages.map( ( m ) => (
-                    <Box key={m.id} sx={{ mb: 1 }}>
-                        {m.kind === "tool"
+                {messages.map( ( msg ) => (
+                    <Box key={msg.id} sx={{ mb: 1 }}>
+                        {msg.kind === "tool"
                             ? <Box sx={{ display: "flex", alignItems: "center", gap: 0.6 }}>
                                   <BuildIcon sx={{ fontSize: 14, color: KIND_COLOR.tool }} />
                                   <Typography component="pre" sx={{ m: 0, fontFamily: MONO, fontSize: 11.5, color: KIND_COLOR.tool, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                                      {m.text}
+                                      {msg.text}
                                   </Typography>
                               </Box>
-                            : m.kind === "user"
+                            : msg.kind === "user"
                             ? <Box sx={{ display: "flex", gap: 0.8, p: 1, borderRadius: 1.5, bgcolor: "rgba(88,196,255,0.08)", border: "1px solid", borderColor: "rgba(88,196,255,0.3)" }}>
                                   <PersonIcon sx={{ fontSize: 16, color: KIND_COLOR.user, mt: 0.1 }} />
                                   <Typography component="div" sx={{ fontSize: 13, color: KIND_COLOR.user, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                                      {m.text}
+                                      {msg.text}
                                   </Typography>
                               </Box>
                             : <Typography
                                   component="div"
-                                  sx={{ fontSize: m.kind === "assistant" ? 13 : 12, color: KIND_COLOR[ m.kind ],
+                                  sx={{ fontSize: msg.kind === "assistant" ? 13 : 12, color: KIND_COLOR[ msg.kind ],
                                         whiteSpace: "pre-wrap", wordBreak: "break-word",
-                                        fontFamily: m.kind === "assistant" ? "inherit" : MONO }}
+                                        fontFamily: msg.kind === "assistant" ? "inherit" : MONO }}
                               >
-                                  {m.text}
+                                  {msg.text}
                               </Typography>}
                     </Box>
                 ) )}

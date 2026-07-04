@@ -45,39 +45,40 @@ const DELTA_COLOR : Record<Delta, string> = { patch: "#3fb950", minor: "#d29922"
 /** Which semver segment changed between current and latest — patch (green) / minor (yellow) / major (red). */
 function deltaKind( current : string, latest : string ) : Delta
 {
-    const c : RegExpMatchArray | null = current.match( /(\d+)\.(\d+)\.(\d+)/ );
-    const l : RegExpMatchArray | null = latest.match( /(\d+)\.(\d+)\.(\d+)/ );
-    if ( !c || !l ) return "same";
-    if ( c[ 1 ] !== l[ 1 ] ) return "major";
-    if ( c[ 2 ] !== l[ 2 ] ) return "minor";
-    if ( c[ 3 ] !== l[ 3 ] ) return "patch";
+    const currentParts : RegExpMatchArray | null = current.match( /(\d+)\.(\d+)\.(\d+)/ );
+    const latestParts : RegExpMatchArray | null = latest.match( /(\d+)\.(\d+)\.(\d+)/ );
+    if ( !currentParts || !latestParts ) return "same";
+    if ( currentParts[ 1 ] !== latestParts[ 1 ] ) return "major";
+    if ( currentParts[ 2 ] !== latestParts[ 2 ] ) return "minor";
+    if ( currentParts[ 3 ] !== latestParts[ 3 ] ) return "patch";
     return "same";
 }
 
 /** Project a semver core (x.y.z) for a bump — for the intent display "v1.0.0 → v1.1.0". */
-function projectVersion( v : string, kind : BumpKind ) : string
+function projectVersion( version : string, kind : BumpKind ) : string
 {
-    const m : RegExpMatchArray | null = v.match( /^(\d+)\.(\d+)\.(\d+)/ );
-    if ( !m ) return v;
-    let [ maj, min, pat ] : number[] = [ Number( m[ 1 ] ), Number( m[ 2 ] ), Number( m[ 3 ] ) ];
-    if ( kind === "major" ) { maj += 1; min = 0; pat = 0; }
-    else if ( kind === "minor" ) { min += 1; pat = 0; }
-    else pat += 1;
-    return `${maj}.${min}.${pat}`;
+    const parts : RegExpMatchArray | null = version.match( /^(\d+)\.(\d+)\.(\d+)/ );
+    if ( !parts ) return version;
+    let [ major, minor, patch ] : Array<number> = [ Number( parts[ 1 ] ), Number( parts[ 2 ] ), Number( parts[ 3 ] ) ];
+    if ( kind === "major" ) { major += 1; minor = 0; patch = 0; }
+    else if ( kind === "minor" ) { minor += 1; patch = 0; }
+    else patch += 1;
+    return `${major}.${minor}.${patch}`;
 }
 
+/** The Repo tab: git check-out (pull + reinstall), check-in (status, version bumps, test gate, commit/PR), dependency Updates, and version Sync. */
 export function RepoView()
 {
     const [ sub, setSub ]           = useState<"checkout" | "checkin" | "updates" | "sync">( "checkout" );
-    const [ outdated, setOutdated ] = useState<NpmOutdated[] | null>( null );
+    const [ outdated, setOutdated ] = useState<Array<NpmOutdated> | null>( null );
     const [ depSel, setDepSel ]     = useState<Set<string>>( new Set() );
     const [ checking, setChecking ] = useState<boolean>( false );
-    const [ conflicts2, setConflicts2 ] = useState<VersionConflict[] | null>( null );
+    const [ conflicts2, setConflicts2 ] = useState<Array<VersionConflict> | null>( null );
     const [ syncSel, setSyncSel ]   = useState<Set<string>>( new Set() );
     const [ scanning, setScanning ] = useState<boolean>( false );
     const [ status, setStatus ]     = useState<RepoStatus | null>( null );
     const [ branches, setBranches ] = useState<RepoBranches>( { current: "", branches: [] } );
-    const [ lines, setLines ]       = useState<LogLine[]>( [] );
+    const [ lines, setLines ]       = useState<Array<LogLine>>( [] );
     const [ busy, setBusy ]         = useState<boolean>( false );
     const [ testsPassed, setTestsPassed ] = useState<boolean>( false );
     const [ message, setMessage ]   = useState<string>( "" );
@@ -87,43 +88,50 @@ export function RepoView()
     const [ intents, setIntents ]   = useState<Record<string, BumpKind>>( {} );   // per-area version bump INTENT (applied at commit)
     const [ claudeMode, setClaudeMode ] = useState<ClaudeMode>( "fix" );
 
+    /** Reload git status + branches, auto-select impacted areas, reset version intents, and default the pull/target branch. */
     const refresh = useCallback( async () : Promise<void> =>
     {
-        const [ s, b ] : [ RepoStatus, RepoBranches ] = await Promise.all( [ api.repoStatus(), api.repoBranches() ] );
-        setStatus( s );
-        setBranches( b );
-        setTestSel( new Set( s.areas.map( ( a ) => a.path ) ) );   // auto-select impacted areas
-        setIntents( {} );                                          // version intents reset on refresh
+        const [ nextStatus, nextBranches ] : [ RepoStatus, RepoBranches ] = await Promise.all( [ api.repoStatus(), api.repoBranches() ] );
+        setStatus( nextStatus );
+        setBranches( nextBranches );
+        setTestSel( new Set( nextStatus.areas.map( ( area ) => area.path ) ) );   // auto-select impacted areas
+        setIntents( {} );                                                        // version intents reset on refresh
         // per RELEASE.md, work flows into the active release line — default to the newest release/X.Y
-        const releases : string[] = b.branches.filter( ( x ) => x.startsWith( "release/" ) ).sort().reverse();
-        const def : string = releases[ 0 ] ?? ( b.branches.includes( "main" ) ? "main" : b.branches.includes( "master" ) ? "master" : b.current );
-        setPullBranch( ( p ) => p || def );
-        setTargetBranch( ( p ) => p || def );
+        const releases : Array<string> = nextBranches.branches.filter( ( branch ) => branch.startsWith( "release/" ) ).sort().reverse();
+        const def : string = releases[ 0 ] ?? ( nextBranches.branches.includes( "main" ) ? "main" : nextBranches.branches.includes( "master" ) ? "master" : nextBranches.current );
+        setPullBranch( ( prev ) => prev || def );
+        setTargetBranch( ( prev ) => prev || def );
     }, [] );
     useEffect( () => { void refresh(); }, [ refresh ] );
 
     useEffect( () =>
     {
         let active : boolean = true;
-        void api.getLog( REPO_ID, "runtime" ).then( ( h : LogLine[] ) => { if ( active ) setLines( h ); } );
-        const offLog : () => void = api.onLog( ( l : LogLine ) => { if ( l.service === REPO_ID && l.stream === "runtime" ) setLines( ( p ) => ( p.length > 1500 ? [ ...p.slice( -1500 ), l ] : [ ...p, l ] ) ); } );
-        const offProc : () => void = api.onProc( ( p : ProcState ) => { if ( p.service === REPO_ID && p.stream === "runtime" ) setBusy( p.running ); } );
+        void api.getLog( REPO_ID, "runtime" ).then( ( history : Array<LogLine> ) => { if ( active ) setLines( history ); } );
+        const offLog : () => void = api.onLog( ( line : LogLine ) => { if ( line.service === REPO_ID && line.stream === "runtime" ) setLines( ( prev ) => ( prev.length > 1500 ? [ ...prev.slice( -1500 ), line ] : [ ...prev, line ] ) ); } );
+        const offProc : () => void = api.onProc( ( proc : ProcState ) => { if ( proc.service === REPO_ID && proc.stream === "runtime" ) setBusy( proc.running ); } );
         return () => { active = false; offLog(); offProc(); };
     }, [] );
 
-    const after = async ( p : Promise<unknown> ) : Promise<void> => { await p; await refresh(); };
+    /** Await a repo operation, then refresh status so the UI reflects the new tree. */
+    const after = async ( op : Promise<unknown> ) : Promise<void> => { await op; await refresh(); };
 
+    /** Pull the selected branch (rebase + autostash), then refresh. */
     const pull       = () : void => { void after( api.repoPull( pullBranch ) ); };
+    /** Wipe every node_modules and reinstall + build (with confirmation), then refresh. */
     const reinstall  = () : void => { if ( window.confirm( "Delete every node_modules across the workspace, then npm install + build? This can take a few minutes." ) ) void after( api.repoReinstall() ); };
-    const runTests   = ( areas : string[] ) : void => { setTestsPassed( false ); void api.repoTest( areas ).then( ( code : number ) => setTestsPassed( code === 0 ) ); };
-    const toggleArea = ( path : string ) : void => setTestSel( ( prev ) => { const n = new Set( prev ); n.has( path ) ? n.delete( path ) : n.add( path ); return n; } );
+    /** Run tests for the given areas (empty = all) and record whether they passed. */
+    const runTests   = ( areas : Array<string> ) : void => { setTestsPassed( false ); void api.repoTest( areas ).then( ( code : number ) => setTestsPassed( code === 0 ) ); };
+    /** Toggle whether an area is included in the test/check-in selection. */
+    const toggleArea = ( path : string ) : void => setTestSel( ( prev ) => { const next = new Set( prev ); next.has( path ) ? next.delete( path ) : next.add( path ); return next; } );
+    /** Record the chosen version-bump intent for an area. */
     const setIntent  = ( path : string, kind : BumpKind ) : void => setIntents( ( prev ) => ( { ...prev, [ path ]: kind } ) );
 
     // checked, versioned, non-deleted, non-root areas must each carry a bump intent before check-in
-    const needsIntent : RepoArea[] = ( status?.areas ?? [] ).filter( ( a ) => testSel.has( a.path ) && !!a.version && !a.deleted && a.kind !== "root" );
-    const intentsReady : boolean = needsIntent.every( ( a ) => intents[ a.path ] !== undefined );
+    const needsIntent : Array<RepoArea> = ( status?.areas ?? [] ).filter( ( area ) => testSel.has( area.path ) && !!area.version && !area.deleted && area.kind !== "root" );
+    const intentsReady : boolean = needsIntent.every( ( area ) => intents[ area.path ] !== undefined );
     // staging: root contributes its explicit files (not "."); other areas stage by directory
-    const stagePaths : string[] = ( status?.areas ?? [] ).filter( ( a ) => testSel.has( a.path ) ).flatMap( ( a ) => a.kind === "root" ? a.files : [ a.path ] );
+    const stagePaths : Array<string> = ( status?.areas ?? [] ).filter( ( area ) => testSel.has( area.path ) ).flatMap( ( area ) => area.kind === "root" ? area.files : [ area.path ] );
     const hasChanges : boolean = ( status?.areas ?? [] ).length > 0;
 
     const isMain : boolean = targetBranch === "main" || targetBranch === "master";
@@ -134,9 +142,10 @@ export function RepoView()
     /** Apply each selected area's version intent (writes package.json) right before committing. */
     const applyIntents = async () : Promise<void> =>
     {
-        for ( const a of needsIntent ) { const k : BumpKind | undefined = intents[ a.path ]; if ( k ) await api.repoBump( a.path, k ); }
+        for ( const area of needsIntent ) { const kind : BumpKind | undefined = intents[ area.path ]; if ( kind ) await api.repoBump( area.path, kind ); }
     };
 
+    /** Apply version bumps, then stage + commit + push to the target branch (with confirmation). */
     const commitPush = async () : Promise<void> =>
     {
         if ( !canCommit ) return;
@@ -145,6 +154,7 @@ export function RepoView()
         await applyIntents();
         await after( api.repoCommitPush( targetBranch.trim(), message.trim(), stagePaths ) );
     };
+    /** Apply version bumps, commit + push to the target branch, and open a PR (with confirmation). */
     const createPR = async () : Promise<void> =>
     {
         if ( !canCommit || isMain ) return;
@@ -152,57 +162,66 @@ export function RepoView()
         await applyIntents();
         await after( api.repoCreatePR( targetBranch.trim(), message.trim(), stagePaths ) );
     };
+    /** Hand the current merge conflicts to the in-app Claude panel to resolve. */
     const askClaude = () : void =>
     {
         const files : string = ( status?.conflicts ?? [] ).join( ", " );
         void api.claudeSend( REPO_ID, `Resolve the current git merge conflicts in this repository. Conflicted files: ${files}. Edit each file to a correct merged result (no conflict markers), explain the choices, and stage them with git add.` );
     };
 
+    /** Query the npm registry for outdated deps and clear any prior selection. */
     const checkUpdates = async () : Promise<void> =>
     {
         setChecking( true );
-        try { const r = await api.repoOutdated(); setOutdated( r.deps ); setDepSel( new Set() ); }
+        try { const result = await api.repoOutdated(); setOutdated( result.deps ); setDepSel( new Set() ); }
         finally { setChecking( false ); }
     };
-    const toggleDep = ( name : string ) : void => setDepSel( ( prev ) => { const n = new Set( prev ); n.has( name ) ? n.delete( name ) : n.add( name ); return n; } );
-    const depNames : string[] = [ ...new Set( ( outdated ?? [] ).map( ( d ) => d.name ) ) ];
+    /** Toggle whether a dependency is included in the update selection. */
+    const toggleDep = ( name : string ) : void => setDepSel( ( prev ) => { const next = new Set( prev ); next.has( name ) ? next.delete( name ) : next.add( name ); return next; } );
+    const depNames : Array<string> = [ ...new Set( ( outdated ?? [] ).map( ( dep ) => dep.name ) ) ];
+    /** Add every dependency whose semver delta matches `kind` to the selection. */
     const selectByDelta = ( kind : Delta ) : void => setDepSel( ( prev ) =>
     {
-        const n : Set<string> = new Set( prev );
-        for ( const d of outdated ?? [] ) if ( deltaKind( d.current, d.latest ) === kind ) n.add( d.name );
-        return n;
+        const next : Set<string> = new Set( prev );
+        for ( const dep of outdated ?? [] ) if ( deltaKind( dep.current, dep.latest ) === kind ) next.add( dep.name );
+        return next;
     } );
-    const updateDeps = ( names : string[] ) : void =>
+    /** Update the named deps to latest, then wipe node_modules + reinstall + rebuild (with confirmation). */
+    const updateDeps = ( names : Array<string> ) : void =>
     {
         if ( names.length === 0 ) return;
         if ( window.confirm( `Update ${names.length} package(s) to latest, then wipe node_modules, npm install + rebuild?\n\n${names.join( ", " )}` ) )
             void api.repoUpdateDeps( names ).then( () => checkUpdates() );
     };
 
+    /** Clear the git/npm console view. */
     const clearLog = () : void => { void api.clearLog( REPO_ID, "runtime" ).then( () => setLines( [] ) ); };
 
+    /** Scan all package.json files for libraries declared at differing versions and clear any prior selection. */
     const scanConflicts = async () : Promise<void> =>
     {
         setScanning( true );
-        try { const r = await api.repoVersionConflicts(); setConflicts2( r.conflicts ); setSyncSel( new Set() ); }
+        try { const result = await api.repoVersionConflicts(); setConflicts2( result.conflicts ); setSyncSel( new Set() ); }
         finally { setScanning( false ); }
     };
-    const toggleSync = ( name : string ) : void => setSyncSel( ( prev ) => { const n = new Set( prev ); n.has( name ) ? n.delete( name ) : n.add( name ); return n; } );
-    const conflictNames : string[] = ( conflicts2 ?? [] ).map( ( c ) => c.name );
-    const syncVersions = ( names : string[] ) : void =>
+    /** Toggle whether a mismatched library is included in the sync selection. */
+    const toggleSync = ( name : string ) : void => setSyncSel( ( prev ) => { const next = new Set( prev ); next.has( name ) ? next.delete( name ) : next.add( name ); return next; } );
+    const conflictNames : Array<string> = ( conflicts2 ?? [] ).map( ( conflict ) => conflict.name );
+    /** Align the named libraries to their newest version across all package.json, then npm install (with confirmation). */
+    const syncVersions = ( names : Array<string> ) : void =>
     {
         if ( names.length === 0 ) return;
         if ( window.confirm( `Align ${names.length} library(ies) to their newest version across all package.json, then npm install?\n\n${names.join( ", " )}` ) )
             void api.repoSyncVersions( names ).then( () => scanConflicts() );
     };
 
-    const conflicts : string[] = status?.conflicts ?? [];
+    const conflicts : Array<string> = status?.conflicts ?? [];
 
     return (
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
             {/* sub-tabs + branch */}
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
-                <Tabs value={sub} onChange={( _e, v : "checkout" | "checkin" | "updates" | "sync" ) => setSub( v )} sx={{ minHeight: 44, "& .MuiTab-root": { minHeight: 44 } }}>
+                <Tabs value={sub} onChange={( _e, next : "checkout" | "checkin" | "updates" | "sync" ) => setSub( next )} sx={{ minHeight: 44, "& .MuiTab-root": { minHeight: 44 } }}>
                     <Tab value="checkout" icon={<DownloadIcon fontSize="small" />} iconPosition="start" label="Check out" />
                     <Tab value="checkin" icon={<MergeIcon fontSize="small" />} iconPosition="start" label="Check in" />
                     <Tab value="updates" icon={<UpgradeIcon fontSize="small" />} iconPosition="start" label="Updates" />
@@ -234,14 +253,14 @@ export function RepoView()
 
                           {/* only the mismatch list scrolls */}
                           <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "auto" }}>
-                            {conflicts2 && conflicts2.map( ( c ) => (
-                                <Box key={c.name} sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, mb: 0.5, p: 0.5, pl: 1, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
-                                    <Checkbox size="small" checked={syncSel.has( c.name )} onChange={() => toggleSync( c.name )} sx={{ p: 0.5 }} />
+                            {conflicts2 && conflicts2.map( ( conflict ) => (
+                                <Box key={conflict.name} sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, mb: 0.5, p: 0.5, pl: 1, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
+                                    <Checkbox size="small" checked={syncSel.has( conflict.name )} onChange={() => toggleSync( conflict.name )} sx={{ p: 0.5 }} />
                                     <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                                        <Typography variant="body2" sx={{ fontWeight: 600 }}>{c.name} <Box component="span" sx={{ color: "success.main", fontFamily: MONO, fontWeight: 700 }}>→ {c.newest}</Box></Typography>
-                                        {c.occurrences.map( ( o, i ) => (
-                                            <Typography key={`${o.area}-${i}`} variant="caption" sx={{ display: "block", fontFamily: MONO, color: o.version === c.newest ? "text.disabled" : "warning.main" }}>
-                                                {o.area}: {o.version}{o.dev ? " (dev)" : ""}{o.version === c.newest ? "  ✓" : ""}
+                                        <Typography variant="body2" sx={{ fontWeight: 600 }}>{conflict.name} <Box component="span" sx={{ color: "success.main", fontFamily: MONO, fontWeight: 700 }}>→ {conflict.newest}</Box></Typography>
+                                        {conflict.occurrences.map( ( occurrence, index ) => (
+                                            <Typography key={`${occurrence.area}-${index}`} variant="caption" sx={{ display: "block", fontFamily: MONO, color: occurrence.version === conflict.newest ? "text.disabled" : "warning.main" }}>
+                                                {occurrence.area}: {occurrence.version}{occurrence.dev ? " (dev)" : ""}{occurrence.version === conflict.newest ? "  ✓" : ""}
                                             </Typography>
                                         ) )}
                                     </Box>
@@ -278,19 +297,19 @@ export function RepoView()
 
                           {/* only the dependency list scrolls */}
                           <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "auto" }}>
-                            {outdated && outdated.map( ( d, i ) =>
+                            {outdated && outdated.map( ( dep, index ) =>
                             {
-                                const kind : Delta = deltaKind( d.current, d.latest );
+                                const kind : Delta = deltaKind( dep.current, dep.latest );
                                 const color : string = DELTA_COLOR[ kind ];
                                 return (
-                                    <Box key={`${d.name}-${d.dependent}-${i}`} sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5, p: 0.5, pl: 1, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
-                                        <Checkbox size="small" checked={depSel.has( d.name )} onChange={() => toggleDep( d.name )} sx={{ p: 0.5 }} />
+                                    <Box key={`${dep.name}-${dep.dependent}-${index}`} sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5, p: 0.5, pl: 1, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
+                                        <Checkbox size="small" checked={depSel.has( dep.name )} onChange={() => toggleDep( dep.name )} sx={{ p: 0.5 }} />
                                         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                                            <Typography variant="body2" sx={{ fontWeight: 600 }}>{d.name} <Box component="span" sx={{ color: "text.disabled", fontFamily: MONO, fontWeight: 400 }}>{d.dependent}</Box></Typography>
+                                            <Typography variant="body2" sx={{ fontWeight: 600 }}>{dep.name} <Box component="span" sx={{ color: "text.disabled", fontFamily: MONO, fontWeight: 400 }}>{dep.dependent}</Box></Typography>
                                             <Typography variant="caption" sx={{ fontFamily: MONO }}>
-                                                <Box component="span" sx={{ color: "text.disabled" }}>{d.current} → </Box>
-                                                <Box component="span" sx={{ color, fontWeight: 700 }}>{d.latest}</Box>
-                                                {d.wanted && d.wanted !== d.latest && <Box component="span" sx={{ color: "text.disabled" }}>  (wanted {d.wanted})</Box>}
+                                                <Box component="span" sx={{ color: "text.disabled" }}>{dep.current} → </Box>
+                                                <Box component="span" sx={{ color, fontWeight: 700 }}>{dep.latest}</Box>
+                                                {dep.wanted && dep.wanted !== dep.latest && <Box component="span" sx={{ color: "text.disabled" }}>  (wanted {dep.wanted})</Box>}
                                             </Typography>
                                         </Box>
                                         {kind !== "same" && <Chip size="small" variant="outlined" label={kind} sx={{ color, borderColor: color, fontWeight: 600 }} />}
@@ -304,7 +323,7 @@ export function RepoView()
                             <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1.5, flexWrap: "wrap" }}>
                                 <Tooltip title="Branch to pull from">
                                     <Select size="small" value={pullBranch} onChange={( e ) => setPullBranch( e.target.value )} sx={{ minWidth: 150 }}>
-                                        {branches.branches.map( ( b ) => <MenuItem key={b} value={b}>{b}</MenuItem> )}
+                                        {branches.branches.map( ( branch ) => <MenuItem key={branch} value={branch}>{branch}</MenuItem> )}
                                     </Select>
                                 </Tooltip>
                                 <Button variant="contained" color="success" startIcon={<DownloadIcon />} disabled={busy} onClick={pull}>Pull</Button>
@@ -320,7 +339,7 @@ export function RepoView()
                                         <Typography variant="subtitle2" sx={{ color: "error.main", fontWeight: 700, flexGrow: 1 }}>{conflicts.length} merge conflict(s)</Typography>
                                         <Button size="small" variant="contained" color="secondary" onClick={askClaude}>Resolve with Claude</Button>
                                     </Box>
-                                    {conflicts.map( ( f ) => <Typography key={f} variant="caption" sx={{ display: "block", color: "text.secondary", fontFamily: MONO }}>{f}</Typography> )}
+                                    {conflicts.map( ( file ) => <Typography key={file} variant="caption" sx={{ display: "block", color: "text.secondary", fontFamily: MONO }}>{file}</Typography> )}
                                 </Box>
                             ) : (
                                 <Typography variant="caption" sx={{ color: "success.main" }}>No merge conflicts.</Typography>
@@ -346,27 +365,27 @@ export function RepoView()
                                 <Button size="small" variant="outlined" startIcon={busy ? <CircularProgress size={13} /> : <RefreshIcon fontSize="small" />} disabled={busy} onClick={() => void refresh()}>Refresh</Button>
                             </Box>
                             {status?.clean && <Typography variant="body2" sx={{ color: "text.secondary", mb: 1 }}>Working tree is clean — nothing to check in.</Typography>}
-                            {( status?.areas ?? [] ).map( ( a ) =>
+                            {( status?.areas ?? [] ).map( ( area ) =>
                             {
-                                const checked : boolean = testSel.has( a.path );
-                                const intent : BumpKind | undefined = intents[ a.path ];
-                                const versioned : boolean = !!a.version && !a.deleted && a.kind !== "root";   // root isn't version-bumped here
+                                const checked : boolean = testSel.has( area.path );
+                                const intent : BumpKind | undefined = intents[ area.path ];
+                                const versioned : boolean = !!area.version && !area.deleted && area.kind !== "root";   // root isn't version-bumped here
                                 const needs : boolean = checked && versioned && intent === undefined;   // checked but no intent yet
                                 return (
-                                    <Box key={a.path} sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5, p: 0.5, pl: 1, border: "1px solid", borderColor: needs ? "warning.main" : "divider", borderRadius: 1.5 }}>
-                                        <Checkbox size="small" checked={checked} onChange={() => toggleArea( a.path )} sx={{ p: 0.5 }} />
-                                        <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: KIND_COLOR[ a.kind ], flexShrink: 0 }} />
+                                    <Box key={area.path} sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5, p: 0.5, pl: 1, border: "1px solid", borderColor: needs ? "warning.main" : "divider", borderRadius: 1.5 }}>
+                                        <Checkbox size="small" checked={checked} onChange={() => toggleArea( area.path )} sx={{ p: 0.5 }} />
+                                        <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: KIND_COLOR[ area.kind ], flexShrink: 0 }} />
                                         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                                            <Typography variant="body2" sx={{ fontWeight: 600 }}>{a.name} <Box component="span" sx={{ color: "text.disabled", fontFamily: MONO, fontWeight: 400 }}>{a.path}</Box></Typography>
+                                            <Typography variant="body2" sx={{ fontWeight: 600 }}>{area.name} <Box component="span" sx={{ color: "text.disabled", fontFamily: MONO, fontWeight: 400 }}>{area.path}</Box></Typography>
                                             {versioned
                                                 ? <Typography variant="caption" sx={{ fontFamily: MONO, color: intent ? "success.main" : ( needs ? "warning.main" : "text.disabled" ) }}>
-                                                      {a.changed} file(s) · {intent ? `v${a.version} → v${projectVersion( a.version!, intent )}` : `v${a.version}${needs ? " — choose a bump" : ""}`}
+                                                      {area.changed} file(s) · {intent ? `v${area.version} → v${projectVersion( area.version!, intent )}` : `v${area.version}${needs ? " — choose a bump" : ""}`}
                                                   </Typography>
-                                                : <Typography variant="caption" sx={{ color: "text.disabled" }}>{a.changed} file(s){a.version && a.kind === "root" ? ` · v${a.version}` : ""}</Typography>}
+                                                : <Typography variant="caption" sx={{ color: "text.disabled" }}>{area.changed} file(s){area.version && area.kind === "root" ? ` · v${area.version}` : ""}</Typography>}
                                         </Box>
-                                        {a.deleted && <Chip size="small" variant="outlined" color="error" label="deleted" />}
+                                        {area.deleted && <Chip size="small" variant="outlined" color="error" label="deleted" />}
                                         {versioned && (
-                                            <ToggleButtonGroup size="small" exclusive value={intent ?? null} onChange={( _e, v : BumpKind | null ) => v && setIntent( a.path, v )}>
+                                            <ToggleButtonGroup size="small" exclusive value={intent ?? null} onChange={( _e, next : BumpKind | null ) => next && setIntent( area.path, next )}>
                                                 <ToggleButton value="major" sx={{ px: 1, py: 0.1 }}>major</ToggleButton>
                                                 <ToggleButton value="minor" sx={{ px: 1, py: 0.1 }}>minor</ToggleButton>
                                                 <ToggleButton value="patch" sx={{ px: 1, py: 0.1 }}>patch</ToggleButton>
@@ -388,8 +407,8 @@ export function RepoView()
                                     <>
                                         {/* commit / push / PR */}
                                         <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
-                                            <Autocomplete freeSolo options={branches.branches} inputValue={targetBranch} onInputChange={( _e, v ) => setTargetBranch( v )}
-                                                          sx={{ width: 200 }} renderInput={( p ) => <TextField {...p} size="small" label="branch" />} />
+                                            <Autocomplete freeSolo options={branches.branches} inputValue={targetBranch} onInputChange={( _e, next ) => setTargetBranch( next )}
+                                                          sx={{ width: 200 }} renderInput={( params ) => <TextField {...params} size="small" label="branch" />} />
                                             <TextField size="small" fullWidth placeholder="commit message / PR title" value={message} onChange={( e ) => setMessage( e.target.value )} disabled={busy} />
                                         </Box>
                                         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>

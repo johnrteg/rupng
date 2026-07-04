@@ -61,6 +61,7 @@ export namespace PostLoginChallenge
         complete       : boolean;                      // true → fully authenticated
         sessionToken?  : string;                       // present when complete
         challenges?    : Array<Login.ChallengeType>;   // present when more challenges remain (e.g. [TOTP])
+        challengeToken? : string;                      // opaque handle to answer the next challenge (MFA continuation)
     }
 
     export enum Error

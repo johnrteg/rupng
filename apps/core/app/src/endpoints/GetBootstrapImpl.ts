@@ -17,7 +17,7 @@ export class GetBootstrapImpl extends GetBootstrap
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // server-side fulfillment of the request — live read of the WEB config from AppConfig
-    // (profile "web"), falling back to GetBootstrap.SEED. A Redis cache will front this later.
+    // (profile "web"), falling back to GetBootstrap.DEFAULT. A Redis cache will front this later.
     public async execute( _auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
         const reply : GetBootstrap.Response = await this.service.getWebConfig();

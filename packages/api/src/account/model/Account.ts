@@ -1,5 +1,6 @@
 //
 import { Type } from "@repo/common";
+import { Access } from "@repo/endpoint";
 import { Validation } from "../../model/Validation";
 
 //
@@ -68,13 +69,15 @@ export namespace Account
     {
         id              : Type.UUID;
         parentId?       : Type.UUID;          // parent account (sub-account hierarchy)
+        ownerId?        : Type.UUID;          // the user who created/owns this account (their "own" account)
         name            : string;
         status          : Status;
         organization    : Organization;       // type + sub-type (e.g. nonprofit · 501(c)(3))
         parentAccess    : ParentAccess;       // parent's ability to act in this account
         tags            : Array<string>;
         suspendedReason : string;
-        
+        suspendedByAncestor? : boolean;       // true = suspended only because an ancestor was (cleared on the ancestor's reactivation; independent suspensions stay)
+
         poc             : Poc;                // primary point of contact { name, email }
         billingPoc?     : Poc;                // primary point of contact { name, email }
         
@@ -88,6 +91,95 @@ export namespace Account
         billingAddress? : Type.Address;
         createdAt       : Type.ISODateTime;
         modifiedAt      : Type.ISODateTime;
+    }
+
+    /**
+     * Editable subset of the account — the PUT write shape (admins only). Identity + lifecycle fields
+     * (id, ownerId, status, joinCode, parentAccess, featureFlags, timestamps) are NOT editable here; they
+     * change via provisioning / admin transitions, not a self-service account edit.
+     */
+    export interface Update
+    {
+        name?         : string;
+        organization? : Organization;
+        poc?          : Poc;
+        billingPoc?   : Poc;
+        website?      : Type.Url;
+        timezone?     : Type.TimeZone;
+        address?      : Type.Address;
+    }
+
+    /**
+     * Read-time DEFAULTs — the safe baseline for fields an older / partial `accounts` row may be missing.
+     * Apply with `ObjectUtils.withDefaults( row, Account.DEFAULT )` after a datastore read so callers always
+     * get a complete-enough entity. Identity / lifecycle fields (`id`, `ownerId`, `parentId`, `name`,
+     * `joinCode`, `createdAt`, `modifiedAt`) are intentionally OMITTED: a row genuinely missing them is an
+     * anomaly we want to surface, not paper over with junk values.
+     */
+    export const DEFAULT : Partial<Entity> =
+    {
+        status:          Status.ACTIVE,
+        organization:    { type: OrganizationType.OTHER },
+        parentAccess:    ParentAccess.GRANTED,
+        tags:            [],
+        suspendedReason: "",
+        poc:             { name: "", email: "" as Type.Email },
+        timezone:        "UTC" as Type.TimeZone,
+        featureFlags:    {},
+        address:         {} as Type.Address,
+    };
+
+    /** A member's access status within an account. */
+    export enum MemberStatus
+    {
+        ACTIVE    = "active",       // normal access
+        SUSPENDED = "suspended",    // access paused by an admin (NOT removed — reversible)
+    }
+
+    /** A user with access to an account — the account↔user membership, enriched for display. */
+    export interface Member
+    {
+        userId       : Type.UUID;
+        role         : Access.Role;          // the member's role in this account (the account ladder)
+        status       : MemberStatus;
+        name?        : string;               // denormalized display name (captured on add)
+        email?       : Type.Email;           // denormalized email (captured on add)
+        owner?       : boolean;              // true = the account owner (can't be suspended / removed)
+        createdAt    : Type.ISODateTime;     // when they were added
+        lastLoginAt? : Type.ISODateTime;     // best-effort last-seen (optional)
+    }
+
+    /** A child account in the hierarchy, summarized for the sub-accounts list (account-2). Carries its own
+     *  descendants (`children`) so the UI can render the full sub-tree as an expandable tree. */
+    export interface SubAccount
+    {
+        id           : Type.UUID;
+        name         : string;
+        status       : Status;
+        ownerId?     : Type.UUID;            // the sub-account's owner (the admin who created it)
+        createdAt    : Type.ISODateTime;
+        children?    : Array<SubAccount>;    // nested sub-accounts (present when this node has its own children)
+    }
+
+    /** Lifecycle of an invitation to join an account. */
+    export enum InviteStatus
+    {
+        PENDING   = "pending",      // created / queued — the invite email hasn't gone out yet
+        INVITED   = "invited",      // the invite email has been sent; awaiting the invitee
+        ACCEPTED  = "accepted",     // materialized into a membership (the invitee joined)
+        DECLINED  = "declined",     // the invitee declined the invitation
+        CANCELLED = "cancelled",    // revoked by an admin (soft — kept for the record)
+    }
+
+    export interface Invite
+    {
+        inviteId   : Type.UUID;
+        email      : Type.Email;
+        role       : Access.Role;            // the role the invitee gets on accept
+        status     : InviteStatus;
+        invitedAt  : Type.ISODateTime;       // when first sent (how old the invite is)
+        lastSentAt?: Type.ISODateTime;       // when last (re)sent
+        invitedBy? : Type.UUID;              // the admin who invited
     }
 
     // ── Schema + validator for the API record `Entity` (wire + messaging shape) ──────────────────
@@ -109,6 +201,7 @@ export namespace Account
         {
             id:           { type: "string", format: "uuid" },
             parentId:     { type: "string", format: "uuid" },
+            ownerId:      { type: "string", format: "uuid" },
             name:         { type: "string" },
             status:       { type: "string", enum: Object.values( Status ) },
             organization: {
@@ -118,6 +211,7 @@ export namespace Account
             parentAccess:    { type: "string", enum: Object.values( ParentAccess ) },
             tags:            { type: "array", items: { type: "string" } },
             suspendedReason: { type: "string" },
+            suspendedByAncestor: { type: "boolean" },
             poc:             POC_SCHEMA,
             billingPoc:      POC_SCHEMA,
             website:         { type: "string", format: "uri" },

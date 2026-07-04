@@ -9,13 +9,14 @@ import { invalidatePorts } from "./ports";
 import { processManager } from "./processManager";
 import { logStore } from "./logStore";
 import { pingAll, pingHealth } from "./health";
-import { localstackDown, localstackStatus, localstackUp } from "./localstack";
+import { localstackClockSkew, localstackDown, localstackStatus, localstackUp } from "./localstack";
 import { claudePrompt } from "./claude";
 import { claudeAgent } from "./claudeAgent";
 import { clearConversation, loadConversation } from "./claudeStore";
 import { lambdaInvoke, lambdaList, listJobs } from "./jobs";
-import { apigwRoutes, cloudGraph, cloudHealth, cloudTail, ecsService, s3List } from "./cloudGraph";
+import { apigwRoutes, cloudGraph, cloudHealth, cloudTail, ecsService, s3List, s3Buckets, s3Head, s3PresignGet } from "./cloudGraph";
 import { configGet, configProfiles, configSave } from "./appconfig";
+import { secretsList, secretGet, secretSave, secretClear } from "./secrets";
 import { dynamoDelete, dynamoPut, dynamoScan, dynamoTableInfo, dynamoTables } from "./dynamo";
 import { cognitoCreateUser, cognitoDeleteUser, cognitoPools, cognitoSetEnabled, cognitoSetPassword, cognitoUpdateUser, cognitoUsers } from "./cognito";
 import { dockerContainers } from "./docker";
@@ -36,6 +37,9 @@ import { WEBPROXY_ID } from "../shared/types";
 import { isReadOnly, setTarget, targetInfo } from "./aws";
 import { deleteRequest, discoverEndpoints, listSaved, localApiRoutes, saveRequest, sendRequest } from "./apiTester";
 import { kafkaMonitor } from "./kafkaMonitor";
+import { sesClear, sesMessages } from "./ses";
+import { cognitoCodes } from "./cognitoCodes";
+import { killProcessTree, reapStale, scanProcesses } from "./processScan";
 import { LOG_DIR, REPO_ROOT } from "./paths";
 
 //
@@ -43,9 +47,12 @@ import { LOG_DIR, REPO_ROOT } from "./paths";
 // `handle` = request/response (invoke); pushed events stream live to the window over `webContents.send`.
 //
 
+/** Register every `ipcMain.handle` request/response endpoint and wire main→renderer event forwarding.
+ *  Called once on app-ready; `getWindow` resolves the current window lazily (it can be recreated). */
 export function registerIpc( getWindow : () => BrowserWindow | null ) : void
 {
-    const send = ( channel : string, ...args : unknown[] ) : void =>
+    // forward an event to the renderer, dropping it if the window/webContents has gone (reload/close race)
+    const send = ( channel : string, ...args : Array<unknown> ) : void =>
     {
         const win : BrowserWindow | null = getWindow();
         if ( !win || win.isDestroyed() || win.webContents.isDestroyed() ) return;   // window/webContents gone (reload/close)
@@ -56,7 +63,7 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     // ── live event forwarding (main → renderer) ─────────────────────────────────────────────────
     logStore.on( "line", ( line ) => send( IPC.onLog, line ) );
     processManager.on( "proc", ( state ) => send( IPC.onProc, state ) );
-    buildOrchestrator.on( "queue", ( q ) => send( IPC.onBuildQueue, q ) );   // sequential build progress
+    buildOrchestrator.on( "queue", ( queue ) => send( IPC.onBuildQueue, queue ) );   // sequential build progress
     processManager.on( "stage", ( service : string, state : StageState ) =>
     {
         send( IPC.onStage, { service, state } );
@@ -110,8 +117,9 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
         send( IPC.onLocalStack, state );
         return state;
     } );
-    ipcMain.handle( IPC.localstackUp,   async () => { await localstackUp();   const s = await localstackStatus(); send( IPC.onLocalStack, s ); return s; } );
-    ipcMain.handle( IPC.localstackDown, async () => { await localstackDown(); const s = await localstackStatus(); send( IPC.onLocalStack, s ); return s; } );
+    ipcMain.handle( IPC.localstackClockSkew, () => localstackClockSkew() );
+    ipcMain.handle( IPC.localstackUp,   async () => { await localstackUp();   const state = await localstackStatus(); send( IPC.onLocalStack, state ); return state; } );
+    ipcMain.handle( IPC.localstackDown, async () => { await localstackDown(); const state = await localstackStatus(); send( IPC.onLocalStack, state ); return state; } );
 
     // ── claude ──────────────────────────────────────────────────────────────────────────────────
     ipcMain.handle( IPC.claudeGetMode, () => claudeAgent.getMode() );
@@ -137,12 +145,21 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     ipcMain.handle( IPC.cloudHealth, () => cloudHealth() );
     ipcMain.handle( IPC.cloudTail, ( _e, logGroup : string, limit? : number ) => cloudTail( logGroup, limit ) );
     ipcMain.handle( IPC.s3List, ( _e, bucket : string, prefix? : string ) => s3List( bucket, prefix ) );
+    ipcMain.handle( IPC.s3Buckets, ( _e, match? : string ) => s3Buckets( match ) );
+    ipcMain.handle( IPC.s3Head, ( _e, bucket : string, key : string ) => s3Head( bucket, key ) );
+    ipcMain.handle( IPC.s3PresignGet, ( _e, bucket : string, key : string, ttlSec? : number ) => s3PresignGet( bucket, key, ttlSec ) );
     ipcMain.handle( IPC.apigwRoutes, ( _e, apiId : string ) => apigwRoutes( apiId ) );
 
     // appconfig (the Config tab) — view/edit per-service config + sub-configs
     ipcMain.handle( IPC.configProfiles, ( _e, service : string ) => configProfiles( service ) );
     ipcMain.handle( IPC.configGet, ( _e, applicationId : string, profileId : string ) => configGet( applicationId, profileId ) );
     ipcMain.handle( IPC.configSave, ( _e, applicationId : string, profileId : string, environmentId : string, content : string, contentType : string ) => configSave( applicationId, profileId, environmentId, content, contentType ) );
+
+    // secrets manager (the Secrets tab) — list a service's + platform-shared secrets, reveal + set values
+    ipcMain.handle( IPC.secretsList, ( _e, service : string ) => secretsList( service ) );
+    ipcMain.handle( IPC.secretsGet,  ( _e, secretId : string ) => secretGet( secretId ) );
+    ipcMain.handle( IPC.secretsSave, ( _e, secretId : string, value : string ) => secretSave( secretId, value ) );
+    ipcMain.handle( IPC.secretsClear, ( _e, secretId : string ) => secretClear( secretId ) );
 
     // dynamodb (the Data tab) — per-service tables + item browse/edit
     ipcMain.handle( IPC.dynamoTables, ( _e, service : string ) => dynamoTables( service ) );
@@ -190,13 +207,13 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     ipcMain.handle( IPC.repoPull, ( _e, branch? : string ) => pull( branch ) );
     ipcMain.handle( IPC.repoReinstall, () => reinstall() );
     ipcMain.handle( IPC.repoBump, ( _e, area : string, kind : Parameters<typeof bumpVersion>[ 1 ] ) => bumpVersion( area, kind ) );
-    ipcMain.handle( IPC.repoTest, ( _e, areas : string[] ) => test( areas ) );
-    ipcMain.handle( IPC.repoCommitPush, ( _e, branch : string, message : string, paths : string[] ) => commitPush( branch, message, paths ) );
-    ipcMain.handle( IPC.repoCreatePR, ( _e, branch : string, title : string, paths : string[] ) => createPR( branch, title, paths ) );
+    ipcMain.handle( IPC.repoTest, ( _e, areas : Array<string> ) => test( areas ) );
+    ipcMain.handle( IPC.repoCommitPush, ( _e, branch : string, message : string, paths : Array<string> ) => commitPush( branch, message, paths ) );
+    ipcMain.handle( IPC.repoCreatePR, ( _e, branch : string, title : string, paths : Array<string> ) => createPR( branch, title, paths ) );
     ipcMain.handle( IPC.repoOutdated, () => npmOutdated() );
-    ipcMain.handle( IPC.repoUpdateDeps, ( _e, names : string[] ) => updateDeps( names ) );
+    ipcMain.handle( IPC.repoUpdateDeps, ( _e, names : Array<string> ) => updateDeps( names ) );
     ipcMain.handle( IPC.repoVersionConflicts, () => versionConflicts() );
-    ipcMain.handle( IPC.repoSyncVersions, ( _e, names : string[] ) => syncVersions( names ) );
+    ipcMain.handle( IPC.repoSyncVersions, ( _e, names : Array<string> ) => syncVersions( names ) );
     ipcMain.handle( IPC.watchSyncStart, ( _e, service : string ) => startWatchSync( service ) );
     ipcMain.handle( IPC.watchSyncStop, ( _e, service : string ) => { stopWatchSync( service ); } );
     ipcMain.handle( IPC.watchSyncState, ( _e, service : string ) => isWatchSyncing( service ) );
@@ -206,11 +223,11 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     ipcMain.handle( IPC.buildQueueGet, () => buildOrchestrator.queueState() );
     ipcMain.handle( IPC.buildRunStep, ( _e, service : string, step : StageId ) => { buildOrchestrator.runStepNow( service, step ); } );
     ipcMain.handle( IPC.buildRunNow, ( _e, service : string ) => { buildOrchestrator.runNow( service ); } );
-    ipcMain.handle( IPC.buildAll, ( _e, ids : string[], runId? : string ) => { buildOrchestrator.buildAll( ids, runId ); } );
+    ipcMain.handle( IPC.buildAll, ( _e, ids : Array<string>, runId? : string ) => { buildOrchestrator.buildAll( ids, runId ); } );
 
     // ── deploy (git → real AWS environment) ──────────────────────────────────────────────────────
     ipcMain.handle( IPC.deployRefs, () => deployRefs() );
-    ipcMain.handle( IPC.deployGitVersions, ( _e, ref : string, services : string[] ) => gitVersions( ref, services ) );
+    ipcMain.handle( IPC.deployGitVersions, ( _e, ref : string, services : Array<string> ) => gitVersions( ref, services ) );
     ipcMain.handle( IPC.deployedVersions, ( _e, config : DeployEnvConfig ) => deployedVersions( config ) );
     ipcMain.handle( IPC.deployRun, ( _e, req : DeployRequest ) => deployRun( req ) );
     ipcMain.handle( IPC.deployMap, ( _e, configs : Record<DeployEnvName, DeployEnvConfig> ) => deployMap( configs ) );
@@ -220,7 +237,7 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     ipcMain.handle( IPC.deployOpenLine, () => openReleaseLine() );
 
     // ── in-app browser window (its own resizable window; console captured to the Trace view) ───────
-    onBrowserState( ( s ) => send( IPC.onBrowser, s ) );
+    onBrowserState( ( state ) => send( IPC.onBrowser, state ) );
     ipcMain.handle( IPC.browserOpen, ( _e, url : string ) => openBrowser( url ) );
     ipcMain.handle( IPC.browserClose, () => { closeBrowser(); } );
     ipcMain.handle( IPC.browserReload, () => { reloadBrowser(); } );
@@ -246,6 +263,16 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     ipcMain.handle( IPC.monitorState, () => kafkaMonitor.state() );
     ipcMain.handle( IPC.monitorSetTtl, ( _e, ms : number ) => { kafkaMonitor.setTtl( ms ); } );
     ipcMain.handle( IPC.monitorClear, () => { kafkaMonitor.clear(); } );
+
+    // ── ses viewer (the Email sub-tab) ───────────────────────────────────────────────────────────────
+    ipcMain.handle( IPC.sesMessages, () => sesMessages() );
+    ipcMain.handle( IPC.sesClear, () => sesClear() );
+    ipcMain.handle( IPC.cognitoCodes, () => cognitoCodes() );
+
+    // ── process monitor (the Processes sub-tab) ────────────────────────────────────────────────────────
+    ipcMain.handle( IPC.processList, () => scanProcesses( processManager.ownedPids() ) );
+    ipcMain.handle( IPC.processKill, ( _e, pid : number ) => { killProcessTree( pid ); } );
+    ipcMain.handle( IPC.processReap, () => reapStale( processManager.ownedPids() ) );
 
     void LOG_DIR; // ensured/created lazily by logStore; referenced for clarity
 }

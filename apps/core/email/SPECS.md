@@ -53,6 +53,100 @@ Why provider failover is **constrained**, not "point at another provider" (captu
   routine load-splitting. **Idempotency key** so an A→B failover never double-sends. Verification is **per
   `(domain × provider)`** (`email-4.7`).
 
+# SMTP transport & sending environments (reference)
+
+The provider factory (`email-3.1`) abstracts **ESP *APIs*** (SES, Mailgun, Postmark, SparkPost). A **generic
+SMTP transport** is the *other* adapter shape — it speaks plain **SMTP** (nodemailer-style) rather than a vendor
+API — and it exists to serve two distinct needs that are NOT the ESP-API path:
+
+1. **Local / non-prod delivery (dev sink).** Dev + test must **never** send real mail. The SMTP transport points
+   at either **LocalStack's SES emulation** (which *captures* sends at `GET /_aws/ses` — surfaced in the
+   console's **Monitor → Email** viewer) or a **Mailhog** container (catch-all SMTP + a rendered-inbox web UI).
+   **Nothing leaves the machine; no DNS / DKIM / IP-warm-up applies.** Mailhog is **dev-only** — **never** in the
+   deployed footprint, and **optional even locally** (the LocalStack capture + the console Email viewer already
+   read every send). Reach for Mailhog only when you want a real SMTP relay + a full rendered-inbox UI.
+
+2. **External relay — bring-your-own transport (BYO, enterprise edge case).** An account that must route mail
+   through **their own SMTP relay / on-prem MTA / corporate ESP**. The platform hands the rendered message to
+   *their* relay over SMTP; **deliverability, sender reputation, and authentication become *theirs*** — we do
+   **not** manage DKIM / SPF / DMARC / IP-warm-up for a relay we don't own, and **SES→SNS bounce/complaint
+   feedback does not exist** on that path (their relay owns that loop; our auto-suppression degrades to whatever
+   the relay reports back, if anything).
+
+**Two "bring your own" models — keep them distinct (common confusion):**
+
+* **BYO *domain* (default · white-label).** The client keeps **their from-domain's** reputation, but mail still
+  goes through **our SES**: they publish **our** SES DKIM/SPF/DMARC records (`email-4.7`) and **we** own
+  deliverability + warm-up + the feedback loop. **This is the norm** — most "use our own domain" requests mean
+  this, *not* their own server.
+* **BYO *transport* (edge case).** The client routes mail through **their** SMTP relay; **we** render + gate +
+  enqueue, **they** own deliverability. **Per-account opt-in**; relay **credentials live in Secrets Manager**
+  (never AppConfig); add / change is **`ACCOUNT`-role+ and audited**.
+
+**Transport is resolved by environment ⊕ per-account config — one `provider.send()` seam:**
+
+| Environment | Transport | Real delivery? | Who owns deliverability |
+|---|---|---|---|
+| local / dev / test | **SMTP → LocalStack capture or Mailhog** | no (captured) | n/a |
+| prod (**default**) | **SES** (per-account **verified domain identity**) | yes | **us** (DKIM/SPF/DMARC + warm-up + SES→SNS feedback) |
+| prod (account **BYO**) | that account's **external SMTP relay** | yes | **the client** (their relay/reputation) |
+
+The transport is just **another factory adapter + a resolution rule** — adding it doesn't change the send
+pipeline. **Compliance is ours regardless of transport:** the **`canSend()` gate** (suppression / consent /
+quiet-hours / block-list, `email-4.1`) and the **idempotency key** run on **every** path, including a BYO relay —
+a client's own relay does **not** let them bypass platform suppression / unsubscribe.
+
+**Transport abstraction (sketch — design-intent).** A `Transport` is the **wire** a *rendered, already-gated*
+message leaves on; the `EmailSendWorker` resolves one per account and calls `.send()`. SES is the default; an
+SMTP transport backs both the dev sink and a per-account BYO relay. (Distinct from the ESP-API *provider* —
+SES/Mailgun/… — which the factory selects by `message.provider`; the SES provider sends *via* the SES transport,
+and `smtp` is its own provider+transport pairing.)
+
+```ts
+namespace Email
+{
+    // A rendered, canSend()-approved message ready to leave the platform.
+    export interface Outbound
+    {
+        idempotencyKey : string;                 // dedup across retries / A→B failover
+        accountId      : string;
+        from           : string;                 // a VERIFIED sending identity (or the platform system sender)
+        to             : string[]; cc? : string[]; bcc? : string[];
+        subject        : string;
+        html?          : string; text? : string;
+        headers?       : Record<string, string>; // List-Unsubscribe (RFC 8058), etc.
+        attachments?   : Array<{ filename : string; contentRef : string; contentType : string }>;
+    }
+
+    export interface SendResult { ok : boolean; providerMessageId? : string; error? : string; retryable? : boolean; }
+
+    // HOW a message physically leaves. SES (API) or SMTP (nodemailer — dev sink OR external relay).
+    export interface Transport
+    {
+        readonly kind : "ses" | "smtp";
+        send( msg : Outbound ) : Promise<SendResult>;
+    }
+
+    // Resolves the transport for a send: environment FIRST (non-prod never delivers), then per-account BYO,
+    // else the platform SES default. The worker holds NO transport knowledge beyond this call.
+    export interface TransportResolver { resolve( accountId : string ) : Promise<Transport>; }
+}
+
+// Reference resolution (the ONLY place transport policy lives):
+//   1. env !== "production"           → SmtpTransport(devSink)          // LocalStack capture / Mailhog — no real send
+//   2. account has a BYO relay (3.6)  → SmtpTransport(secretsBackedCfg) // their relay; their deliverability
+//   3. default                        → SesTransport()                  // our SES; our DKIM/SPF/warm-up/feedback
+//
+// SmtpTransport config = { host, port, secure, auth? }:
+//   • dev sink  → host = LocalStack/Mailhog, no auth/TLS (captured, never delivered)
+//   • BYO relay → host/port/secure from account config; auth.{user,pass} fetched from Secrets Manager at send
+//
+// EmailSendWorker (email-14.4), unchanged in shape:
+//   render → canSend() → rate/IP-warm gate → (await resolver.resolve(msg.accountId)).send(msg) → send-log + sent-content
+// canSend()/suppression/unsubscribe + the idempotency key are applied BEFORE resolve() — so they hold on
+// EVERY transport, including a BYO relay.
+```
+
 # Compliance & standards mapping
 
 How **this email service's** controls map to **OWASP Top 10 (2021)**, **ISO/IEC 27001:2022** (Annex A), **SOC 2
@@ -139,6 +233,16 @@ platform [AWS topology](../../../packages/services/src/aws/SPECS.md).
 8. ✅ **Inbound email / replies — DEFERRED (out of scope).** v1 is **send-only**; both **no-reply** and
    **in-platform view + reply** are deferred — see *Out of scope* below. The reply-capable path (**POP3 / IMAP +
    threading**) is the more complicated one, so it waits for a real two-way requirement.
+9. ✅ **SMTP transport & environments — DECIDED.** The factory's **ESP-API** providers (SES / Mailgun / …) are
+   joined by a **generic SMTP adapter** (`email-3.5`) serving two non-API needs: **(a) the dev sink** — non-prod
+   sends go to **LocalStack SES capture** (`/_aws/ses`, shown in the console **Monitor → Email**) or an optional
+   **Mailhog** container; **no real delivery**, and **Mailhog is dev-only / never deployed** (`email-3.7`); and
+   **(b) external relay (BYO transport)** — an enterprise account may route mail through **its own SMTP relay**
+   (`email-3.6`), creds in **Secrets Manager**, where **deliverability/reputation become the client's**.
+   **Don't conflate** this with **BYO *domain*** (default white-label — still **our SES**, the client just
+   publishes our DKIM/SPF/DMARC, `email-4.6/4.7`). **Transport = environment ⊕ per-account config behind one
+   `provider.send()` seam**; **`canSend()` + suppression + unsubscribe run on every transport** (a BYO relay
+   can't bypass compliance). Full rationale: *SMTP transport & sending environments (reference)* above.
 
 # Out of scope (deferred — later considerations)
 
@@ -221,7 +325,9 @@ Application
 # AWS Services and Other Dependencies
 
 **AWS services**
-* **SES** (+ **SNS** for bounce/complaint feedback) — sending + feedback loop.
+* **SES** (+ **SNS** for bounce/complaint feedback) — sending + feedback loop. **SES is the prod default
+  transport**; **local/dev sends go to LocalStack's SES capture** (`/_aws/ses`, no delivery — `email-3.7`).
+* **Secrets Manager** — **BYO-SMTP relay credentials** for per-account external relays (`email-3.6`); never AppConfig.
 * **SQS** (+ **DLQ**) — **two levels** (like texting): **L1** account fair-share intake → **L2 per-provider** physical queues (config-mapped, most-specific-first → shared default) for HoL isolation; **Lambda** job workers + retries.
 * **DynamoDB** — the send-log; **S3** — the sent-content (rendered body) store.
 * **EventBridge** — scheduled campaigns.
@@ -231,11 +337,12 @@ Application
 * **Route 53 / ACM** *(or the customer's registrar)* — sending-domain DNS verification (DKIM/SPF/DMARC).
 
 **Third-party libraries / services**
-* **Email providers (factory):** SES (AWS) · SendMail · Mailgun · Postmark · SparkPost · `fake`.
+* **Email providers (factory):** SES (AWS) · `smtp` (generic SMTP, **nodemailer** — `email-3.5`) · Mailgun · Postmark · SparkPost · `fake`. The `smtp` adapter backs both the **dev sink** and the **per-account external relay**.
+* **Dev mail sink:** **LocalStack SES capture** (`/_aws/ses` → console **Monitor → Email**); optional **Mailhog** container (SMTP catch-all + inbox UI). **Dev-only — never deployed** (`email-3.7`).
 * *(later)* **Recipient-validation provider** — ZeroBounce / NeverBounce / Kickbox (stub, `email-4.10`).
 
 **Internal (`@repo/*`)**
-* `@repo/services` (Ses, Sqs, Dynamo, S3, Kafka, Cache), `@repo/endpoint`, `@repo/common`. Consumes **contact** (recipients/suppression) · **links** (tracked links) · **media** (attachments); emits to **analytics**; ordered by **dispatch**.
+* `@repo/services` (Ses, Sqs, Dynamo, S3, Kafka, Cache, **Secrets** — BYO-SMTP creds), `@repo/endpoint`, `@repo/common`. Consumes **contact** (recipients/suppression) · **links** (tracked links) · **media** (attachments); emits to **analytics**; ordered by **dispatch**.
 
 # Requirements (traceable register)
 
@@ -270,6 +377,9 @@ bounce/complaint suppression **back**).
 - **email-3.2** **SES** primary — custom domain, SPF/DKIM/DMARC, feedback — A
 - **email-3.3** **`fake`** provider — simulate success/failure/open/click/unsub at scale (config thresholds) — B
 - **email-3.4** **Multi-provider failover** *(outage fallback)* — only to a provider **pre-authenticated + warmed** for the from-domain; **idempotency key** prevents an A→B double-send; **single-provider-first** (SES) is the default *(gap #7)* — B
+- **email-3.5** **Generic SMTP transport (adapter)** — a plain **SMTP** adapter in the factory (nodemailer-style), distinct from the ESP-API providers; the shared shape behind both the **dev sink** (`email-3.7`) and the **external relay** (`email-3.6`). Honors the same `provider.send()` contract + idempotency key *(gap #9, SMTP transport reference)* — B
+- **email-3.6** **Per-account external SMTP relay (BYO transport)** *(enterprise edge case)* — an account may route its mail through **its own SMTP relay / MTA / corporate ESP**: host/port/security + **credentials in Secrets Manager** (never AppConfig); **`canSend()` + suppression + unsubscribe still apply**; **deliverability/reputation/auth + bounce feedback become the client's** (no platform DKIM/SPF/warm-up/SES→SNS on this path). **Opt-in, `ACCOUNT`-role+, audited.** Distinct from **BYO *domain*** (still our SES, `email-4.6/4.7`) *(gap #9)* — C
+- **email-3.7** **Local / non-prod transport (dev sink)** — outside prod the SMTP transport targets **LocalStack SES capture** (`GET /_aws/ses`, shown in the console **Monitor → Email**) or an optional **Mailhog** container; **no real delivery**, no DNS/DKIM/warm-up. **Mailhog is dev-only — never deployed**, and optional (the LocalStack capture covers reads) *(gap #9)* — B
 
 ## email-4.0 Deliverability & reputation — A
 - **email-4.1** **Pre-send `canSend()` gate** (suppression / consent / quiet-hours / block-list) before delivery — A
@@ -390,7 +500,15 @@ role satisfies any junior minimum.
 | Method | URI | Purpose | Access | Req |
 |---|---|---|---|---|
 | GET | `/email/providers` | List configured providers + status | APPLICATION | email-3.1 |
-| PUT | `/email/providers/{id}` | Configure a provider (factory: SES / Mailgun / … / `fake`) | APPLICATION ⬆ | email-3.1/3.2 |
+| PUT | `/email/providers/{id}` | Configure a provider (factory: SES / Mailgun / … / `fake` / `smtp`) | APPLICATION ⬆ | email-3.1/3.2/3.5 |
+
+### Transport — per-account external SMTP relay, BYO (email-3.6)
+| Method | URI | Purpose | Access | Req |
+|---|---|---|---|---|
+| GET | `/email/accounts/{accountId}/smtp` | Read the account's BYO-SMTP relay config (host/port/security; **secret-ref only**, never the credential) | ACCOUNT | email-3.6 |
+| PUT | `/email/accounts/{accountId}/smtp` | Set / update the relay (creds stored in **Secrets Manager**) — audited | ACCOUNT ⬆ | email-3.6 |
+| POST | `/email/accounts/{accountId}/smtp/test` | Send a **test** through the relay to confirm connectivity/auth | ACCOUNT | email-3.6 |
+| DELETE | `/email/accounts/{accountId}/smtp` | Remove the relay → fall back to the platform default (SES) | ACCOUNT ⬆ | email-3.6 |
 
 ### Messages — send-log, status & sent content (email-8, email-12)
 | Method | URI | Purpose | Access | Req |

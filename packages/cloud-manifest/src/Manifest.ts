@@ -120,5 +120,10 @@ export interface PlatformManifest
     sharedEventBus? : EventBusSpec;          // the platform-wide event bus
     cloudTrail?     : CloudTrailSpec;
     hostedZones?    : Array<string>;         // Route 53 zones managed by the platform
+    // Platform-shared secrets granted to EVERY service (not owned by any one service) — the AI provider
+    // API keys (OpenAI, Anthropic, …). Each ServiceStack is granted read + gets the ARN injected as
+    // `SECRET_<KEY>`, so any service's AiFactory can resolve them. Service-specific keys stay in that
+    // service's `owns.secrets`.
+    secrets?        : Array<SecretSpec>;
     tags?           : Tags;
 }

@@ -9,12 +9,32 @@
 // subscribes to the objects it cares about and switches on the envelope's `verb`. High-volume analytics
 // ride an `Events.Stream` (behavior / engagement). See root SPECS → "Events & messaging".
 //
-import { Kafka as KafkaJS } from "kafkajs";
+import { Kafka as KafkaJS, Partitioners } from "kafkajs";
 import type { Producer, Consumer, Message, EachMessagePayload, IHeaders } from "kafkajs";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 import type { Events } from "@repo/system";
+import { RequestContext } from "../RequestContext";
+
+// kafkajs 2.2.4 (the latest stable) schedules its idle pending-request check with
+// `throttledUntil(0) - Date.now()` when nothing is throttled/pending — a large negative delay that Node
+// clamps to 1ms while printing a `TimeoutNegativeWarning`. It's benign (the check just runs immediately),
+// but noisy. Suppress ONLY that warning the first time any Kafka client is created, re-dispatching every
+// other warning to the previously-registered listeners (incl. Node's default printer) so nothing else is lost.
+let kafkaWarningFilterInstalled : boolean = false;
+function suppressKafkaTimeoutWarning() : void
+{
+    if( kafkaWarningFilterInstalled ) return;
+    kafkaWarningFilterInstalled = true;
+    const prior : Array<( warning : Error ) => void> = process.listeners( "warning" ) as Array<( warning : Error ) => void>;
+    process.removeAllListeners( "warning" );
+    process.on( "warning", ( warning : Error ) : void =>
+    {
+        if( warning.name === "TimeoutNegativeWarning" ) return;   // kafkajs idle-throttle timer — benign
+        for( const listener of prior ) listener( warning );
+    } );
+}
 
 /**
  * Kafka (MSK) facade — wraps `kafkajs` (MSK speaks the Kafka wire protocol, not an AWS SDK).
@@ -83,6 +103,7 @@ export class Kafka
         clientId : string = process.env.SERVICE_NAME ?? "rup-service",
     )
     {
+        suppressKafkaTimeoutWarning();
         // MSK in AWS uses IAM/TLS/SASL; locally (Redpanda) it's PLAINTEXT. Auth config goes here.
         this.kafka = new KafkaJS( { clientId, brokers } );
     }
@@ -98,17 +119,40 @@ export class Kafka
     // ── Publish ─────────────────────────────────────────────────────────────────────────────────────────
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
-    /** Send messages to a topic by NAME, reusing a single, lazily-connected producer. */
+    /** Get the shared producer, connecting one on first use. A DISCONNECT (broker blip, idle timeout) NULLS
+     *  the cached handle so the next call reconnects — without this the facade would keep reusing a dead
+     *  producer and every send would fail "The producer is disconnected". */
+    private async producerHandle() : Promise<Producer>
+    {
+        if( this._producer !== undefined ) return this._producer;
+        // pin the modern partitioner explicitly: it silences KafkaJS's "default partitioner changed"
+        // warning, and makes key→partition mapping deterministic (we key by entity id for ordering).
+        const producer : Producer = this.kafka.producer( { createPartitioner: Partitioners.DefaultPartitioner } );
+        producer.on( producer.events.DISCONNECT, () : void => { if( this._producer === producer ) this._producer = undefined; } );
+        await producer.connect();
+        this._producer = producer;
+        return producer;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** Send messages to a topic by NAME, reusing a single, lazily-connected producer. Reconnects + retries
+     *  ONCE if the cached producer turns out to be disconnected (self-healing after a broker blip). */
     private publishTo( topicName : string, messages : Array<Message> ) : Promise<Type.Result<void>>
     {
         return ResultUtils.from( async () : Promise<void> =>
         {
-            if( this._producer === undefined )
+            try
             {
-                this._producer = this.kafka.producer();
-                await this._producer.connect();
+                const producer : Producer = await this.producerHandle();
+                await producer.send( { topic: topicName, messages } );
             }
-            await this._producer.send( { topic: topicName, messages } );
+            catch
+            {
+                // a stale/disconnected producer → drop it and reconnect fresh, then retry once
+                this._producer = undefined;
+                const producer : Producer = await this.producerHandle();
+                await producer.send( { topic: topicName, messages } );
+            }
         } );
     }
 
@@ -135,15 +179,24 @@ export class Kafka
      */
     publishEvent( envelope : Events.Envelope ) : Promise<Type.Result<void>>
     {
+        // carry the request/event transaction id so the chain stays correlated across services: prefer one the
+        // caller already set on the envelope, else the ambient RequestContext (the request that triggered this).
+        const transactionId : string | undefined = envelope.source?.transactionId ?? RequestContext.transactionId();
+        const enriched : Events.Envelope = ( transactionId && envelope.source && !envelope.source.transactionId )
+            ? { ...envelope, source: { ...envelope.source, transactionId } }
+            : envelope;
+
         const headers : Record<string, string> = {
-            object    : envelope.object,
-            verb      : envelope.verb,
-            action    : envelope.action,
-            eventId   : envelope.eventId,
-            accountId : envelope.accountId,
-            version   : envelope.version,
+            object    : enriched.object,
+            verb      : enriched.verb,
+            action    : enriched.action,
+            eventId   : enriched.eventId,
+            accountId : enriched.accountId,
+            version   : enriched.version,
         };
-        return this.publishTo( envelope.object, [ { key: envelope.target.id, value: JSON.stringify( envelope ), headers } ] );
+        if( transactionId ) headers.transactionId = transactionId;   // mirror to a header (broker-side filter + consumer re-link)
+
+        return this.publishTo( enriched.object, [ { key: enriched.target.id, value: JSON.stringify( enriched ), headers } ] );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -208,14 +261,19 @@ export class Kafka
         await consumer.run( {
             eachMessage : async ( payload : EachMessagePayload ) : Promise<void> =>
             {
-                await handler( {
+                const incoming : Kafka.Incoming = {
                     topic     : payload.topic,
                     partition : payload.partition,
                     key       : payload.message.key?.toString(),
                     value     : Kafka.decodeValue( payload.message.value ),   // JSON-parsed (our topics are always JSON)
                     headers   : Kafka.decodeHeaders( payload.message.headers ),
                     raw       : payload,
-                } );
+                };
+                // re-link to the producing request's transaction id so the consumer's logs + any events IT
+                // publishes stay on the same correlated chain (falls back to the envelope's source id)
+                const transactionId : string | undefined = incoming.headers?.transactionId
+                    ?? ( incoming.value as Events.Envelope | undefined )?.source?.transactionId;
+                await RequestContext.run( { transactionId }, () => handler( incoming ) );
             },
         } );
 
@@ -357,7 +415,7 @@ export class Kafka
     /** Disconnect the shared producer + every subscribed consumer — call on graceful shutdown. */
     async disconnect() : Promise<void>
     {
-        if( this._producer !== undefined ) await this._producer.disconnect();
+        if( this._producer !== undefined ) { await this._producer.disconnect(); this._producer = undefined; }   // null it so a later send reconnects
         await Promise.all( this._consumers.map( ( consumer : Consumer ) => consumer.disconnect() ) );
     }
 }

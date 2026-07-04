@@ -9,7 +9,7 @@
     },
     "scripts": {
         "build": "rup-bundle",
-        "dev": "tsx watch src/index.ts",
+        "dev": "NODE_OPTIONS=--trace-warnings tsx watch src/index.ts",
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {

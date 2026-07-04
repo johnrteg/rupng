@@ -112,6 +112,63 @@ template model, pricing, and webhook shape — the adapter normalizes.
   for response attribution.
 * **Front/back** (postcards), enclosure pages (letters); rendered to a print-ready **PDF**.
 
+## Rendering the artifact — SVG → print-ready PDF (print-2)
+
+The template/designer is an SVG canvas (React + TypeScript in the web app, print-6.x); print owns compiling
+that canvas to a **print-ready PDF**. Two viable client-side libraries; **jsPDF + svg2pdf.js is the
+recommendation** for precise postcard/letter layouts, with **`@react-pdf`** as an alternative when a
+component-tree layout is preferred over absolute coordinates.
+
+* **Primary — `jsPDF` + `svg2pdf.js`** (with **`opentype.js`** for text). Treats the piece as a direct vector
+  canvas with **exact coordinates in physical units** — trivial to map standard sizes (4×6, 6×9, 6×11) and add
+  the explicit **0.125 in (3 mm) bleed**. Pair with `opentype.js` to **outline fonts to `<path>` geometry in
+  the browser before rendering**, so type can never shift or corrupt on the vendor's press (no font-embedding
+  surprises).
+* **Alternative — `@react-pdf`** — component-tree → PDF; handles 300-DPI vector clarity well. If used, the
+  same rules below apply.
+
+**Rules for a correct print PDF (independent of library):**
+
+1. **Declare layout in rigid physical units** — `in` / `mm` / `cm` in the StyleSheet/coordinates, **never raw
+   integers/points**. At 300 DPI (vs 72 screen DPI) raw units rescale and break proportions; physical units
+   stay dimensionally correct at any DPI.
+2. **Image assets at 300 DPI native** — an embedded `<Image>` must have a native pixel grid matching **300 DPI
+   at its intended physical size**. Upscaled low-res web images print blurry/blocky. (Media templates supply
+   assets — [media](../media/SPECS.md).)
+3. **Color is RGB/sRGB out — CMYK is a backend step** — browsers/these libraries emit **sRGB**. When a
+   commercial facility mandates a native **CMYK** profile, a **secondary backend pipeline** transforms the
+   sRGB PDF → CMYK plate separations with an authoritative profile (e.g. **Coated GRACoL 2006** / **ISO Coated
+   v2**) using an image toolkit (**Sharp** / **ImageMagick** / Ghostscript) — run in `PrintRenderJob` right
+   before submit. This is required; client-side generation alone is never press-final for CMYK.
+
+**Hybrid production flow:** React/TS SVG editor (web) → compile canvas to a vector PDF (`jsPDF`) → backend
+`PrintRenderJob` appends the CMYK profile (Sharp/ImageMagick) → submit to the provider.
+
+### Print-ready checklist (enforce in the renderer, or the provider rejects the file)
+
+```
+┌────────────────────────────────────────────────────────┐
+│  BLEED ZONE (Extends 0.125" / 3mm past Trim Line)      │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │  TRIM LINE (The actual 4" x 6" edge of card)     │  │
+│  │  ┌────────────────────────────────────────────┐  │  │
+│  │  │  SAFE ZONE (Keep all text/logos inside)    │  │  │
+│  │  └────────────────────────────────────────────┘  │  │
+│  └──────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────┘
+```
+
+* **Bleed — size the canvas past the trim.** Initialize the `jsPDF`/canvas to the trim size **+ 0.125 in on
+  all four edges**: a 6″×4″ card → **6.25″ × 4.25″**. Background art must fill to the bleed edge so a slight
+  cutter shift leaves no white slivers.
+* **Trim line** — the actual card edge (the target size, e.g. 4″×6″).
+* **Safe zone — keep critical content in.** All text, titles, and logos stay **≥ 0.25 in** from the trim edge.
+* **Vector resolution** — non-vector backgrounds/photos are **locked to a 300 DPI grid** at their physical
+  size during render (see the 300-DPI image rule above).
+
+These are per-`type` constants on the template schema (bleed / trim / safe insets + IMb + address-block
+placement, print-2.1) — the renderer reads them so every piece is validated the same way before submit.
+
 # Addressing — the part that's unique to print
 
 Verification runs through a dedicated **`AddressVerifier` factory** (USPS Web Tools · PostGrid · Lob · Melissa ·

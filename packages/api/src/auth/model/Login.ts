@@ -3,7 +3,7 @@
 // single call: the server identifies the user, then issues one or more Challenges (password, OTP, passkey,
 // SSO redirect); the client answers each until the flow resolves. These types are what both sides speak.
 // Moved here from the auth service's internal model so PostLoginIdentify / PostLoginChallenge and the web
-// client agree on one definition (previously challenges were ad-hoc string[]).
+// client agree on one definition (previously challenges were ad-hoc Array<string>).
 //
 // Internal-only concerns — risk signals that triggered a step-up, the authorizer Context produced on
 // success — stay in the auth service's AuthModel; they never cross the wire.

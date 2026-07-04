@@ -80,7 +80,7 @@ export default class ArrayUtils
     * @param direction Direction to sort by.  Either ascending (asc) ir descending (desc)
     * @return Returns a new, sorted array.
     */
-    public static sortByField<T>(arr: T[], field: keyof T, direction: "asc" | "desc" = "asc"): T[]
+    public static sortByField<T>(arr: Array<T>, field: keyof T, direction: "asc" | "desc" = "asc"): Array<T>
     {
         return arr.slice().sort((a : T, b : T) =>
         {
@@ -154,7 +154,7 @@ export default class ArrayUtils
      *
      * @param arr - The input array to split.
      * @param size - Maximum size of each chunk (must be >= 1).
-     * @returns An array of chunks (T[][]). If `arr` is empty returns [].
+     * @returns An array of chunks (Array<Array<T>>). If `arr` is empty returns [].
      *
      * @throws {Error} If `size` is less than 1.
      *
@@ -162,9 +162,9 @@ export default class ArrayUtils
      * // returns [[1,2],[3,4],[5]]
      * ArrayUtils.chunkArray([1,2,3,4,5], 2);
      */
-    public static chunkArray<T>( arr: T[], size: number): T[][]
+    public static chunkArray<T>( arr: Array<T>, size: number): Array<Array<T>>
     {
-        const result: T[][] = [];
+        const result: Array<Array<T>> = [];
         for (let i = 0; i < arr.length; i += size)
         {
             result.push(arr.slice(i, i + size));

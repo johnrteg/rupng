@@ -12,7 +12,7 @@
 //   • The BFF is a READ-MODEL AGGREGATOR + INTAKE — it OWNS only the notices datastore
 //     (app-3 / app-10.2); everything else here is assembled or intake, not a source of truth.
 //   • TYPED, not stringly — audience / placement / class are typed unions + enums, never a
-//     parsed string or a `flags[]` bag.
+//     parsed string or a `Array<flags>` bag.
 //   • PUBLIC-SAFE — the bootstrap read-model carries no secrets + no PII (app-1.4); only
 //     *publishable* keys. Served fresh / no stale TTL (app-9.1).
 //   • PII-LIGHT INTAKE — telemetry is scrubbed before storage (app-5.3); product events carry

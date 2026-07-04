@@ -3,13 +3,15 @@ import {
     DescribeStackResourcesCommand, DescribeStacksCommand, GetTemplateCommand, type DescribeStacksCommandOutput
 } from "@aws-sdk/client-cloudformation";
 import { FilterLogEventsCommand, type FilterLogEventsCommandOutput } from "@aws-sdk/client-cloudwatch-logs";
-import { ListObjectsV2Command, type ListObjectsV2CommandOutput } from "@aws-sdk/client-s3";
+import { ListObjectsV2Command, type ListObjectsV2CommandOutput, ListBucketsCommand, HeadObjectCommand, type HeadObjectCommandOutput, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { GetApiCommand, GetRoutesCommand } from "@aws-sdk/client-apigatewayv2";
 import { DescribeServicesCommand, type DescribeServicesCommandOutput } from "@aws-sdk/client-ecs";
 
 import type {
-    ApiGwInfo, CloudCategory, CloudEdge, CloudGraph, CloudHealth, CloudNode, EcsServiceState, LogEvent, S3Listing, Target
+    ApiGwInfo, CloudCategory, CloudEdge, CloudGraph, CloudHealth, CloudNode, EcsServiceState, LogEvent, S3Listing, S3ObjectHead, Target
 } from "../shared/types";
+import { TargetKind } from "../shared/types";
 import { apigwClient, awsErr, cfnClient, ecsClient, getTarget, logsClient, s3Client } from "./aws";
 
 //
@@ -68,19 +70,21 @@ const DENY = [
     /^AWS::ApplicationAutoScaling::/, /^AWS::SSM::Parameter$/, /^AWS::Route53::HostedZone$/
 ];
 
-function dropped( type : string ) : boolean { return DENY.some( ( re ) => re.test( type ) ); }
+/** True if a resource type matches one of the noisy/low-level DENY patterns and should be hidden. */
+function dropped( type : string ) : boolean { return DENY.some( ( pattern ) => pattern.test( type ) ); }
 
+/** Map a CFN resource type to its friendly label + category, falling back for unknown types. */
 function classify( type : string ) : { label : string; category : CloudCategory }
 {
     const known : { label : string; category : CloudCategory } | undefined = TYPE_MAP[ type ];
     if ( known ) return known;
     // unknown but kept: derive a label from the last segment, category "other"
-    const seg : string = type.split( "::" ).pop() ?? type;
-    return { label: seg, category: "other" };
+    const lastSegment : string = type.split( "::" ).pop() ?? type;
+    return { label: lastSegment, category: "other" };
 }
 
 // ── CFN shapes (only the fields we read) ────────────────────────────────────────────────────────
-interface TemplateResource { Type : string; Properties? : unknown; DependsOn? : string | string[]; }
+interface TemplateResource { Type : string; Properties? : unknown; DependsOn? : string | Array<string>; }
 interface Template { Resources? : Record<string, TemplateResource>; }
 
 /** Build the full cloud graph from the deployed stacks. */
@@ -89,12 +93,12 @@ export async function cloudGraph() : Promise<CloudGraph>
     const ts : number = Date.now();
     const cfn : ReturnType<typeof cfnClient> = cfnClient();
 
-    let stackNames : string[];
+    let stackNames : Array<string>;
     try
     {
         const out : DescribeStacksCommandOutput = await cfn.send( new DescribeStacksCommand( {} ) );
         // de-dupe — DescribeStacks can list the same stack name more than once (nested/versioned)
-        stackNames = [ ...new Set( ( out.Stacks ?? [] ).map( ( s ) => s.StackName ).filter( ( n ) : n is string => Boolean( n ) ) ) ];
+        stackNames = [ ...new Set( ( out.Stacks ?? [] ).map( ( stack ) => stack.StackName ).filter( ( name ) : name is string => Boolean( name ) ) ) ];
     }
     catch ( err )
     {
@@ -104,8 +108,8 @@ export async function cloudGraph() : Promise<CloudGraph>
     if ( stackNames.length === 0 )
         return { stacks: [], nodes: [], edges: [], error: "no deployed stacks found — deploy a service to LocalStack first (cdklocal).", ts };
 
-    const nodes : CloudNode[] = [];
-    const edges : CloudEdge[] = [];
+    const nodes : Array<CloudNode> = [];
+    const edges : Array<CloudEdge> = [];
 
     for ( const stack of stackNames )
         await collectStack( stack, nodes, edges );
@@ -113,7 +117,8 @@ export async function cloudGraph() : Promise<CloudGraph>
     return { stacks: stackNames, nodes, edges, ts };
 }
 
-async function collectStack( stack : string, nodes : CloudNode[], edges : CloudEdge[] ) : Promise<void>
+/** Append one stack's kept resources (as nodes) and its template references (as edges). */
+async function collectStack( stack : string, nodes : Array<CloudNode>, edges : Array<CloudEdge> ) : Promise<void>
 {
     const cfn : ReturnType<typeof cfnClient> = cfnClient();
 
@@ -121,26 +126,27 @@ async function collectStack( stack : string, nodes : CloudNode[], edges : CloudE
     try { resources = ( await cfn.send( new DescribeStackResourcesCommand( { StackName: stack } ) ) ).StackResources ?? []; }
     catch { return; }
 
-    const kept = resources.filter( ( r ) => r.ResourceType && r.LogicalResourceId && !dropped( r.ResourceType ) );
+    // keep only typed, named resources that aren't on the DENY list
+    const kept : typeof resources = resources.filter( ( resource ) => resource.ResourceType && resource.LogicalResourceId && !dropped( resource.ResourceType ) );
     if ( kept.length === 0 ) return;
 
-    const keptIds = new Set( kept.map( ( r ) => r.LogicalResourceId! ) );
+    const keptIds : Set<string> = new Set( kept.map( ( resource ) => resource.LogicalResourceId! ) );
     const nodeId = ( logicalId : string ) : string => `${stack}/${logicalId}`;
 
-    for ( const r of kept )
+    for ( const resource of kept )
     {
-        const { label, category } = classify( r.ResourceType! );
+        const { label, category } = classify( resource.ResourceType! );
         nodes.push( {
-            id         : nodeId( r.LogicalResourceId! ),
+            id         : nodeId( resource.LogicalResourceId! ),
             stack,
-            logicalId  : r.LogicalResourceId!,
-            type       : r.ResourceType!,
+            logicalId  : resource.LogicalResourceId!,
+            type       : resource.ResourceType!,
             typeLabel  : label,
             category,
-            physicalId : r.PhysicalResourceId,
-            status     : r.ResourceStatus,
-            logGroup   : r.ResourceType === "AWS::Lambda::Function" && r.PhysicalResourceId
-                ? `/aws/lambda/${r.PhysicalResourceId}`
+            physicalId : resource.PhysicalResourceId,
+            status     : resource.ResourceStatus,
+            logGroup   : resource.ResourceType === "AWS::Lambda::Function" && resource.PhysicalResourceId
+                ? `/aws/lambda/${resource.PhysicalResourceId}`
                 : undefined
         } );
     }
@@ -158,7 +164,8 @@ async function collectStack( stack : string, nodes : CloudNode[], edges : CloudE
         if ( !keptIds.has( logicalId ) ) continue;
         const refs : Set<string> = new Set<string>();
         collectRefs( def.Properties, refs );
-        for ( const d of toArray( def.DependsOn ) ) refs.add( d );
+        // explicit DependsOn entries are references too
+        for ( const dependency of toArray( def.DependsOn ) ) refs.add( dependency );
 
         for ( const ref of refs )
             if ( ref !== logicalId && keptIds.has( ref ) )
@@ -166,6 +173,7 @@ async function collectStack( stack : string, nodes : CloudNode[], edges : CloudE
     }
 }
 
+/** Coerce a TemplateBody (string JSON or already-parsed object) into a Template, or undefined. */
 function parseTemplate( body : Template | string | undefined ) : Template | undefined
 {
     if ( !body ) return undefined;
@@ -176,9 +184,10 @@ function parseTemplate( body : Template | string | undefined ) : Template | unde
     return body;
 }
 
-function toArray( v : string | string[] | undefined ) : string[]
+/** Normalize an optional scalar-or-array DependsOn value into an array. */
+function toArray( value : string | Array<string> | undefined ) : Array<string>
 {
-    return v === undefined ? [] : Array.isArray( v ) ? v : [ v ];
+    return value === undefined ? [] : Array.isArray( value ) ? value : [ value ];
 }
 
 /** Recursively collect logical ids referenced via Ref / Fn::GetAtt anywhere in a Properties tree. */
@@ -186,42 +195,46 @@ function collectRefs( value : unknown, into : Set<string> ) : void
 {
     if ( !value || typeof value !== "object" ) return;
 
-    if ( Array.isArray( value ) ) { for ( const v of value ) collectRefs( v, into ); return; }
+    if ( Array.isArray( value ) ) { for ( const item of value ) collectRefs( item, into ); return; }
 
     const obj : Record<string, unknown> = value as Record<string, unknown>;
-    for ( const [ key, v ] of globalThis.Object.entries( obj ) )
+    for ( const [ key, child ] of globalThis.Object.entries( obj ) )
     {
-        if ( key === "Ref" && typeof v === "string" ) into.add( v );
+        // { "Ref": "LogicalId" } — direct reference to another resource
+        if ( key === "Ref" && typeof child === "string" ) into.add( child );
         else if ( key === "Fn::GetAtt" )
         {
-            if ( Array.isArray( v ) && typeof v[ 0 ] === "string" ) into.add( v[ 0 ] );
-            else if ( typeof v === "string" ) into.add( v.split( "." )[ 0 ] );
+            // Fn::GetAtt is either [ "LogicalId", "Attribute" ] or the "LogicalId.Attribute" string form
+            if ( Array.isArray( child ) && typeof child[ 0 ] === "string" ) into.add( child[ 0 ] );
+            else if ( typeof child === "string" ) into.add( child.split( "." )[ 0 ] );
         }
-        else collectRefs( v, into );
+        else collectRefs( child, into );
     }
 }
 
 // ── reachability / health (target-aware) ────────────────────────────────────────────────────────
+/** Probe whether the active target is reachable; AWS via a cheap CFN call, LocalStack via its health endpoint. */
 export async function cloudHealth() : Promise<CloudHealth>
 {
     // real AWS has no /_localstack/health — probe with a cheap CloudFormation call instead
-    if ( getTarget().kind === "aws" )
+    if ( getTarget().kind === TargetKind.AWS )
     {
         const ts : number = Date.now();
-        const t : Target = getTarget();
+        const awsTarget : Target = getTarget();
         try
         {
             await cfnClient().send( new DescribeStacksCommand( {} ) );
-            return { reachable: true, services: {}, edition: `${t.profile ?? "default"} · ${t.region ?? ""}`, ts };
+            return { reachable: true, services: {}, edition: `${awsTarget.profile ?? "default"} · ${awsTarget.region ?? ""}`, ts };
         }
         catch ( err )
         {
-            return { reachable: false, services: {}, edition: `${t.profile ?? "default"} · ${t.region ?? ""}`, error: awsErr( err ), ts };
+            return { reachable: false, services: {}, edition: `${awsTarget.profile ?? "default"} · ${awsTarget.region ?? ""}`, error: awsErr( err ), ts };
         }
     }
     return localstackHealth();
 }
 
+/** GET LocalStack's /_localstack/health (with a short timeout) and parse the services map + edition. */
 function localstackHealth() : Promise<CloudHealth>
 {
     const ts : number = Date.now();
@@ -229,8 +242,8 @@ function localstackHealth() : Promise<CloudHealth>
     {
         const req : ClientRequest = request( "http://localhost:4566/_localstack/health", { method: "GET", timeout: 2500 }, ( res ) =>
         {
-            const chunks : Buffer[] = [];
-            res.on( "data", ( c : Buffer ) => chunks.push( c ) );
+            const chunks : Array<Buffer> = [];
+            res.on( "data", ( chunk : Buffer ) => chunks.push( chunk ) );
             res.on( "end", () =>
             {
                 try
@@ -248,6 +261,7 @@ function localstackHealth() : Promise<CloudHealth>
 }
 
 // ── S3 bucket browse (folder-style, delimiter "/") ──────────────────────────────────────────────
+/** List one "folder" of a bucket: immediate sub-prefixes as folders, plus the objects at this prefix. */
 export async function s3List( bucket : string, prefix = "" ) : Promise<S3Listing>
 {
     try
@@ -259,13 +273,14 @@ export async function s3List( bucket : string, prefix = "" ) : Promise<S3Listing
             MaxKeys   : 1000
         } ) );
 
-        const folders = ( out.CommonPrefixes ?? [] )
-            .map( ( p ) => p.Prefix ?? "" )
-            .filter( ( p ) => p.length > 0 );
+        // CommonPrefixes are the immediate "sub-folders" under the current prefix
+        const folders : Array<string> = ( out.CommonPrefixes ?? [] )
+            .map( ( commonPrefix ) => commonPrefix.Prefix ?? "" )
+            .filter( ( folderPrefix ) => folderPrefix.length > 0 );
 
         const objects = ( out.Contents ?? [] )
-            .filter( ( o ) => ( o.Key ?? "" ) !== prefix ) // drop the folder placeholder key itself
-            .map( ( o ) => ( { key: o.Key ?? "", size: o.Size ?? 0, lastModified: o.LastModified?.toISOString() } ) );
+            .filter( ( object ) => ( object.Key ?? "" ) !== prefix ) // drop the folder placeholder key itself
+            .map( ( object ) => ( { key: object.Key ?? "", size: object.Size ?? 0, lastModified: object.LastModified?.toISOString() } ) );
 
         return { bucket, prefix, folders, objects, truncated: Boolean( out.IsTruncated ) };
     }
@@ -275,12 +290,72 @@ export async function s3List( bucket : string, prefix = "" ) : Promise<S3Listing
     }
 }
 
+// ── bucket list (optionally filtered to a service) ──────────────────────────────────────────────
+/** Every bucket name, newest-looking first. When `match` is given, buckets whose name contains it
+ *  (case-insensitive, e.g. the service id "media") sort to the front — the rest still follow so a
+ *  differently-named bucket is still reachable. */
+export async function s3Buckets( match = "" ) : Promise<Array<string>>
+{
+    try
+    {
+        const out = await s3Client().send( new ListBucketsCommand( {} ) );
+        const names : Array<string> = ( out.Buckets ?? [] ).map( ( bucket ) => bucket.Name ?? "" ).filter( ( name ) => name.length > 0 );
+        const needle : string = match.toLowerCase();
+        if ( !needle ) return names.sort();
+        return names.sort( ( a, b ) =>
+        {
+            const aMatch : number = a.toLowerCase().includes( needle ) ? 0 : 1;
+            const bMatch : number = b.toLowerCase().includes( needle ) ? 0 : 1;
+            return aMatch !== bMatch ? aMatch - bMatch : a.localeCompare( b );
+        } );
+    }
+    catch { return []; }
+}
+
+// ── one object's metadata (HeadObject) ──────────────────────────────────────────────────────────
+/** HeadObject for a single key — size, content type, timestamps, storage class, and user metadata. */
+export async function s3Head( bucket : string, key : string ) : Promise<S3ObjectHead>
+{
+    try
+    {
+        const out : HeadObjectCommandOutput = await s3Client().send( new HeadObjectCommand( { Bucket: bucket, Key: key } ) );
+        return {
+            key,
+            size         : out.ContentLength ?? 0,
+            lastModified : out.LastModified?.toISOString(),
+            contentType  : out.ContentType,
+            etag         : out.ETag,
+            storageClass : out.StorageClass,
+            versionId    : out.VersionId,
+            metadata     : out.Metadata ?? {}
+        };
+    }
+    catch ( err )
+    {
+        return { key, size: 0, error: awsErr( err ) };
+    }
+}
+
+// ── presigned GET url (preview / download; read-only, safe on real AWS) ───────────────────────────
+/** A short-lived pre-signed GET URL so the renderer can preview (img/video) or download an object
+ *  directly — bytes never transit the console process. */
+export async function s3PresignGet( bucket : string, key : string, ttlSec = 300 ) : Promise<string>
+{
+    try
+    {
+        return await getSignedUrl( s3Client(), new GetObjectCommand( { Bucket: bucket, Key: key } ), { expiresIn: ttlSec } );
+    }
+    catch { return ""; }
+}
+
 // ── API Gateway (HTTP API v2) — registered routes ───────────────────────────────────────────────
+/** Fetch an HTTP API's metadata plus its routes (sorted by route key) for the API view. */
 export async function apigwRoutes( apiId : string ) : Promise<ApiGwInfo>
 {
     try
     {
         const apigw : ReturnType<typeof apigwClient> = apigwClient();
+        // metadata + routes are independent calls, so issue them together
         const [ api, routes ] = await Promise.all( [
             apigw.send( new GetApiCommand( { ApiId: apiId } ) ),
             apigw.send( new GetRoutesCommand( { ApiId: apiId, MaxResults: "500" } ) )
@@ -291,8 +366,8 @@ export async function apigwRoutes( apiId : string ) : Promise<ApiGwInfo>
             name     : api.Name,
             protocol : api.ProtocolType,
             endpoint : api.ApiEndpoint,
-            routes   : ( routes.Items ?? [] ).map( ( r ) => ( { routeKey: r.RouteKey ?? "", target: r.Target } ) )
-                .sort( ( a, b ) => a.routeKey.localeCompare( b.routeKey ) )
+            routes   : ( routes.Items ?? [] ).map( ( route ) => ( { routeKey: route.RouteKey ?? "", target: route.Target } ) )
+                .sort( ( left, right ) => left.routeKey.localeCompare( right.routeKey ) )
         };
     }
     catch ( err )
@@ -302,18 +377,19 @@ export async function apigwRoutes( apiId : string ) : Promise<ApiGwInfo>
 }
 
 // ── ECS service live state (DescribeServices) ───────────────────────────────────────────────────
+/** Read one ECS service's live desired/running/pending counts (cluster is derived from the ARN). */
 export async function ecsService( serviceArn : string ) : Promise<EcsServiceState>
 {
     // arn:aws:ecs:<region>:<acct>:service/<cluster>/<service> — DescribeServices needs the cluster
-    const parts : string[] = serviceArn.split( "/" );
+    const parts : Array<string> = serviceArn.split( "/" );
     const cluster : string | undefined = parts.length >= 3 ? parts[ parts.length - 2 ] : undefined;
 
     try
     {
         const out : DescribeServicesCommandOutput = await ecsClient().send( new DescribeServicesCommand( { cluster, services: [ serviceArn ] } ) );
-        const sv : NonNullable<DescribeServicesCommandOutput[ "services" ]>[ number ] | undefined = out.services?.[ 0 ];
-        if ( !sv ) return { error: "service not found" };
-        return { status: sv.status, desiredCount: sv.desiredCount, runningCount: sv.runningCount, pendingCount: sv.pendingCount };
+        const service : NonNullable<DescribeServicesCommandOutput[ "services" ]>[ number ] | undefined = out.services?.[ 0 ];
+        if ( !service ) return { error: "service not found" };
+        return { status: service.status, desiredCount: service.desiredCount, runningCount: service.runningCount, pendingCount: service.pendingCount };
     }
     catch ( err )
     {
@@ -322,14 +398,16 @@ export async function ecsService( serviceArn : string ) : Promise<EcsServiceStat
 }
 
 // ── CloudWatch log tail ───────────────────────────────────────────────────────────────────────
-export async function cloudTail( logGroup : string, limit = 200 ) : Promise<{ events : LogEvent[]; error? : string }>
+/** Tail a CloudWatch log group: most recent `limit` events, message-clamped and sorted oldest-first. */
+export async function cloudTail( logGroup : string, limit = 200 ) : Promise<{ events : Array<LogEvent>; error? : string }>
 {
     try
     {
         const out : FilterLogEventsCommandOutput = await logsClient().send( new FilterLogEventsCommand( { logGroupName: logGroup, limit } ) );
         const events = ( out.events ?? [] )
-            .map( ( e ) => ( { ts: e.timestamp ?? 0, message: ( e.message ?? "" ).slice( 0, 4000 ) } ) )
-            .sort( ( a, b ) => a.ts - b.ts );
+            // clamp very long messages so the renderer stays responsive
+            .map( ( event ) => ( { ts: event.timestamp ?? 0, message: ( event.message ?? "" ).slice( 0, 4000 ) } ) )
+            .sort( ( left, right ) => left.ts - right.ts );
         return { events };
     }
     catch ( err )

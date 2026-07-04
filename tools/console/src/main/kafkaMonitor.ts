@@ -38,16 +38,17 @@ class KafkaMonitor extends EventEmitter
     private readonly events : Map<string, MonitorEvent> = new Map();
 
     // ── lifecycle ────────────────────────────────────────────────────────────────────────────────
+    /** Connect the consumer + admin, subscribe to topology topics, and begin the reconcile poll. Idempotent and best-effort: on failure it records the error and tears down. */
     async start() : Promise<MonitorState>
     {
         if ( this.running ) return this.state();
 
-        this.brokers = ( process.env.KAFKA_BROKERS ?? "localhost:9092" ).split( "," ).map( ( s ) => s.trim() ).filter( Boolean ).join( "," );
+        this.brokers = ( process.env.KAFKA_BROKERS ?? "localhost:9092" ).split( "," ).map( ( broker ) => broker.trim() ).filter( Boolean ).join( "," );
         this.error = undefined;
 
         try
         {
-            const brokerList : string[] = this.brokers.split( "," ).filter( Boolean );
+            const brokerList : Array<string> = this.brokers.split( "," ).filter( Boolean );
             this.kafka    = new Kafka( { clientId: "rup-console-monitor", brokers: brokerList } );
             this.consumer = this.kafka.consumer( { groupId: GROUP_ID } );
             this.admin    = this.kafka.admin();
@@ -70,12 +71,14 @@ class KafkaMonitor extends EventEmitter
         return this.state();
     }
 
+    /** Stop the monitor: tear down connections/timers and mark it not running. */
     async stop() : Promise<void>
     {
         await this.teardown();
         this.running = false;
     }
 
+    /** Release all external resources (poll timer, consumer, admin) and clear the client handles. Safe to call repeatedly. */
     private async teardown() : Promise<void>
     {
         if ( this.poll ) { clearInterval( this.poll ); this.poll = undefined; }
@@ -86,13 +89,16 @@ class KafkaMonitor extends EventEmitter
         this.kafka = undefined;
     }
 
+    /** Empty the in-memory event window. */
     clear() : void { this.events.clear(); }
 
+    /** Set the in-memory window TTL, clamped to the supported [ MIN_TTL_MS, MAX_TTL_MS ] range. */
     setTtl( ms : number ) : void
     {
         this.ttlMs = Math.max( MIN_TTL_MS, Math.min( MAX_TTL_MS, Math.round( ms ) ) );
     }
 
+    /** Snapshot the current monitor state (status, brokers, topology, live events, TTL) for the renderer. */
     state() : MonitorState
     {
         return {
@@ -107,6 +113,7 @@ class KafkaMonitor extends EventEmitter
     }
 
     // ── ingest ───────────────────────────────────────────────────────────────────────────────────
+    /** Handle one consumed kafka message: parse its JSON envelope, build an enriched MonitorEvent, store it, and emit it live. Non-JSON / empty messages are ignored. */
     private async onMessage( payload : EachMessagePayload ) : Promise<void>
     {
         const text : string | undefined = payload.message.value?.toString();
@@ -145,6 +152,7 @@ class KafkaMonitor extends EventEmitter
     }
 
     // ── reconcile: subscriber delivery (→ bin) + TTL prune ─────────────────────────────────────────
+    /** Periodic pass: mark events delivered once every subscriber group has committed past them (moving them to the "bin"), then prune anything older than the TTL. Emits a `sync` with the deltas. */
     private async reconcile() : Promise<void>
     {
         const now : number = Date.now();
@@ -156,17 +164,19 @@ class KafkaMonitor extends EventEmitter
         for ( const event of this.events.values() )
         {
             if ( event.finishedAt ) continue;
-            const groups : string[] = event.subscribers;
+            const groups : Array<string> = event.subscribers;
             if ( groups.length === 0 ) continue;   // no subscribers → never "finished" (just ages out of the live pool)
 
             const before : number = event.delivered.length;
             for ( const group of groups )
             {
                 if ( event.delivered.includes( group ) ) continue;
-                const c : number | undefined = committed.get( `${group}|${event.topic}|${event.partition}` );
-                if ( c !== undefined && c > Number( event.offset ) ) event.delivered.push( group );
+                // committed offset is the NEXT offset the group will read; strictly greater than this
+                // event's offset means the group has already consumed (and committed) this event.
+                const committedOffset : number | undefined = committed.get( `${group}|${event.topic}|${event.partition}` );
+                if ( committedOffset !== undefined && committedOffset > Number( event.offset ) ) event.delivered.push( group );
             }
-            const finished : boolean = groups.every( ( g ) => event.delivered.includes( g ) );
+            const finished : boolean = groups.every( ( group ) => event.delivered.includes( group ) );
             if ( finished ) event.finishedAt = now;
 
             if ( finished || event.delivered.length !== before )
@@ -187,17 +197,18 @@ class KafkaMonitor extends EventEmitter
         if ( !this.admin ) return out;
 
         const groups : Set<string> = new Set<string>();
-        for ( const topic of TOPOLOGY.topics ) for ( const g of subscriberGroupsOf( topic ) ) groups.add( g );
+        for ( const topic of TOPOLOGY.topics ) for ( const group of subscriberGroupsOf( topic ) ) groups.add( group );
 
         for ( const group of groups )
         {
             try
             {
-                const parts = await this.admin.fetchOffsets( { groupId: group, topics: TOPOLOGY.topics } );
-                for ( const t of parts )
-                    for ( const p of t.partitions )
-                        if ( p.offset !== undefined && p.offset !== "-1" )
-                            out.set( `${group}|${t.topic}|${p.partition}`, Number( p.offset ) );
+                const topicOffsetsList = await this.admin.fetchOffsets( { groupId: group, topics: TOPOLOGY.topics } );
+                for ( const topicOffsets of topicOffsetsList )
+                    for ( const partition of topicOffsets.partitions )
+                        // "-1" / undefined means the group has no committed offset for this partition — skip it.
+                        if ( partition.offset !== undefined && partition.offset !== "-1" )
+                            out.set( `${group}|${topicOffsets.topic}|${partition.partition}`, Number( partition.offset ) );
             }
             catch { /* group may not exist yet (subscriber not running) — skip */ }
         }

@@ -3,7 +3,7 @@ import { PostLoginChallenge, Login } from '@repo/api';
 import { NetworkUtils } from '@repo/common';
 import { RestfulEndpoint } from '@repo/endpoint';
 import AuthService from '../services/AuthService';
-import type UserStore from '../services/UserStore';
+import UserStore from '../services/UserStore';
 import { authError, type AuthFailure } from './AuthErrors';
 
 // Cognito's ChallengeName → our shared Login.ChallengeType (the wire vocabulary). Anything unmapped is
@@ -17,8 +17,10 @@ const COGNITO_CHALLENGE : Record<string, Login.ChallengeType> =
 };
 
 //
-// Stepped sign-in, step 2 (challenge). Password challenges are verified by Cognito (ADMIN_USER_PASSWORD_AUTH)
-// → a session token. Other challenge types are not yet wired.
+// Stepped sign-in, step 2 (challenge). PASSWORD is verified by Cognito (ADMIN_USER_PASSWORD_AUTH) and may
+// itself return a further MFA challenge (e.g. an authenticator app → TOTP); TOTP answers the software-
+// token MFA gate (AdminRespondToAuthChallenge) to finish signing in. Each non-terminal reply carries a
+// `challengeToken` the client echoes back to answer the next factor.
 //
 export class PostLoginChallengeImpl extends PostLoginChallenge
 {
@@ -38,16 +40,39 @@ export class PostLoginChallengeImpl extends PostLoginChallenge
         const type  : Login.ChallengeType | undefined = this.body?.type;
         const value : string = this.body?.value ?? "";
 
-        if( type !== Login.ChallengeType.PASSWORD )
-            return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: `unsupported challenge "${type}"` } };
-
         try
         {
-            const loginResult : UserStore.LoginResult = await this.service.users.login( token, value );
+            let loginResult : UserStore.LoginResult;
+            let account     : string;
+
+            if( type === Login.ChallengeType.PASSWORD )
+            {
+                account     = token;                                    // identifier-first: the token IS the account
+                loginResult = await this.service.users.login( account, value );
+            }
+            else if( type === Login.ChallengeType.TOTP )
+            {
+                const flow = UserStore.unpackFlow( token );             // token packs account + Cognito Session
+                if( !flow.session ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "invalid challenge token" } };
+                account     = flow.account;
+                loginResult = await this.service.users.respondTotp( account, flow.session, value );
+            }
+            else
+            {
+                return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: `unsupported challenge "${type}"` } };
+            }
+
+            if( loginResult.complete )
+            {
+                void this.service.publishLogin( this.service.subFromToken( loginResult.tokens?.accessToken ), account );   // auth.session.created → lastLoginAt
+                return { status: NetworkUtils.Status.OK, data: { complete: true, sessionToken: loginResult.tokens?.accessToken } };
+            }
+
+            // a further challenge remains (e.g. password → software-token MFA) — surface it + a continuation token
             const nextChallenge : Login.ChallengeType | undefined = loginResult.challenge ? COGNITO_CHALLENGE[ loginResult.challenge ] : undefined;
-            const reply : PostLoginChallenge.Response = loginResult.complete
-                ? { complete: true, sessionToken: loginResult.tokens?.accessToken }
-                : { complete: false, challenges: nextChallenge ? [ nextChallenge ] : [] };
+            const reply : PostLoginChallenge.Response = { complete: false, challenges: nextChallenge ? [ nextChallenge ] : [] };
+            if( nextChallenge === Login.ChallengeType.TOTP && loginResult.session )
+                reply.challengeToken = UserStore.packFlow( account, loginResult.session );
             return { status: NetworkUtils.Status.OK, data: reply };
         }
         catch( err )

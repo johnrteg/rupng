@@ -33,6 +33,7 @@
         "@repo/endpoint": "*",
         "app": "*",
         "auth": "*",
+        "media": "*",
         "web": "*",
         "aws-cdk-lib": "2.260.0",
         "constructs": "10.6.0"

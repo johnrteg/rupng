@@ -41,22 +41,23 @@ const saveBuildAllOnLaunch = ( on : boolean ) : void => { try { localStorage.set
 //
 export function DevelopView()
 {
-    const [ services, setServices ]       = useState<ServiceInfo[]>( [] );
+    const [ services, setServices ]       = useState<Array<ServiceInfo>>( [] );
     const [ selected, setSelected ]       = useState<string | null>( null );
     const [ stageStates, setStageStates ] = useState<Record<string, StageState>>( {} );
     const [ running, setRunning ]         = useState<Record<string, Set<LogStream>>>( {} );
-    const [ health, setHealth ]           = useState<Record<string, HealthResult[]>>( {} );
+    const [ health, setHealth ]           = useState<Record<string, Array<HealthResult>>>( {} );
     const [ claudeMode, setClaudeMode ]   = useState<ClaudeMode>( "ondemand" );
     const [ buildQueue, setBuildQueue ]   = useState<BuildQueue | null>( null );
     const [ browserOpen, setBrowserOpen ] = useState<boolean>( false );   // a local frontend "runs" in the app window
     const [ settingsTick, setSettingsTick ] = useState<number>( 0 );      // bump to recompute dots when a target/Auto toggle changes
     const [ buildAllLaunch, setBuildAllLaunch ] = useState<boolean>( loadBuildAllOnLaunch );   // build all + run selected on launch
 
+    // initial load: pull services + all derived state, select a default service, optionally build-all
     useEffect( () =>
     {
         void ( async () =>
         {
-            const list : ServiceInfo[] = await api.listServices();
+            const list : Array<ServiceInfo> = await api.listServices();
             setServices( list );
             setStageStates( await api.getStageStates() );
             setClaudeMode( await api.claudeGetMode() );
@@ -64,26 +65,27 @@ export function DevelopView()
             setBuildQueue( await api.buildQueueGet() );
             setBrowserOpen( ( await api.browserState() ).open );
             // push the persisted Build settings to the orchestrator so it watches + auto-builds
-            await api.buildConfigure( allBuildSettings( list.map( ( s ) => s.id ) ) );
-            const first : ServiceInfo | undefined = list.find( ( s ) => s.capabilities.scaffolded ) ?? list[ 0 ];
+            await api.buildConfigure( allBuildSettings( list.map( ( service ) => service.id ) ) );
+            const first : ServiceInfo | undefined = list.find( ( service ) => service.capabilities.scaffolded ) ?? list[ 0 ];
             if ( first ) setSelected( first.id );
             // optional: build the whole fleet + run the selected one, once, on launch (safe sequential path)
             if ( loadBuildAllOnLaunch() )
             {
-                const ids : string[] = list.filter( ( s ) => s.capabilities.scaffolded && s.capabilities.canBuild ).map( ( s ) => s.id );
+                const ids : Array<string> = list.filter( ( service ) => service.capabilities.scaffolded && service.capabilities.canBuild ).map( ( service ) => service.id );
                 void api.buildAll( ids, first?.id );
             }
         } )();
     }, [] );
 
+    // live subscriptions: process/stage/queue/browser events + a settings-change listener
     useEffect( () =>
     {
-        const offProc  = api.onProc( ( p : ProcState ) => setRunning( ( prev ) => foldProcs( prev, [ p ] ) ) );
+        const offProc  = api.onProc( ( proc : ProcState ) => setRunning( ( prev ) => foldProcs( prev, [ proc ] ) ) );
         const offStage = api.onStage( ( { service, state } ) => setStageStates( ( prev ) => ( { ...prev, [ service ]: state } ) ) );
-        const offQueue = api.onBuildQueue( ( q : BuildQueue ) => setBuildQueue( q ) );
-        const offBrowser = api.onBrowser( ( s : BrowserState ) => setBrowserOpen( s.open ) );
+        const offQueue = api.onBuildQueue( ( queue : BuildQueue ) => setBuildQueue( queue ) );
+        const offBrowser = api.onBrowser( ( browser : BrowserState ) => setBrowserOpen( browser.open ) );
         // re-push the build config + recompute dots whenever a target/Auto toggle changes (fired by saveBuildSettings)
-        const onSettings = () : void => { void api.buildConfigure( allBuildSettings( services.map( ( s ) => s.id ) ) ); setSettingsTick( ( t ) => t + 1 ); };
+        const onSettings = () : void => { void api.buildConfigure( allBuildSettings( services.map( ( service ) => service.id ) ) ); setSettingsTick( ( tick ) => tick + 1 ); };
         window.addEventListener( BUILD_SETTINGS_EVENT, onSettings );
         return () => { offProc(); offStage(); offQueue(); offBrowser(); window.removeEventListener( BUILD_SETTINGS_EVENT, onSettings ); };
     }, [ services ] );
@@ -91,9 +93,9 @@ export function DevelopView()
     // Indicator dots, target-aware. Local: Build · Run (run = local process up, or app window open for web).
     // LocalStack: Build · Container · Deploy (run = deployed). Each: busy (yellow) → failed (red) →
     // done/running (green) → idle (grey).
-    const statusOf = useCallback( ( id : string ) : ServiceDot[] =>
+    const statusOf = useCallback( ( id : string ) : Array<ServiceDot> =>
     {
-        const svc : ServiceInfo | undefined = services.find( ( s ) => s.id === id );
+        const svc : ServiceInfo | undefined = services.find( ( service ) => service.id === id );
         const frontend : boolean = svc?.capabilities.isFrontend ?? false;
         const local : boolean = loadBuildSettings( id ).target === "local";
         const showContainer : boolean = !local && !frontend && ( svc?.capabilities.canImage ?? false );
@@ -107,7 +109,7 @@ export function DevelopView()
 
         const streams : Set<LogStream> | undefined = running[ id ];
         const stage   : StageState = stageStates[ id ] ?? EMPTY_STAGES;
-        const healthy : boolean = ( health[ id ] ?? [] ).some( ( r ) => r.ok );
+        const healthy : boolean = ( health[ id ] ?? [] ).some( ( result ) => result.ok );
 
         const build : DotState =
             ( streams?.has( "build" ) || stage.build === "running" ) ? "busy"
@@ -135,45 +137,49 @@ export function DevelopView()
                  dot( "run", runLabel, run ) ];
     }, [ services, running, stageStates, health, browserOpen, settingsTick ] );
 
-    const current : ServiceInfo | null = useMemo<ServiceInfo | null>( () => services.find( ( s ) => s.id === selected ) ?? null, [ services, selected ] );
+    const current : ServiceInfo | null = useMemo<ServiceInfo | null>( () => services.find( ( service ) => service.id === selected ) ?? null, [ services, selected ] );
 
     // the selected service is "busy" while it's the one building/deploying now (queue or a running stage)
     const currentBusy : boolean = current
         ? ( buildQueue?.current === current.id
-            || ( [ "build", "image", "deploy" ] as StageId[] ).some( ( k ) => ( stageStates[ current.id ] ?? EMPTY_STAGES )[ k ] === "running" ) )
+            || ( [ "build", "image", "deploy" ] as Array<StageId> ).some( ( stageId ) => ( stageStates[ current.id ] ?? EMPTY_STAGES )[ stageId ] === "running" ) )
         : false;
 
     // the local-edge dev proxy (serves the built SPA + proxies API/WS to services) — a global control
     const proxyRunning : boolean = running[ WEBPROXY_ID ]?.has( "runtime" ) ?? false;
     const edgePort : number = loadRouting().port;   // persisted listen port (set in the Proxy tab)
 
-    const setHealthFor = useCallback( ( id : string, r : HealthResult[] ) => setHealth( ( prev ) => ( { ...prev, [ id ]: r } ) ), [] );
+    /** Store the latest health results for a single service. */
+    const setHealthFor = useCallback( ( id : string, results : Array<HealthResult> ) => setHealth( ( prev ) => ( { ...prev, [ id ]: results } ) ), [] );
 
-    const changeClaudeMode = useCallback( ( m : ClaudeMode ) => { setClaudeMode( m ); void api.claudeSetMode( m ); }, [] );
+    /** Switch the Claude mode locally and persist it to the orchestrator. */
+    const changeClaudeMode = useCallback( ( mode : ClaudeMode ) => { setClaudeMode( mode ); void api.claudeSetMode( mode ); }, [] );
 
+    /** Ping /health on every running service and fold the results in by service id. */
     const pingAll = useCallback( async () : Promise<void> =>
     {
-        const all : HealthResult[] = await api.pingAll();
-        const byService : Record<string, HealthResult[]> = {};
-        for ( const r of all ) ( byService[ r.service ] ??= [] ).push( r );
+        const all : Array<HealthResult> = await api.pingAll();
+        const byService : Record<string, Array<HealthResult>> = {};
+        for ( const result of all ) ( byService[ result.service ] ??= [] ).push( result );
         setHealth( ( prev ) => ( { ...prev, ...byService } ) );
     }, [] );
 
+    /** Re-read services/ports + dep graph, re-push build config, and keep/repick the selection. */
     const rescan = useCallback( async () : Promise<void> =>
     {
-        const list : ServiceInfo[] = await api.rescanServices();   // also rebuilds the orchestrator dep graph
+        const list : Array<ServiceInfo> = await api.rescanServices();   // also rebuilds the orchestrator dep graph
         setServices( list );
         // re-push the build config so any newly-discovered services get watched/auto-built
-        await api.buildConfigure( allBuildSettings( list.map( ( s ) => s.id ) ) );
-        setSelected( ( cur ) => cur && list.some( ( s ) => s.id === cur ) ? cur
-            : ( list.find( ( s ) => s.capabilities.scaffolded ) ?? list[ 0 ] )?.id ?? null );
+        await api.buildConfigure( allBuildSettings( list.map( ( service ) => service.id ) ) );
+        setSelected( ( currentId ) => currentId && list.some( ( service ) => service.id === currentId ) ? currentId
+            : ( list.find( ( service ) => service.capabilities.scaffolded ) ?? list[ 0 ] )?.id ?? null );
     }, [] );
 
     // build every build-capable service (sequential queue → no races / no FD storm) and start ONLY the
     // selected one locally — building the fleet is safe (processes exit); running the fleet is not.
     const buildAll = useCallback( () : void =>
     {
-        const ids : string[] = services.filter( ( s ) => s.capabilities.scaffolded && s.capabilities.canBuild ).map( ( s ) => s.id );
+        const ids : Array<string> = services.filter( ( service ) => service.capabilities.scaffolded && service.capabilities.canBuild ).map( ( service ) => service.id );
         void api.buildAll( ids, selected ?? undefined );
     }, [ services, selected ] );
 
@@ -204,7 +210,7 @@ export function DevelopView()
                 <Tooltip title="Run Build all + start the selected service automatically each time the console launches">
                     <FormControlLabel
                         sx={{ m: 0 }}
-                        control={<Checkbox size="small" checked={buildAllLaunch} onChange={( e ) => { setBuildAllLaunch( e.target.checked ); saveBuildAllOnLaunch( e.target.checked ); }} sx={{ p: 0.5 }} />}
+                        control={<Checkbox size="small" checked={buildAllLaunch} onChange={( event ) => { setBuildAllLaunch( event.target.checked ); saveBuildAllOnLaunch( event.target.checked ); }} sx={{ p: 0.5 }} />}
                         label={<Typography variant="caption" sx={{ color: "text.disabled" }}>on launch</Typography>}
                     />
                 </Tooltip>
@@ -245,7 +251,7 @@ export function DevelopView()
                           claudeMode={claudeMode}
                           onClaudeMode={changeClaudeMode}
                           onStop={() => void api.stopService( current.id )}
-                          onHealth={( r ) => setHealthFor( current.id, r )}
+                          onHealth={( results ) => setHealthFor( current.id, results )}
                       />
                     : <Box sx={{ display: "grid", placeItems: "center", height: "100%" }}>
                           <Typography color="text.disabled">Loading services…</Typography>
@@ -255,14 +261,18 @@ export function DevelopView()
     );
 }
 
-function foldProcs( prev : Record<string, Set<LogStream>>, procs : ProcState[] ) : Record<string, Set<LogStream>>
+/**
+ * Fold process-state events into the per-service set of running streams (clone first so the result
+ * is a new object/sets, never the prior state mutated in place).
+ */
+function foldProcs( prev : Record<string, Set<LogStream>>, procs : Array<ProcState> ) : Record<string, Set<LogStream>>
 {
     const next : Record<string, Set<LogStream>> = {};
-    for ( const k of globalThis.Object.keys( prev ) ) next[ k ] = new Set( prev[ k ] );
-    for ( const p of procs )
+    for ( const service of globalThis.Object.keys( prev ) ) next[ service ] = new Set( prev[ service ] );
+    for ( const proc of procs )
     {
-        const set : Set<LogStream> = next[ p.service ] ?? ( next[ p.service ] = new Set() );
-        if ( p.running ) set.add( p.stream ); else set.delete( p.stream );
+        const set : Set<LogStream> = next[ proc.service ] ?? ( next[ proc.service ] = new Set() );
+        if ( proc.running ) set.add( proc.stream ); else set.delete( proc.stream );
     }
     return next;
 }

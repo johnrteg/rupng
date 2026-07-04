@@ -111,6 +111,59 @@ export default class ObjectUtils
     }
 
     ////////////////////////////////////////////////////////////////////////////
+    /** True if `value` is a plain object — a non-null object that is NOT an array or a Date. Used by the
+     *  deep-merge in {@link withDefaults} to decide what to recurse into vs. treat as a scalar. */
+    public static isPlainObject( value : unknown ) : boolean
+    {
+        return value !== null && typeof value === "object" && !Array.isArray( value ) && !( value instanceof Date );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /**
+     * Fill missing fields on a (possibly older / partial) record from a `defaults` template — the
+     * "defaulting on read" pattern for schema tolerance. Returns a NEW object; inputs are never mutated.
+     *
+     * Rules (chosen deliberately — see below):
+     *   • Only fills keys that are **`undefined`** in `stored`. A present value is kept, **including valid
+     *     falsy ones** (`false`, `0`, `""`) — so a real "off" flag is never clobbered by a default.
+     *   • **Deep-merges plain objects** (nested config/settings fill even when partially present).
+     *   • **Arrays replace, never merge** — a stored array is kept as-is; a missing one is copied from defaults.
+     *   • **Only keys present in `defaults` are considered.** This is the guardrail: identity / required fields
+     *     (e.g. `id`, `createdAt`) should be OMITTED from a model's `DEFAULT`, so a record genuinely missing
+     *     them is left missing (surfaces the anomaly) rather than fabricated with junk. For the same reason,
+     *     immutable/ledger models (invoices, payments, audit) generally should NOT define a `DEFAULT`.
+     *   • Extra keys in `stored` (not in `defaults`) are preserved.
+     *
+     * `stored` is typed `T` because callers read it as the model type from the datastore (even if a given row
+     * is runtime-partial); `defaults` is `Partial<T>` (a model's `DEFAULT`). The result is a complete-as-the-
+     * -defaults-allow `T`.
+     */
+    public static withDefaults<T extends object>( stored : T, defaults : Partial<T> ) : T
+    {
+        if( !ObjectUtils.isPlainObject( stored ) ) return structuredClone( defaults ) as T;
+        return ObjectUtils.fillMissing( stored as Record<string, unknown>, defaults as Record<string, unknown> ) as unknown as T;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /** Recursive core of {@link withDefaults}: fill `stored` from `defaults` per the documented rules. */
+    private static fillMissing( stored : Record<string, unknown>, defaults : Record<string, unknown> ) : Record<string, unknown>
+    {
+        const out : Record<string, unknown> = { ...stored };
+        for( const key of Object.keys( defaults ) )
+        {
+            const defaultValue : unknown = defaults[ key ];
+            const storedValue  : unknown = stored[ key ];
+
+            if( storedValue === undefined )
+                out[ key ] = ( ObjectUtils.isPlainObject( defaultValue ) || Array.isArray( defaultValue ) ) ? structuredClone( defaultValue ) : defaultValue;
+            else if( ObjectUtils.isPlainObject( storedValue ) && ObjectUtils.isPlainObject( defaultValue ) )
+                out[ key ] = ObjectUtils.fillMissing( storedValue as Record<string, unknown>, defaultValue as Record<string, unknown> );
+            // else: a present, non-object stored value (incl. false / 0 / "" and arrays) — keep it as-is
+        }
+        return out;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
     /**
      * Safely parse a JSON string with error handling.
      *

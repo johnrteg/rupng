@@ -24,7 +24,7 @@ export class LogService
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    public debug( ...args : any[] ) : void
+    public debug( ...args : Array<any> ) : void
     {
         // Trace has no DEBUG level — keep debug as a raw console line (verbose, not structured).
         if( this.level <= LogService.Level.DEBUG )
@@ -32,21 +32,21 @@ export class LogService
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    public info( ...args : any[] ) : void
+    public info( ...args : Array<any> ) : void
     {
         if( this.level <= LogService.Level.INFO )
             this.trace.info( LogService.message( args ), ...args.slice( 1 ) );
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    public warn( ...args : any[] ) : void
+    public warn( ...args : Array<any> ) : void
     {
         if( this.level <= LogService.Level.WARNING )
             this.trace.warn( LogService.message( args ), ...args.slice( 1 ) );
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    public error( ...args : any[] ) : void
+    public error( ...args : Array<any> ) : void
     {
         if( this.level <= LogService.Level.ERROR )
             this.trace.error( LogService.message( args ), ...args.slice( 1 ) );
@@ -56,7 +56,7 @@ export class LogService
 export namespace LogService
 {
     // First arg is the message (string); coerce non-strings so the record always has a message.
-    export function message( args : any[] ) : string
+    export function message( args : Array<any> ) : string
     {
         const first : unknown = args[ 0 ];
         return typeof first === "string" ? first : ( first === undefined ? "" : JSON.stringify( first ) );

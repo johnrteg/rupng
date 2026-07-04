@@ -204,7 +204,7 @@ export function CodeEditorInput( props : CodeEditorInput.Props ) : JSX.Element
     ///////////////////////////////////////////////////////////////////////////////////////////////////
     function formatChanged() : void
     {
-        const baseExtensions: Extension[] = [];
+        const baseExtensions: Array<Extension> = [];
         const schemaLinter : Extension | null = createSchemaLinter();
         
         // Add font size extension
@@ -273,6 +273,9 @@ export function CodeEditorInput( props : CodeEditorInput.Props ) : JSX.Element
                 borderRadius: 1,
                 px: 1, pt:1.5, pb: 1,
                 backgroundColor: 'inherit',
+                // scroll still works (wheel/trackpad) — just hide the vertical scrollbar chrome
+                "& .cm-scroller": { scrollbarWidth: "none" },
+                "& .cm-scroller::-webkit-scrollbar": { width: 0, height: 0, display: "none" },
                 }}
             >
                 <CodeMirror

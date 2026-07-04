@@ -17,7 +17,7 @@ export interface ServiceDot { key : string; label : string; state : DotState; }
 //
 export function ServiceButton(
     { service, selected, dots, onSelect } :
-    { service : ServiceInfo; selected : boolean; dots : ServiceDot[]; onSelect : () => void }
+    { service : ServiceInfo; selected : boolean; dots : Array<ServiceDot>; onSelect : () => void }
 )
 {
     const Icon    : ReturnType<typeof serviceIcon> = serviceIcon( service.icon );
@@ -48,7 +48,7 @@ export function ServiceButton(
             >
                 {/* one dot per pipeline step, centered above the icon (in flow → never crowds the label) */}
                 <Box sx={{ display: "flex", justifyContent: "center", gap: 0.75, mb: 0.5 }}>
-                    {dots.map( ( d ) => <StatusDot key={d.key} state={d.state} title={d.label} size={8} /> )}
+                    {dots.map( ( dot : ServiceDot ) => <StatusDot key={dot.key} state={dot.state} title={dot.label} size={8} /> )}
                 </Box>
                 <Icon sx={{ fontSize: 24, color: selected ? "primary.main" : "text.secondary" }} />
                 <Typography

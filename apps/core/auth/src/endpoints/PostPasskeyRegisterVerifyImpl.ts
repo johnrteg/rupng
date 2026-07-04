@@ -2,6 +2,7 @@
 import { PostPasskeyRegisterVerify } from '@repo/api';
 import { NetworkUtils } from '@repo/common';
 import { RestfulEndpoint } from '@repo/endpoint';
+import { Events } from '@repo/services';
 import AuthService from '../services/AuthService';
 
 //
@@ -18,6 +19,7 @@ export class PostPasskeyRegisterVerifyImpl extends PostPasskeyRegisterVerify
         try
         {
             const credentialId : string = await this.service.passkeys.registrationVerify( this.body!.ceremonyId, this.body!.response, auth.userId );
+            void this.service.emit( Events.Object.AUTH_PASSKEY, Events.Verb.CREATED, "passkey", credentialId, auth.accountId ?? auth.userId, { credentialId, userId: auth.userId, createdAt: new Date().toISOString() }, auth.userId );
             const reply : PostPasskeyRegisterVerify.Response = { verified: true, credentialId };
             return { status: NetworkUtils.Status.OK, data: reply };
         }

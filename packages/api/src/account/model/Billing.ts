@@ -121,10 +121,36 @@ export namespace Billing
     {
         ONE_TIME     = "one_time",      // setup / activation
         RECURRING    = "recurring",     // flat subscription fee
-        USAGE        = "usage",         // metered per-unit
+        USAGE        = "usage",         // metered per-unit (post-paid consumption)
         POOL_OVERAGE = "pool_overage",  // included allowance + overage rate (rate pool)
         TIERED       = "tiered",        // graduated / volume tiers
         FEE          = "fee",           // one-time or usage-triggered fee
+        PREPAID      = "prepaid",       // buy a quantity of units UP-FRONT (a credit / data pack) drawn down by usage
+    }
+
+    /** Stripe `tax_behavior` — is the price amount tax-**inclusive** or tax-**exclusive** (added on top). */
+    export enum TaxBehavior
+    {
+        INCLUSIVE   = "inclusive",      // the amount already includes tax
+        EXCLUSIVE   = "exclusive",      // tax is added on top of the amount
+        UNSPECIFIED = "unspecified",    // let Stripe's default apply
+    }
+
+    /**
+     * Tax treatment of a priced item. An **object** (not a bare flag) so it can grow as tax needs do.
+     * These are exactly the per-item inputs **Stripe Tax** consumes to calculate tax automatically:
+     *   • `enabled`  — is the item taxable at all (false ⇒ excluded from the tax base; no code sent).
+     *   • `taxCode`  — Stripe **product tax code** (`txcd_…`, e.g. SaaS `txcd_10103001`) — this is what
+     *                  drives per-jurisdiction taxability; if omitted, Stripe uses the account's default code.
+     *   • `behavior` — Stripe **tax_behavior** (inclusive / exclusive).
+     * The rest of tax calc — rates per jurisdiction, nexus/registrations, and the **customer's address**
+     * (buyer location, held on the account/customer, not the price) — is **delegated to Stripe Tax**.
+     */
+    export interface Taxable
+    {
+        enabled   : boolean;            // is this priced item subject to tax
+        taxCode?  : string;             // Stripe product tax_code (txcd_…); omit ⇒ Stripe account default
+        behavior? : TaxBehavior;        // Stripe tax_behavior (inclusive | exclusive | unspecified)
     }
 
     export interface PriceBase
@@ -132,6 +158,7 @@ export namespace Billing
         id           : Type.ID;
         type         : PriceType;
         label?       : string;
+        taxable      : Taxable;         // tax treatment — see Taxable (detailed calc delegated to Stripe Tax)
         externalRef? : string;          // mapping to the billing provider (e.g. Stripe Price id)
     }
 
@@ -151,8 +178,8 @@ export namespace Billing
     export interface UsagePrice extends PriceBase
     {
         type       : PriceType.USAGE;
-        metric     : string;            // what is counted
-        unitAmount : Money;             // price per unit
+        metric     : string;            // what is counted — e.g. "data.records", "ai.tokens", "sms.segments"
+        unitAmount : Money;             // price per unit ("as-is" / pay-as-you-go metered; unit granularity per the metric, e.g. per token or per 1k)
     }
 
     export interface PoolOveragePrice extends PriceBase
@@ -179,6 +206,25 @@ export namespace Billing
         trigger : "one_time" | "usage";
     }
 
+    /**
+     * A **prepaid pack** — buy a quantity of units UP-FRONT for a fixed price, then **burn it down** by
+     * usage (e.g. "10,000 customer records for $50", "1M AI tokens for $20", lookup / enrichment credits).
+     * Distinct from USAGE (post-paid metered) and POOL_OVERAGE (subscription-included allowance): a
+     * standalone, pre-purchased balance drawn down by consumption.
+     *
+     * "Data" isn't its own price type — it's a `metric` ("data.records", "ai.tokens", …) priced either
+     * **as-is** (USAGE, $/unit) or **burn-down** (PREPAID, a pack). The pack here defines what's sold;
+     * the running balance / draw-down is tracked at runtime via UsageRecord against this metric.
+     */
+    export interface PrepaidPrice extends PriceBase
+    {
+        type          : PriceType.PREPAID;
+        metric        : string;          // what the pack grants — e.g. "data.records", "ai.tokens", "lookups"
+        quantity      : number;          // units granted per purchase
+        amount        : Money;           // price of the pack
+        expiresInDays? : number;         // optional expiry of unused units (omit = no expiry)
+    }
+
     export interface PriceTier
     {
         upTo       : number | null;     // upper bound of the tier; null = infinity (last tier)
@@ -199,7 +245,8 @@ export namespace Billing
         | UsagePrice
         | PoolOveragePrice
         | TieredPrice
-        | FeePrice;
+        | FeePrice
+        | PrepaidPrice;
 
     // ── 5. COMMERCIAL RELATIONSHIP — Subscription (account <-> plan instance). ────────────────────
 
@@ -357,6 +404,89 @@ export namespace Billing
         quantity    : number;
         unitAmount  : Money;
         amount      : Money;            // pre-discount line amount
+    }
+
+    // ── 10. ACCOUNT BILLING SURFACE — balance, payment methods, settings (what the /billing UI reads). ──
+    // NOTE: mostly SKELETON until Stripe + plans are implemented; shapes are the contract the UI codes to.
+
+    /** How the account pays. */
+    export enum BillingType
+    {
+        CARD    = "card",       // charged to a card on file (Stripe)
+        INVOICE = "invoice",    // billed by invoice (net terms), paid out-of-band
+    }
+
+    export enum PaymentMethodKind { CARD = "card", BANK_ACCOUNT = "bank_account" }
+
+    /** A stored payment method — display fields only; the PAN lives in Stripe (SAQ-A: ref + last4 + brand). */
+    export interface PaymentMethod
+    {
+        id           : Type.ID;
+        kind         : PaymentMethodKind;
+        brand?       : string;          // e.g. "Visa" (display)
+        last4?       : string;          // last 4 (display)
+        expMonth?    : number;
+        expYear?     : number;
+        isDefault    : boolean;
+        externalRef? : string;          // Stripe PaymentMethod id
+    }
+
+    /** Prepaid wallet balance, drawn down by PREPAID/usage charges. Positive = credit available. */
+    export interface AccountBalance
+    {
+        balance   : Money;
+        updatedAt : Type.ISODateTime;
+    }
+
+    /** Auto top-up: when the balance falls below `threshold`, charge the default method for `amount`. */
+    export interface AutoReload
+    {
+        enabled   : boolean;
+        threshold : Money;              // trigger when balance < this
+        amount    : Money;              // amount to add
+    }
+
+    export enum PaymentStatus { SUCCEEDED = "succeeded", PENDING = "pending", FAILED = "failed", REFUNDED = "refunded" }
+
+    /** A payment-history entry (a charge / top-up / refund). */
+    export interface Payment
+    {
+        id           : Type.ID;
+        amount       : Money;
+        status       : PaymentStatus;
+        description?  : string;
+        methodLast4? : string;
+        createdAt    : Type.ISODateTime;
+        externalRef? : string;
+    }
+
+    /** Per-account billing settings — how they pay, auto-reload, and whether billing address mirrors the account. */
+    export interface BillingSettings
+    {
+        billingType                 : BillingType;
+        autoReload                  : AutoReload;
+        billingAddressSameAsAccount : boolean;
+    }
+
+    /** One line of "what is currently being charged" (the cost summary on the overview). */
+    export interface CostLine
+    {
+        label     : string;
+        amount    : Money;
+        interval? : Interval;           // recurring cadence, if applicable
+        note?     : string;
+    }
+
+    /** Everything the account/billing overview screen needs in one read (skeleton until Stripe/plans land). */
+    export interface Overview
+    {
+        planName?       : string;               // current plan (display); undefined = no plan yet
+        subscription?   : Subscription;
+        costs           : Array<CostLine>;      // what's currently being charged
+        balance         : AccountBalance;
+        settings        : BillingSettings;
+        billingAddress? : Type.Address;
+        defaultMethod?  : PaymentMethod;
     }
 
     // ── 9. AUDIT — immutable trail for any billing-relevant change. ───────────────────────────────

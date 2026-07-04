@@ -20,12 +20,14 @@ import { appendMessage, loadSessionId, saveSessionId } from "./claudeStore";
 //
 
 /** Tools that only read — auto-allowed in every engaged mode. Everything else is gated in "fix". */
-const READONLY_TOOLS = new Set( [ "Read", "Grep", "Glob", "TodoWrite", "Task", "WebFetch", "WebSearch" ] );
+const READONLY_TOOLS : Set<string> = new Set( [ "Read", "Grep", "Glob", "TodoWrite", "Task", "WebFetch", "WebSearch" ] );
 
 /** Tools a read-only mode (ondemand/realtime) must never use. */
-const MUTATING_TOOLS = [ "Edit", "Write", "MultiEdit", "NotebookEdit" ];
+const MUTATING_TOOLS : Array<string> = [ "Edit", "Write", "MultiEdit", "NotebookEdit" ];
 
-let counter = 0;
+// monotonic suffix so two ids minted in the same millisecond don't collide
+let counter : number = 0;
+/** Mint a short, time-ordered, collision-resistant id for a message or approval request. */
 const nextId = () : string => `c${Date.now().toString( 36 )}-${( counter++ ).toString( 36 )}`;
 
 /**
@@ -35,7 +37,7 @@ const nextId = () : string => `c${Date.now().toString( 36 )}-${( counter++ ).toS
  */
 function makeInputQueue()
 {
-    const pending : string[] = [];
+    const pending : Array<string> = [];
     let wake : ( () => void ) | null = null;
     let closed : boolean = false;
 
@@ -73,9 +75,12 @@ class ClaudeAgent extends EventEmitter
     /** Pending approvals keyed by id → resolver. */
     private approvals = new Map<string, ( allow : boolean ) => void>();
 
+    /** The current engagement mode (off / ondemand / realtime / fix). */
     getMode() : ClaudeMode { return this.mode; }
+    /** Switch the engagement mode; affects future sessions only. */
     setMode( mode : ClaudeMode ) : void { this.mode = mode; }
 
+    /** True while a streaming session is open for the service. */
     isRunning( service : string ) : boolean { return this.sessions.has( service ); }
 
     /** Called by the IPC layer when a stage fails — auto-engages in realtime/fix modes. */
@@ -94,10 +99,11 @@ class ClaudeAgent extends EventEmitter
         if ( resolver ) { this.approvals.delete( id ); resolver( allow ); }
     }
 
+    /** Tear down a service's session: close the input stream, abort the query, deny pending approvals. */
     stop( service : string ) : void
     {
-        const s : Session | undefined = this.sessions.get( service );
-        if ( s ) { s.endInput(); s.abort.abort(); this.sessions.delete( service ); this.emitState( service, false, false ); }
+        const session : Session | undefined = this.sessions.get( service );
+        if ( session ) { session.endInput(); session.abort.abort(); this.sessions.delete( service ); this.emitState( service, false, false ); }
         // reject any dangling approvals for this service
         for ( const [ id, resolve ] of this.approvals ) { void id; resolve( false ); }
         this.approvals.clear();
@@ -166,6 +172,11 @@ class ClaudeAgent extends EventEmitter
         }
     }
 
+    /**
+     * Drive one streaming `query()`: lazily load the (ESM) SDK, resume the prior session if its
+     * transcript still exists locally, wire tool-approval gating for "fix" mode, then forward every
+     * streamed SDK message to the transcript until the input stream closes or the query is aborted.
+     */
     private async runQuery( service : string, abort : AbortController, input : AsyncGenerator<SdkUserMessage> ) : Promise<void>
     {
         // ensure the engine can find the `claude` executable + creds when launched from Finder
@@ -193,7 +204,8 @@ class ClaudeAgent extends EventEmitter
         let resume : string | undefined = loadSessionId( service );
         if ( resume )
         {
-            const info = await sdk.getSessionInfo( resume, { dir: REPO_ROOT } ).catch( () => undefined );
+            const info : Awaited<ReturnType<typeof sdk.getSessionInfo>> | undefined =
+                await sdk.getSessionInfo( resume, { dir: REPO_ROOT } ).catch( () => undefined );
             if ( info )
             {
                 this.push( service, "status", `Resuming the previous conversation (session ${resume.slice( 0, 8 )}…).` );
@@ -253,7 +265,7 @@ class ClaudeAgent extends EventEmitter
 
             case "assistant":
             {
-                const content : SdkContentBlock[] = message.message?.content ?? [];
+                const content : Array<SdkContentBlock> = message.message?.content ?? [];
                 for ( const block of content )
                 {
                     if ( block.type === "text" && block.text?.trim() )
@@ -283,40 +295,44 @@ class ClaudeAgent extends EventEmitter
         }
     }
 
+    /** Emit an approval request to the UI and resolve once the user allows/denies it. */
     private requestApproval( service : string, toolName : string, input : Record<string, unknown> ) : Promise<boolean>
     {
         const id : string = nextId();
-        const req : ClaudeApprovalRequest = { id, service, toolName, summary: summarizeTool( toolName, input ) };
+        const request : ClaudeApprovalRequest = { id, service, toolName, summary: summarizeTool( toolName, input ) };
         return new Promise<boolean>( ( resolve ) =>
         {
             this.approvals.set( id, resolve );
-            this.emit( "approval", req );
+            this.emit( "approval", request );
         } );
     }
 
+    /** Build a transcript entry, emit it live to the renderer, and persist it (fire-and-forget). */
     private push( service : string, kind : ClaudeMsgKind, text : string, toolName? : string ) : void
     {
-        const msg : ClaudeMessage = { service, id: nextId(), kind, text, ts: Date.now(), toolName };
-        this.emit( "message", msg );
-        void this.persist( service, msg );
+        const message : ClaudeMessage = { service, id: nextId(), kind, text, ts: Date.now(), toolName };
+        this.emit( "message", message );
+        void this.persist( service, message );
     }
 
-    private async persist( service : string, msg : ClaudeMessage ) : Promise<void>
+    /** Persist a transcript entry: append to the committed conversation and to the raw claude.log. */
+    private async persist( service : string, message : ClaudeMessage ) : Promise<void>
     {
         // committed, structured transcript loaded on next launch — skip ephemeral status lines
-        if ( msg.kind !== "status" ) appendMessage( service, msg );
+        if ( message.kind !== "status" ) appendMessage( service, message );
 
         // raw stream log (parity with every other captured stream)
         try
         {
             const dir : string = join( LOG_DIR, service );
             await mkdir( dir, { recursive: true } );
-            const tag : string = msg.toolName ? `${msg.kind}:${msg.toolName}` : msg.kind;
-            await appendFile( join( dir, "claude.log" ), `[${tag}] ${msg.text}\n` );
+            const tag : string = message.toolName ? `${message.kind}:${message.toolName}` : message.kind;
+            await appendFile( join( dir, "claude.log" ), `[${tag}] ${message.text}\n` );
         }
         catch { /* best-effort */ }
     }
 
+    /** Notify the UI of this service's session state (open? mid-turn?). */
     private emitState( service : string, running : boolean, thinking : boolean ) : void
     {
         this.emit( "state", { service, running, thinking } );
@@ -327,13 +343,13 @@ class ClaudeAgent extends EventEmitter
 function summarizeTool( name : string, input : Record<string, unknown> | undefined ) : string
 {
     if ( !input ) return name;
-    const i : Record<string, unknown> = input as Record<string, unknown>;
-    if ( name === "Bash" && typeof i[ "command" ] === "string" ) return `Bash: ${i[ "command" ] as string}`;
-    if ( ( name === "Edit" || name === "Write" || name === "MultiEdit" ) && typeof i[ "file_path" ] === "string" )
-        return `${name}: ${i[ "file_path" ] as string}`;
+    const fields : Record<string, unknown> = input as Record<string, unknown>;
+    if ( name === "Bash" && typeof fields[ "command" ] === "string" ) return `Bash: ${fields[ "command" ] as string}`;
+    if ( ( name === "Edit" || name === "Write" || name === "MultiEdit" ) && typeof fields[ "file_path" ] === "string" )
+        return `${name}: ${fields[ "file_path" ] as string}`;
     if ( ( name === "Read" || name === "Grep" || name === "Glob" ) )
-        return `${name}: ${String( i[ "file_path" ] ?? i[ "pattern" ] ?? i[ "path" ] ?? "" )}`;
-    return `${name}( ${JSON.stringify( i ).slice( 0, 160 )} )`;
+        return `${name}: ${String( fields[ "file_path" ] ?? fields[ "pattern" ] ?? fields[ "path" ] ?? "" )}`;
+    return `${name}( ${JSON.stringify( fields ).slice( 0, 160 )} )`;
 }
 
 //
@@ -353,7 +369,7 @@ interface SdkMessage
     subtype? : string;
     session_id? : string;
     result? : unknown;
-    message? : { content? : SdkContentBlock[] };
+    message? : { content? : Array<SdkContentBlock> };
 }
 /** What we feed the SDK's streaming-input prompt — one user turn. */
 interface SdkUserMessage

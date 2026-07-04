@@ -89,6 +89,9 @@ export interface ServiceStackProps extends cdk.StackProps
     // API prefixes to another service's gateway. Relies on producer stacks being built before
     // consumers in app.ts (app before web). note: StackProps.env carries AWS { account, region }.
     gateways? : GatewayRegistry;
+    // Platform-shared secrets (logical key → secret) from PlatformStack. Every service is granted read and
+    // gets each ARN injected as `SECRET_<KEY>`, so its AiFactory can resolve the platform AI provider keys.
+    platformSecrets? : Map<string, secretsmanager.ISecret>;
 }
 
 /**
@@ -109,6 +112,9 @@ export class ServiceStack extends cdk.Stack
     private readonly tables  : Map<string, dynamodb.ITable>   = new Map();
     private readonly queues  : Map<string, sqs.IQueue>        = new Map();
     private readonly secrets : Map<string, secretsmanager.ISecret> = new Map();
+    // Platform-shared secrets (AI keys, …) imported from PlatformStack — granted read + ARN-injected, but
+    // not owned by this stack. Kept separate from `secrets` so we grant (never create/destroy) them.
+    private readonly platformSecrets : Map<string, secretsmanager.ISecret> = new Map();
     private readonly topics  : Map<string, sns.ITopic>        = new Map();
 
     private readonly lambdas  : Array<lambda.Function> = [];   // API-integration targets
@@ -160,6 +166,9 @@ export class ServiceStack extends cdk.Stack
         ( owns.tables    ?? [] ).forEach( s => this.makeTable( s ) );
         ( owns.queues    ?? [] ).forEach( s => this.makeQueue( s ) );
         ( owns.secrets   ?? [] ).forEach( s => this.makeSecret( s ) );
+        // Platform-shared secrets (AI keys, …): inject each ARN as `SECRET_<KEY>` BEFORE compute snapshots
+        // the env; read is granted in grantOwned. Ambient to every service (all run the AiFactory).
+        ( props.platformSecrets ?? new Map() ).forEach( ( secret, key ) => this.usePlatformSecret( key, secret ) );
         ( owns.snsTopics ?? [] ).forEach( s => this.makeSnsTopic( s ) );
         ( owns.logGroups ?? [] ).forEach( s => this.makeLogGroup( s ) );
         ( owns.appConfig ?? [] ).forEach( s => this.makeAppConfig( s ) );
@@ -178,11 +187,14 @@ export class ServiceStack extends cdk.Stack
         // Scheduler role/group must exist before compute so SCHEDULER_* env injects into it.
         if( owns.scheduler ) this.makeScheduler( owns.scheduler );
 
-        // 3. Compute (env is complete by now), then user pools (triggers reference jobs), then API.
-        ( owns.jobs     ?? [] ).forEach( s => this.makeJob( s ) );
-        ( owns.services ?? [] ).forEach( s => this.makeEcsService( s ) );
-        ( owns.batchJobs ?? [] ).forEach( s => this.makeBatchJob( s ) );
+        // 3. Jobs first (user-pool triggers reference them), THEN user pools — so USERPOOL_* lands in
+        //    this.envVars BEFORE compute snapshots the env into the ECS task definition — THEN compute, API.
+        //    (User pools must precede makeEcsService: makeEcsService freezes { ...this.envVars } into the
+        //     container, and makeUserPool sets USERPOOL_<key>; creating pools after compute drops that var.)
+        ( owns.jobs      ?? [] ).forEach( s => this.makeJob( s ) );
         ( owns.userPools ?? [] ).forEach( s => this.makeUserPool( s ) );
+        ( owns.services  ?? [] ).forEach( s => this.makeEcsService( s ) );
+        ( owns.batchJobs ?? [] ).forEach( s => this.makeBatchJob( s ) );
 
         if( owns.api ) this.makeApi( owns.api );
         if( owns.webSocketApi ) this.makeWebSocketApi( owns.webSocketApi );
@@ -240,6 +252,7 @@ export class ServiceStack extends cdk.Stack
         this.queues.forEach(  q => { q.grantConsumeMessages( g ); q.grantSendMessages( g ); } );
         this.keys.forEach(    k => k.grantEncryptDecrypt( g ) );
         this.secrets.forEach( s => s.grantRead( g ) );
+        this.platformSecrets.forEach( s => s.grantRead( g ) );   // read-only on the platform-shared AI keys
         this.topics.forEach(  t => t.grantPublish( g ) );
     }
 
@@ -274,10 +287,19 @@ export class ServiceStack extends cdk.Stack
             removalPolicy     : autoEmpty ? cdk.RemovalPolicy.DESTROY : undefined,
             autoDeleteObjects : autoEmpty ? true : undefined,
             cors              : spec.cors ? [ { allowedMethods: [ s3.HttpMethods.GET, s3.HttpMethods.PUT, s3.HttpMethods.POST ], allowedOrigins: [ "*" ], allowedHeaders: [ "*" ] } ] : undefined,
-            lifecycleRules    : ( spec.lifecycle ?? [] ).map( r => ( {
-                prefix     : r.prefix,
-                expiration : r.expireDays ? cdk.Duration.days( r.expireDays ) : undefined,
-            } ) ),
+            lifecycleRules    : ( spec.lifecycle ?? [] ).map( r =>
+            {
+                // honor the manifest's cold-tiering fields, not just expiry — a rule with only transitions
+                // (e.g. media's IA→Glacier) is valid; CDK rejects a rule with none of expiry/transitions.
+                const transitions : Array<s3.Transition> = [];
+                if( r.transitionToInfrequentDays ) transitions.push( { storageClass: s3.StorageClass.INFREQUENT_ACCESS, transitionAfter: cdk.Duration.days( r.transitionToInfrequentDays ) } );
+                if( r.transitionToGlacierDays )    transitions.push( { storageClass: s3.StorageClass.GLACIER,           transitionAfter: cdk.Duration.days( r.transitionToGlacierDays ) } );
+                return {
+                    prefix      : r.prefix,
+                    expiration  : r.expireDays ? cdk.Duration.days( r.expireDays ) : undefined,
+                    transitions : transitions.length > 0 ? transitions : undefined,
+                };
+            } ),
         } );
         this.buckets.set( spec.key, bucket );
         this.envVars[ envVarName( ResourceKind.BUCKET, spec.key ) ] = bucket.bucketName;
@@ -471,6 +493,15 @@ export class ServiceStack extends cdk.Stack
         } );
         this.secrets.set( spec.key, secret );
         this.envVars[ envVarName( ResourceKind.SECRET, spec.key ) ] = secret.secretArn;
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    /** Record a platform-shared secret (owned by PlatformStack) and inject its ARN as `SECRET_<KEY>` so the
+     *  service's facades/AiFactory can resolve it. Read is granted later in {@link grantOwned}. */
+    private usePlatformSecret( key : string, secret : secretsmanager.ISecret ) : void
+    {
+        this.platformSecrets.set( key, secret );
+        this.envVars[ envVarName( ResourceKind.SECRET, key ) ] = secret.secretArn;
     }
 
     //////////////////////////////////////////////////////////////////////////////

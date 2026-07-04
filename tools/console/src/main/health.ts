@@ -18,6 +18,7 @@ import { processManager } from "./processManager";
 
 const TIMEOUT_MS = 2500;
 
+/** Issue GET /health to one role at the given port and resolve a HealthResult (never rejects; failures become ok:false). */
 function pingUrl( service : string, role : string, port : number ) : Promise<HealthResult>
 {
     const url   : string = `http://localhost:${port}/health`;
@@ -37,8 +38,8 @@ function pingUrl( service : string, role : string, port : number ) : Promise<Hea
 
         const req : ReturnType<typeof request> = request( url, { method: "GET", timeout: TIMEOUT_MS }, ( res ) =>
         {
-            const chunks : Buffer[] = [];
-            res.on( "data", ( c : Buffer ) => chunks.push( c ) );
+            const chunks : Array<Buffer> = [];
+            res.on( "data", ( chunk : Buffer ) => chunks.push( chunk ) );
             res.on( "end", () =>
             {
                 const raw    : string = Buffer.concat( chunks ).toString( "utf8" ).slice( 0, 4000 );
@@ -56,12 +57,12 @@ function pingUrl( service : string, role : string, port : number ) : Promise<Hea
 }
 
 /** Ping one role (or the service's first/only role if `role` is omitted). */
-export async function pingHealth( service : string, role? : string ) : Promise<HealthResult[]>
+export async function pingHealth( service : string, role? : string ) : Promise<Array<HealthResult>>
 {
     const svc : ServiceInfo | undefined = getService( service );
     if ( !svc || !svc.capabilities.canHealth ) return [];
 
-    const roles : ServiceRole[] = role ? svc.roles.filter( r => r.role === role ) : svc.roles;
+    const roles : Array<ServiceRole> = role ? svc.roles.filter( candidate => candidate.role === role ) : svc.roles;
 
     // Resolve the real listen port per run-mode: local dev uses the dev port; a deployed service uses its
     // published host port (containerPort → hostPort). `deployedPorts` shells out to `docker ps`, so do it
@@ -69,17 +70,17 @@ export async function pingHealth( service : string, role? : string ) : Promise<H
     const localRunning : boolean = processManager.isRunning( service, "runtime" );
     const deployed : Record<number, number> = localRunning ? {} : processManager.deployedPorts( service );
 
-    return Promise.all( roles.filter( r => r.port > 0 ).map( r =>
+    return Promise.all( roles.filter( serviceRole => serviceRole.port > 0 ).map( serviceRole =>
     {
-        const port : number = localRunning ? r.port : ( deployed[ r.port ] ?? r.port );
-        return pingUrl( service, r.role, port );
+        const port : number = localRunning ? serviceRole.port : ( deployed[ serviceRole.port ] ?? serviceRole.port );
+        return pingUrl( service, serviceRole.role, port );
     } ) );
 }
 
 /** Ping every health-capable role of every service (the fleet overview). */
-export async function pingAll() : Promise<HealthResult[]>
+export async function pingAll() : Promise<Array<HealthResult>>
 {
-    const out : HealthResult[] = [];
+    const out : Array<HealthResult> = [];
     for ( const svc of listServices() )
     {
         if ( !svc.capabilities.canHealth ) continue;

@@ -15,7 +15,7 @@ import { settingsStore, useSettings, type HistogramWindowMin, type Settings } fr
 // Settings dialog — edits a local draft and commits on Save (persisted to localStorage via the
 // settings store). First setting: the container-metrics history window.
 //
-const WINDOWS : HistogramWindowMin[] = [ 15, 30, 45, 60 ];
+const WINDOWS : Array<HistogramWindowMin> = [ 15, 30, 45, 60 ];
 
 export function SettingsDialog( { open, onClose } : { open : boolean; onClose : () => void } )
 {
@@ -25,6 +25,7 @@ export function SettingsDialog( { open, onClose } : { open : boolean; onClose : 
     // reset the draft to the saved values each time the dialog opens
     useEffect( () => { if ( open ) setDraft( saved ); }, [ open, saved ] );
 
+    // commit the draft to the settings store, then close
     const save = () : void => { settingsStore.save( draft ); onClose(); };
 
     return (
@@ -39,10 +40,10 @@ export function SettingsDialog( { open, onClose } : { open : boolean; onClose : 
                     <Select
                         size="small"
                         value={draft.histogramWindowMin}
-                        onChange={( e ) => setDraft( { ...draft, histogramWindowMin: e.target.value as HistogramWindowMin } )}
+                        onChange={( event ) => setDraft( { ...draft, histogramWindowMin: event.target.value as HistogramWindowMin } )}
                         sx={{ minWidth: 110 }}
                     >
-                        {WINDOWS.map( ( w ) => <MenuItem key={w} value={w}>{w} min</MenuItem> )}
+                        {WINDOWS.map( ( windowMin : HistogramWindowMin ) => <MenuItem key={windowMin} value={windowMin}>{windowMin} min</MenuItem> )}
                     </Select>
                 </Box>
             </DialogContent>

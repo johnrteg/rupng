@@ -76,7 +76,7 @@ export function VerticalSliderIconButtonInput( props : VerticalSliderIconButtonI
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////
-    function onChange( event: Event, value: number | number[], activeThumb: number )  : void
+    function onChange( event: Event, value: number | Array<number>, activeThumb: number )  : void
     {
         setValue( value as number );
     }

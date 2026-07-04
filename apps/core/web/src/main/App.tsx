@@ -7,6 +7,7 @@ import { JSX } from "react";
 
 //
 import { PaletteMode, Theme, ThemeProvider, createTheme } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
 
 //
 import '../css/App.css';
@@ -223,6 +224,7 @@ export default function App() : JSX.Element
     return      <>
                 <Subscriber event={ PubSubService.Type.THEME } onChange={ onThemeChange } />
                 { theme !== undefined ? <ThemeProvider theme={ theme }>
+                    <CssBaseline />{ /* applies theme text/background to <body> so inherited text (nav labels, etc.) flips with the mode */ }
                     <ErrorBoundary>
                         <AppRouter />
                         {/*<ZendeskChatInput />*/}

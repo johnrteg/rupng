@@ -107,7 +107,10 @@ export namespace User
     {
         accountId   : Type.UUID;
         accountName : string;
+        parentName? : string;          // immediate parent account's name when this is a sub-account (drives a "Parent / Child" label)
         maxRole     : Access.Role;      // the account-owned ceiling for this user in this account
+        owner?      : boolean;          // true when the caller OWNS this account (their "own" account — the
+                                        // reset target if they're removed from their last-used account)
     }
 
     // ── Schema + validator for the read model `Entity` (the wire/messaging shape; no secrets) ────────

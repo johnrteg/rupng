@@ -13,6 +13,7 @@ import type { ContainerInfo, ContainerKind } from "../shared/types";
 
 const exec = promisify( execFile );
 
+/** Process env with the common Homebrew/local bin dirs prepended so `docker` resolves under Electron. */
 function env() : NodeJS.ProcessEnv
 {
     const path : string = [ "/opt/homebrew/bin", "/usr/local/bin", process.env.PATH ?? "" ].filter( Boolean ).join( delimiter );
@@ -22,13 +23,15 @@ function env() : NodeJS.ProcessEnv
 interface PsRow { ID? : string; Names? : string; Image? : string; State? : string; Status? : string; }
 interface StatRow { ID? : string; Name? : string; CPUPerc? : string; MemUsage? : string; MemPerc? : string; }
 
-function parseJsonLines<T>( stdout : string ) : T[]
+/** Parse newline-delimited JSON (docker's `{{json .}}` output), skipping blank/unparseable lines. */
+function parseJsonLines<T>( stdout : string ) : Array<T>
 {
-    return stdout.split( /\r?\n/ ).filter( ( l ) => l.trim().length > 0 )
-        .map( ( l ) => { try { return JSON.parse( l ) as T; } catch { return null; } } )
-        .filter( ( v ) : v is T => v !== null );
+    return stdout.split( /\r?\n/ ).filter( ( line ) => line.trim().length > 0 )
+        .map( ( line ) => { try { return JSON.parse( line ) as T; } catch { return null; } } )
+        .filter( ( parsed ) : parsed is T => parsed !== null );
 }
 
+/** Classify a container by name into the kind the Monitor view groups by. */
 function kindOf( name : string ) : ContainerKind
 {
     if ( name.startsWith( "ls-ecs-" ) ) return "ecs-task";
@@ -39,9 +42,9 @@ function kindOf( name : string ) : ContainerKind
 }
 
 /** List running containers merged with their live CPU/memory stats. */
-export async function dockerContainers() : Promise<{ containers : ContainerInfo[]; error? : string }>
+export async function dockerContainers() : Promise<{ containers : Array<ContainerInfo>; error? : string }>
 {
-    let ps : PsRow[];
+    let ps : Array<PsRow>;
     try
     {
         const out : { stdout : string; stderr : string } = await exec( "docker", [ "ps", "--format", "{{json .}}" ], { env: env(), maxBuffer: 8 * 1024 * 1024 } );
@@ -49,8 +52,8 @@ export async function dockerContainers() : Promise<{ containers : ContainerInfo[
     }
     catch ( err )
     {
-        const msg = ( err as Error ).message;
-        return { containers: [], error: /ENOENT|not found/i.test( msg ) ? "docker is not on PATH" : `docker ps failed: ${msg}` };
+        const message : string = ( err as Error ).message;
+        return { containers: [], error: /ENOENT|not found/i.test( message ) ? "docker is not on PATH" : `docker ps failed: ${message}` };
     }
 
     // stats is best-effort (slower) — merge by short id if present
@@ -58,25 +61,25 @@ export async function dockerContainers() : Promise<{ containers : ContainerInfo[
     try
     {
         const out : { stdout : string; stderr : string } = await exec( "docker", [ "stats", "--no-stream", "--format", "{{json .}}" ], { env: env(), maxBuffer: 8 * 1024 * 1024 } );
-        for ( const s of parseJsonLines<StatRow>( out.stdout ) )
-            if ( s.ID ) statsById.set( s.ID, s );
+        for ( const stat of parseJsonLines<StatRow>( out.stdout ) )
+            if ( stat.ID ) statsById.set( stat.ID, stat );
     }
     catch { /* stats optional */ }
 
-    const containers : ContainerInfo[] = ps.map( ( c ) =>
+    const containers : Array<ContainerInfo> = ps.map( ( row : PsRow ) =>
     {
-        const name = ( c.Names ?? "" ).split( "," )[ 0 ];
-        const s : StatRow | undefined = c.ID ? statsById.get( c.ID ) : undefined;
+        const name : string = ( row.Names ?? "" ).split( "," )[ 0 ];
+        const stat : StatRow | undefined = row.ID ? statsById.get( row.ID ) : undefined;
         return {
-            id         : c.ID ?? "",
+            id         : row.ID ?? "",
             name,
-            image      : c.Image ?? "",
-            state      : c.State ?? "",
-            status     : c.Status ?? "",
+            image      : row.Image ?? "",
+            state      : row.State ?? "",
+            status     : row.Status ?? "",
             kind       : kindOf( name ),
-            cpuPercent : s?.CPUPerc,
-            memUsage   : s?.MemUsage,
-            memPercent : s?.MemPerc
+            cpuPercent : stat?.CPUPerc,
+            memUsage   : stat?.MemUsage,
+            memPercent : stat?.MemPerc
         };
     } );
 

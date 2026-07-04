@@ -20,14 +20,17 @@ import { serviceDir } from "./paths";
 // State lives in the console's userData dir (per-dev, outside the repo).
 //
 
+/** Absolute path to the per-dev drift-state file in the console's userData dir. */
 function stateFile() : string { return join( app.getPath( "userData" ), "deploy-state.json" ); }
 
+/** Read the service → last-deployed-manifest-hash map. Returns {} when the file is missing/corrupt. */
 function readState() : Record<string, string>
 {
     try { return JSON.parse( readFileSync( stateFile(), "utf8" ) ) as Record<string, string>; }
     catch { return {}; }
 }
 
+/** Persist the service → manifest-hash map (best-effort; failures are swallowed). */
 function writeState( state : Record<string, string> ) : void
 {
     try { writeFileSync( stateFile(), JSON.stringify( state, null, 2 ) + "\n" ); } catch { /* ignore */ }

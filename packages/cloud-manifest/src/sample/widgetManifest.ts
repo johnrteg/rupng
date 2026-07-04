@@ -7,7 +7,7 @@
 //   * an SQS queue (with an auto DLQ) the service consumes
 //   * an AppConfig application for runtime config / feature flags
 //   * a Lambda worker, triggered by the queue, with those resources injected
-//   * a `uses[]` reference to ANOTHER service's resource (cross-service access)
+//   * a `Array<uses>` reference to ANOTHER service's resource (cross-service access)
 //
 // A real service exports its manifest from `<service>/src/CloudManifest.ts`. The /cloud
 // CDK app imports it, creates these resources, grants least-privilege IAM from the
@@ -42,7 +42,7 @@ export const widgetManifest : ResourceManifest =
                 key       : "files",
                 access    : BucketAccess.PRIVATE,
                 versioned : true,
-                kmsKey    : "data",                       // -> keys[].key above
+                kmsKey    : "data",                       // -> Array<keys>.key above
                 lifecycle : [ { expireDays: 90 } ],
             },
         ],

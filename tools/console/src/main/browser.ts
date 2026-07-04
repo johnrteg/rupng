@@ -12,12 +12,13 @@ import { logStore } from "./logStore";
 //
 
 let win : BrowserWindow | null = null;
-let stateCb : ( ( s : BrowserState ) => void ) | null = null;
+let stateCb : ( ( state : BrowserState ) => void ) | null = null;
 
 /** Register a listener so the renderer is told when the window opens/closes/navigates. */
-export function onBrowserState( cb : ( s : BrowserState ) => void ) : void { stateCb = cb; }
+export function onBrowserState( cb : ( state : BrowserState ) => void ) : void { stateCb = cb; }
 
-const SAY = ( m : string ) : void => logStore.sys( BROWSER_ID, "runtime", m );
+/** Append a console-style system line to the browser's runtime log slot. */
+const SAY = ( message : string ) : void => logStore.sys( BROWSER_ID, "runtime", message );
 
 /** Electron console levels: 0 verbose · 1 info · 2 warning · 3 error → red for warning+. */
 function levelStream( level : number ) : "out" | "err" { return level >= 2 ? "err" : "out"; }
@@ -25,9 +26,9 @@ function levelStream( level : number ) : "out" | "err" { return level >= 2 ? "er
 /** True if the text is a structured Trace record JSON (so the LogView should render it as a record). */
 function isTraceRecord( msg : string ) : boolean
 {
-    const t : string = msg.trim();
-    if ( !t.startsWith( "{" ) ) return false;
-    try { const o = JSON.parse( t ) as { level? : unknown; message? : unknown }; return typeof o.level === "string" && "message" in o; }
+    const trimmed : string = msg.trim();
+    if ( !trimmed.startsWith( "{" ) ) return false;
+    try { const parsed = JSON.parse( trimmed ) as { level? : unknown; message? : unknown }; return typeof parsed.level === "string" && "message" in parsed; }
     catch { return false; }
 }
 
@@ -43,9 +44,10 @@ export function browserIsOpen() : boolean { return !!win && !win.isDestroyed(); 
 export function browserState() : BrowserState
 {
     if ( !browserIsOpen() ) return { open: false, url: "", canBack: false, canForward: false };
-    const wc = win!.webContents;
-    return { open: true, url: wc.getURL(), canBack: wc.navigationHistory.canGoBack(), canForward: wc.navigationHistory.canGoForward() };
+    const webContents = win!.webContents;
+    return { open: true, url: webContents.getURL(), canBack: webContents.navigationHistory.canGoBack(), canForward: webContents.navigationHistory.canGoForward() };
 }
+/** Push the current browser state to the registered listener (if any). */
 const emitState = () : void => stateCb?.( browserState() );
 
 /** History navigation (the Run-panel back/forward buttons). did-navigate then refreshes state. */
@@ -73,33 +75,35 @@ export function openBrowser( url : string ) : { ok : boolean; url : string }
         webPreferences  : { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: "rup-app" }
     } );
 
-    const wc = win.webContents;
-    attachNetwork( wc.session );   // monitor requests this window makes (to the proxy/API)
+    const webContents = win.webContents;
+    attachNetwork( webContents.session );   // monitor requests this window makes (to the proxy/API)
 
     // keep the Run-panel URL bar + back/forward buttons in sync with the window's navigation
-    wc.on( "did-navigate", () => emitState() );
-    wc.on( "did-navigate-in-page", () => emitState() );
+    webContents.on( "did-navigate", () => emitState() );
+    webContents.on( "did-navigate-in-page", () => emitState() );
 
     // the page console (console.log/info/warn/error) + console-surfaced uncaught errors. Electron 33
     // emits (event, MessageDetails), but the typings carry an extra deprecated (event, level, …)
     // overload that confuses overload resolution — so we listen via the plain emitter and handle both
     // arg shapes (object = new, number = old).
-    ( wc as unknown as NodeJS.EventEmitter ).on( "console-message", ( ...a : unknown[] ) =>
+    ( webContents as unknown as NodeJS.EventEmitter ).on( "console-message", ( ...args : Array<unknown> ) =>
     {
-        const d = a[ 1 ] as { level? : number; message? : string; sourceUrl? : string; lineNumber? : number } | number | undefined;
+        // args[ 1 ] is either the new MessageDetails object or the old numeric level
+        const details = args[ 1 ] as { level? : number; message? : string; sourceUrl? : string; lineNumber? : number } | number | undefined;
         let level : number, message : string, where : string;
-        if ( d && typeof d === "object" )
+        if ( details && typeof details === "object" )
         {
-            level = d.level ?? 0;
-            message = String( d.message ?? "" );
-            where = d.sourceUrl ? ` (${d.sourceUrl.split( "/" ).pop()}:${d.lineNumber ?? 0})` : "";
+            level = details.level ?? 0;
+            message = String( details.message ?? "" );
+            where = details.sourceUrl ? ` (${details.sourceUrl.split( "/" ).pop()}:${details.lineNumber ?? 0})` : "";
         }
         else
         {
-            level = Number( d ?? 0 );
-            message = String( a[ 2 ] ?? "" );
-            const src : string = String( a[ 4 ] ?? "" );
-            where = src ? ` (${src.split( "/" ).pop()}:${Number( a[ 3 ] ?? 0 )})` : "";
+            // old overload: (event, level, message, lineNumber, sourceUrl)
+            level = Number( details ?? 0 );
+            message = String( args[ 2 ] ?? "" );
+            const sourceUrl : string = String( args[ 4 ] ?? "" );
+            where = sourceUrl ? ` (${sourceUrl.split( "/" ).pop()}:${Number( args[ 3 ] ?? 0 )})` : "";
         }
         // If the page logged a structured Trace record (our shared logger emits JSON), pass it through
         // VERBATIM so the LogView parses + colors it like every other Trace line. Only decorate raw,
@@ -109,12 +113,12 @@ export function openBrowser( url : string ) : { ok : boolean; url : string }
     } );
 
     // navigation / load failures (ignore -3 ABORTED, which fires on normal redirects/cancels)
-    wc.on( "did-fail-load", ( _e, code, desc, validatedUrl ) =>
+    webContents.on( "did-fail-load", ( _event, code, desc, validatedUrl ) =>
     {
         if ( code === -3 ) return;
         logStore.append( BROWSER_ID, "runtime", "err", `✖ failed to load ${validatedUrl}: ${desc} (${code})\n` );
     } );
-    wc.on( "render-process-gone", ( _e, details ) =>
+    webContents.on( "render-process-gone", ( _event, details ) =>
     {
         logStore.append( BROWSER_ID, "runtime", "err", `✖ render process gone: ${details.reason}\n` );
     } );
@@ -160,33 +164,34 @@ function netLine( level : "INFO" | "WARN" | "ERROR", message : string ) : void
 /** "https://host/app/bootstrap?x=1" → "/app/bootstrap?x=1" (host dropped — it's the proxy/gateway). */
 function shortUrl( url : string ) : string
 {
-    try { const u = new URL( url ); return u.pathname + u.search; } catch { return url; }
+    try { const parsed = new URL( url ); return parsed.pathname + parsed.search; } catch { return url; }
 }
 
 let attachedTo : Session | null = null;
-function attachNetwork( ses : Session ) : void
+/** Wire webRequest hooks on the window's partition Session to log navigations + XHR/fetch as Trace records. */
+function attachNetwork( session : Session ) : void
 {
-    if ( attachedTo === ses ) return;   // the partition session is reused across opens — attach once
-    attachedTo = ses;
+    if ( attachedTo === session ) return;   // the partition session is reused across opens — attach once
+    attachedTo = session;
 
-    ses.webRequest.onSendHeaders( ( d ) => { started.set( d.id, Date.now() ); } );
+    session.webRequest.onSendHeaders( ( request ) => { started.set( request.id, Date.now() ); } );
 
-    ses.webRequest.onCompleted( ( d ) =>
+    session.webRequest.onCompleted( ( request ) =>
     {
-        if ( !NET_TYPES.has( d.resourceType ) ) { started.delete( d.id ); return; }
-        const ms : number = started.has( d.id ) ? Date.now() - started.get( d.id )! : 0;
-        started.delete( d.id );
-        const code : number = d.statusCode;
-        const level : "INFO" | "WARN" | "ERROR" = code >= 500 ? "ERROR" : code >= 400 ? "WARN" : "INFO";
-        netLine( level, `${d.method} ${shortUrl( d.url )} → ${code} · ${ms}ms` );
+        if ( !NET_TYPES.has( request.resourceType ) ) { started.delete( request.id ); return; }
+        const elapsedMs : number = started.has( request.id ) ? Date.now() - started.get( request.id )! : 0;
+        started.delete( request.id );
+        const statusCode : number = request.statusCode;
+        const level : "INFO" | "WARN" | "ERROR" = statusCode >= 500 ? "ERROR" : statusCode >= 400 ? "WARN" : "INFO";
+        netLine( level, `${request.method} ${shortUrl( request.url )} → ${statusCode} · ${elapsedMs}ms` );
     } );
 
-    ses.webRequest.onErrorOccurred( ( d ) =>
+    session.webRequest.onErrorOccurred( ( request ) =>
     {
-        if ( !NET_TYPES.has( d.resourceType ) ) { started.delete( d.id ); return; }
-        const ms : number = started.has( d.id ) ? Date.now() - started.get( d.id )! : 0;
-        started.delete( d.id );
-        if ( d.error === "net::ERR_ABORTED" ) return;   // normal cancels/redirects
-        netLine( "ERROR", `${d.method} ${shortUrl( d.url )} ✖ ${d.error} · ${ms}ms` );
+        if ( !NET_TYPES.has( request.resourceType ) ) { started.delete( request.id ); return; }
+        const elapsedMs : number = started.has( request.id ) ? Date.now() - started.get( request.id )! : 0;
+        started.delete( request.id );
+        if ( request.error === "net::ERR_ABORTED" ) return;   // normal cancels/redirects
+        netLine( "ERROR", `${request.method} ${shortUrl( request.url )} ✖ ${request.error} · ${elapsedMs}ms` );
     } );
 }

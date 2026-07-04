@@ -26,3 +26,14 @@ export enum MfaMethod
     SMS   = "sms",              // texted code
     EMAIL = "email",            // emailed code
 }
+
+/**
+ * Contact CHANNEL used to identify + verify a user (registration / sign-in / reset) — i.e. which of the
+ * two contact rails `account` is on, and where a verification code is sent. Distinct from `AuthMethod`
+ * (the *credential* — password / passkey / social); this is just email vs phone. Closed set — not free text.
+ */
+export enum ContactMethod
+{
+    EMAIL = "email",            // account is an email address; code emailed
+    PHONE = "phone",            // account is an E.164 phone; code texted (SMS)
+}

@@ -41,9 +41,20 @@ export class AppService extends Service
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
+    /** Disconnect Kafka (the read-model consumer's run-loop + producer) BEFORE the base closes the HTTP
+     *  server — otherwise the open consumer keeps the process alive past SIGINT and the dev watcher
+     *  force-kills it. (The app BFF currently only CONSUMES events; it owns no persisted CRUD entity to
+     *  publish — the notices entity is not implemented yet.) */
+    protected async aboutToQuit() : Promise<void>
+    {
+        if( this._kafka ) { try { await this._kafka.disconnect(); } catch( err ) { this.log.error( "kafka disconnect failed", err ); } }
+        await super.aboutToQuit();
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
     /**
      * The PUBLIC bootstrap blob (`GetBootstrap.Config`) — read live from AppConfig (profile "web").
-     * Falls back to `GetBootstrap.SEED` if it isn't deployed yet / is unreadable. Live read for now;
+     * Falls back to `GetBootstrap.DEFAULT` if it isn't deployed yet / is unreadable. Live read for now;
      * a Redis cache will front this later. This is the WEB config — distinct from the (authed) AppService
      * config wired later.
      */
@@ -51,8 +62,8 @@ export class AppService extends Service
     {
         const result = await this.appConfig.json<GetBootstrap.Config>( "config", "web" );
         if ( result.ok && result.data !== undefined ) return result.data;
-        if ( !result.ok ) this.log.warn( "web config read failed — serving SEED", { error: result.error } );
-        return GetBootstrap.SEED;
+        if ( !result.ok ) this.log.warn( "web config read failed — serving DEFAULT", { error: result.error } );
+        return GetBootstrap.DEFAULT;
     }
 }
 

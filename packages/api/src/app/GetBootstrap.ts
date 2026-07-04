@@ -104,7 +104,7 @@ export namespace GetBootstrap
      */
     export enum Placement
     {
-        LOGIN  = "login",     // pre-auth login screen — embedded in GET /app/bootstrap → notices[]
+        LOGIN  = "login",     // pre-auth login screen — embedded in GET /app/bootstrap → Array<notices>
         BANNER = "banner",    // global in-app banner
         CENTER = "center",    // in-app notification list
     }
@@ -197,11 +197,11 @@ export namespace GetBootstrap
     export const validate : Validation.Validator<Config> = Validation.compile<Config>( SCHEMA );
 
     /** Initial/empty bootstrap used before the real blob loads (and as a safe client fallback). */
-    export const SEED : Response =
+    export const DEFAULT : Response =
     {
         branding        : { displayName: "" },
         name            : "",
-        passwordPolicy  : PasswordPolicy.SEED,
+        passwordPolicy  : PasswordPolicy.DEFAULT,
         uploadLimits    : { maxFileBytes: 750_000, allowedMimeTypes: ["image/jpg","image/jpeg","image/gif"] },
         publishableKeys : {},
         featureFlags    : {},

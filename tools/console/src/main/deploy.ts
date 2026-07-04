@@ -29,51 +29,54 @@ import { actor, readAudit, readState, recordDeploy } from "./stateStore";
 // production safety lives in the UI (a mandatory diff preview + a typed-name confirmation).
 //
 
-function git( args : string[] ) : string
+/** Run a git command synchronously in the repo root and return its stdout. */
+function git( args : Array<string> ) : string
 {
     return execFileSync( "git", args, { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 } );
 }
 
+/** Append a system line to the shared deploy log slot (Deploy console + Claude). */
 const SAY = ( msg : string ) : void => logStore.sys( DEPLOY_ID, "deploy", msg );
 
 /** Local branches + remote branches (origin/ stripped) + tags + current — for the ref picker. */
-export function deployRefs() : { branches : string[]; tags : string[]; current : string }
+export function deployRefs() : { branches : Array<string>; tags : Array<string>; current : string }
 {
     try
     {
         const current : string = git( [ "rev-parse", "--abbrev-ref", "HEAD" ] ).trim();
-        const raw : string[] = git( [ "branch", "-a", "--format=%(refname:short)" ] ).split( "\n" ).map( ( s ) => s.trim() ).filter( Boolean );
+        const rawBranches : Array<string> = git( [ "branch", "-a", "--format=%(refname:short)" ] ).split( "\n" ).map( ( line ) => line.trim() ).filter( Boolean );
         const names : Set<string> = new Set();
-        for ( const r of raw )
+        for ( const branchName of rawBranches )
         {
-            if ( r.startsWith( "origin/" ) ) { if ( r !== "origin/HEAD" ) names.add( r.slice( "origin/".length ) ); }
-            else names.add( r );
+            // collapse origin/<x> down to <x> (and drop the origin/HEAD pointer) so local + remote de-dupe
+            if ( branchName.startsWith( "origin/" ) ) { if ( branchName !== "origin/HEAD" ) names.add( branchName.slice( "origin/".length ) ); }
+            else names.add( branchName );
         }
-        const branches : string[] = [ current, ...[ ...names ].filter( ( b ) => b !== current ).sort() ];
-        const tags : string[] = git( [ "tag", "--sort=-creatordate" ] ).split( "\n" ).map( ( s ) => s.trim() ).filter( Boolean );
+        const branches : Array<string> = [ current, ...[ ...names ].filter( ( name ) => name !== current ).sort() ];
+        const tags : Array<string> = git( [ "tag", "--sort=-creatordate" ] ).split( "\n" ).map( ( line ) => line.trim() ).filter( Boolean );
         return { branches, tags, current };
     }
     catch { return { branches: [], tags: [], current: "?" }; }
 }
 
 /** package.json version of each given service id, read AT a git ref (not the working tree). */
-export function gitVersions( ref : string, services : string[] ) : Record<string, string>
+export function gitVersions( ref : string, services : Array<string> ) : Record<string, string>
 {
     // resolve the same way a deploy would (branch → origin/<ref>) so the preview matches what ships.
     // Note: reads the LAST-FETCHED remote tip — hit Refresh (or run a deploy, which fetches) to update.
     const resolved : string = resolveRef( ref );
-    const out : Record<string, string> = {};
-    for ( const svc of services )
+    const versions : Record<string, string> = {};
+    for ( const service of services )
     {
         try
         {
-            const text : string = git( [ "show", `${resolved}:apps/core/${svc}/package.json` ] );
-            const v : string | undefined = ( JSON.parse( text ) as { version? : string } ).version;
-            if ( v ) out[ svc ] = v;
+            const text : string = git( [ "show", `${resolved}:apps/core/${service}/package.json` ] );
+            const version : string | undefined = ( JSON.parse( text ) as { version? : string } ).version;
+            if ( version ) versions[ service ] = version;
         }
         catch { /* file not present at that ref → omit */ }
     }
-    return out;
+    return versions;
 }
 
 /**
@@ -90,24 +93,25 @@ export async function deployedVersions( config : DeployEnvConfig ) : Promise<{ d
     let firstError : string | undefined;
     try
     {
-        const gw : ApiGatewayV2Client = new ApiGatewayV2Client( { region: config.region, credentials: fromIni( { profile: config.profile } ), maxAttempts: 2 } );
-        const { Items: apis = [] } = await gw.send( new GetApisCommand( {} ) );
+        const gateway : ApiGatewayV2Client = new ApiGatewayV2Client( { region: config.region, credentials: fromIni( { profile: config.profile } ), maxAttempts: 2 } );
+        const { Items: apis = [] } = await gateway.send( new GetApisCommand( {} ) );
 
-        for ( const a of apis )
+        for ( const api of apis )
         {
-            const apiId : string = a.ApiId ?? "";
-            const base : string = a.ApiEndpoint ?? "";
+            const apiId : string = api.ApiId ?? "";
+            const base : string = api.ApiEndpoint ?? "";
             if ( !apiId || !base ) continue;
 
-            const { Items: routes = [] } = await gw.send( new GetRoutesCommand( { ApiId: apiId } ) );
-            const hasVersion : boolean = routes.some( ( r ) => ( r.RouteKey ?? "" ).replace( /\s+/g, " " ).trim().toUpperCase() === "GET /VERSION" );
+            // only APIs that expose GET /version are service gateways we can probe
+            const { Items: routes = [] } = await gateway.send( new GetRoutesCommand( { ApiId: apiId } ) );
+            const hasVersion : boolean = routes.some( ( route ) => ( route.RouteKey ?? "" ).replace( /\s+/g, " " ).trim().toUpperCase() === "GET /VERSION" );
             if ( !hasVersion ) continue;
 
             try
             {
-                const res = await fetchJson( base.replace( /\/+$/, "" ) + "/version" );
-                if ( res && typeof res.service === "string" && typeof res.version === "string" )
-                    deployed[ res.service ] = res.version;
+                const versionInfo = await fetchJson( base.replace( /\/+$/, "" ) + "/version" );
+                if ( versionInfo && typeof versionInfo.service === "string" && typeof versionInfo.version === "string" )
+                    deployed[ versionInfo.service ] = versionInfo.version;
             }
             catch ( err ) { firstError ??= `${base}/version unreachable: ${( err as Error ).message}`; }
         }
@@ -116,15 +120,16 @@ export async function deployedVersions( config : DeployEnvConfig ) : Promise<{ d
     catch ( err ) { return { deployed, error: `discovery failed: ${( err as Error ).message}` }; }
 }
 
+/** GET a URL as JSON with an 8s abort timeout. Throws on a non-2xx response. */
 async function fetchJson( url : string ) : Promise<{ service? : unknown; version? : unknown } | undefined>
 {
-    const ctrl : AbortController = new AbortController();
-    const timer : ReturnType<typeof setTimeout> = setTimeout( () => ctrl.abort(), 8000 );
+    const controller : AbortController = new AbortController();
+    const timer : ReturnType<typeof setTimeout> = setTimeout( () => controller.abort(), 8000 );
     try
     {
-        const res : Response = await fetch( url, { signal: ctrl.signal } );
-        if ( !res.ok ) throw new Error( `HTTP ${res.status}` );
-        return await res.json() as { service? : unknown; version? : unknown };
+        const response : Response = await fetch( url, { signal: controller.signal } );
+        if ( !response.ok ) throw new Error( `HTTP ${response.status}` );
+        return await response.json() as { service? : unknown; version? : unknown };
     }
     finally { clearTimeout( timer ); }
 }
@@ -160,24 +165,24 @@ function hasTag( ref : string ) : boolean
 /** "release/1.2" (or "origin/release/1.2") → "1.2"; else undefined. */
 function releaseLine( ref : string ) : string | undefined
 {
-    const m : RegExpMatchArray | null = ref.match( /release\/(\d+)\.(\d+)\b/ );
-    return m ? `${m[ 1 ]}.${m[ 2 ]}` : undefined;
+    const match : RegExpMatchArray | null = ref.match( /release\/(\d+)\.(\d+)\b/ );
+    return match ? `${match[ 1 ]}.${match[ 2 ]}` : undefined;
 }
 
 /** Next `vX.Y.Z` for a release line — highest existing patch + 1, else .0. */
 function nextTagFor( line : string ) : string
 {
-    let max : number = -1;
+    let maxPatch : number = -1;
     try
     {
-        for ( const t of git( [ "tag", "--list", `v${line}.*` ] ).split( "\n" ).map( ( s ) => s.trim() ).filter( Boolean ) )
+        for ( const tag of git( [ "tag", "--list", `v${line}.*` ] ).split( "\n" ).map( ( name ) => name.trim() ).filter( Boolean ) )
         {
-            const m : RegExpMatchArray | null = t.match( /^v\d+\.\d+\.(\d+)$/ );
-            if ( m ) max = Math.max( max, Number( m[ 1 ] ) );
+            const match : RegExpMatchArray | null = tag.match( /^v\d+\.\d+\.(\d+)$/ );
+            if ( match ) maxPatch = Math.max( maxPatch, Number( match[ 1 ] ) );
         }
     }
     catch { /* no tags */ }
-    return `v${line}.${max + 1}`;
+    return `v${line}.${maxPatch + 1}`;
 }
 
 /** Propose the production tag for a ref: the tag itself if `ref` is one (rollback), else next patch
@@ -185,8 +190,8 @@ function nextTagFor( line : string ) : string
 export function deployProposeTag( ref : string ) : string | undefined
 {
     if ( hasTag( ref ) ) return ref;
-    const line : string | undefined = releaseLine( ref );
-    return line ? nextTagFor( line ) : undefined;
+    const releaseLineName : string | undefined = releaseLine( ref );
+    return releaseLineName ? nextTagFor( releaseLineName ) : undefined;
 }
 
 /** Does a ref resolve in the local repo? */
@@ -207,15 +212,20 @@ export async function openReleaseLine() : Promise<{ ok : boolean; line? : string
     {
         try { execFileSync( "git", [ "fetch", "origin", "--tags", "--prune" ], { cwd: REPO_ROOT, stdio: "ignore" } ); } catch { /* offline */ }
 
-        let maj : number = 0, min : number = -1, found : boolean = false;
-        for ( const b of git( [ "branch", "-a", "--format=%(refname:short)" ] ).split( "\n" ).map( ( s ) => s.trim() ).filter( Boolean ) )
+        // scan every branch for the highest release/<major>.<minor> line so we can open the next minor
+        let major : number = 0, minor : number = -1, found : boolean = false;
+        for ( const branchName of git( [ "branch", "-a", "--format=%(refname:short)" ] ).split( "\n" ).map( ( line ) => line.trim() ).filter( Boolean ) )
         {
-            const m : RegExpMatchArray | null = b.match( /release\/(\d+)\.(\d+)\b/ );
-            if ( m ) { const a : number = Number( m[ 1 ] ), i : number = Number( m[ 2 ] ); if ( a > maj || ( a === maj && i > min ) ) { maj = a; min = i; found = true; } }
+            const match : RegExpMatchArray | null = branchName.match( /release\/(\d+)\.(\d+)\b/ );
+            if ( match )
+            {
+                const branchMajor : number = Number( match[ 1 ] ), branchMinor : number = Number( match[ 2 ] );
+                if ( branchMajor > major || ( branchMajor === major && branchMinor > minor ) ) { major = branchMajor; minor = branchMinor; found = true; }
+            }
         }
 
         let base : string, line : string;
-        if ( found ) { base = `release/${maj}.${min}`; line = `release/${maj}.${min + 1}`; }
+        if ( found ) { base = `release/${major}.${minor}`; line = `release/${major}.${minor + 1}`; }
         else { base = refExists( "origin/main" ) ? "origin/main" : refExists( "main" ) ? "main" : git( [ "rev-parse", "--abbrev-ref", "HEAD" ] ).trim(); line = "release/1.0"; }
 
         if ( refExists( line ) || refExists( `origin/${line}` ) ) return { ok: false, error: `${line} already exists` };
@@ -234,7 +244,7 @@ export async function openReleaseLine() : Promise<{ ok : boolean; line? : string
 export function deployState() : DeployState { return readState(); }
 
 /** Recent audit-trail entries. */
-export function deployAudit( limit? : number ) : AuditEntry[] { return readAudit( limit ); }
+export function deployAudit( limit? : number ) : Array<AuditEntry> { return readAudit( limit ); }
 
 /**
  * The service × environment map. Each env's deployed ref comes from environments.json (the pointer);
@@ -244,7 +254,7 @@ export function deployAudit( limit? : number ) : AuditEntry[] { return readAudit
  */
 export async function deployMap( configs : Record<DeployEnvName, DeployEnvConfig> ) : Promise<DeployMap>
 {
-    const ids : string[] = listServices().map( ( s ) => s.id );
+    const serviceIds : Array<string> = listServices().map( ( service ) => service.id );
 
     // refresh remote refs so committed versions + ahead/behind reflect the latest pushes
     try { execFileSync( "git", [ "fetch", "origin", "--tags", "--prune" ], { cwd: REPO_ROOT, stdio: "ignore" } ); }
@@ -255,27 +265,27 @@ export async function deployMap( configs : Record<DeployEnvName, DeployEnvConfig
     await Promise.all( DEPLOY_ENVS.map( async ( env : DeployEnvName ) =>
     {
         const ref : string = state[ env ].ref;
-        const branchVersions : Record<string, string> = ref ? gitVersions( ref, ids ) : {};
+        const branchVersions : Record<string, string> = ref ? gitVersions( ref, serviceIds ) : {};
         const { deployed, error } = await deployedVersions( configs[ env ] );
         envs[ env ] = { ref, tag: state[ env ].tag, branchVersions, liveVersions: deployed, liveError: error };
     } ) );
 
-    const dref : string = state.dev.ref, sref : string = state.staging.ref, pref : string = state.production.ref;
+    const devRef : string = state.dev.ref, stagingRef : string = state.staging.ref, productionRef : string = state.production.ref;
     return {
         envs,
         pending:
         {
-            devAheadOfStaging        : ( dref && sref ) ? aheadCount( resolveRef( sref ), resolveRef( dref ) ) : undefined,
-            stagingAheadOfProduction : ( sref && pref ) ? aheadCount( resolveRef( pref ), resolveRef( sref ) ) : undefined,
+            devAheadOfStaging        : ( devRef && stagingRef ) ? aheadCount( resolveRef( stagingRef ), resolveRef( devRef ) ) : undefined,
+            stagingAheadOfProduction : ( stagingRef && productionRef ) ? aheadCount( resolveRef( productionRef ), resolveRef( stagingRef ) ) : undefined,
         },
     };
 }
 
 /** Stack names for an env: optional shared platform stack + one per selected service. */
-function stacksFor( req : DeployRequest ) : string[]
+function stacksFor( req : DeployRequest ) : Array<string>
 {
     const env : DeployEnvName = req.env;
-    return [ ...( req.platform ? [ `platform-${env}` ] : [] ), ...req.services.map( ( s ) => `${s}-${env}` ) ];
+    return [ ...( req.platform ? [ `platform-${env}` ] : [] ), ...req.services.map( ( service ) => `${service}-${env}` ) ];
 }
 
 let busy : boolean = false;
@@ -287,7 +297,7 @@ let busy : boolean = false;
 export async function deployRun( req : DeployRequest ) : Promise<DeployResult>
 {
     if ( busy ) return { ok: false, error: "a deploy/diff is already running" };
-    const stacks : string[] = stacksFor( req );
+    const stacks : Array<string> = stacksFor( req );
     if ( stacks.length === 0 ) return { ok: false, error: "no services selected" };
 
     // ── enforce the release model + change-control for PRODUCTION deploys (see RELEASE.md) ──────────
@@ -305,16 +315,17 @@ export async function deployRun( req : DeployRequest ) : Promise<DeployResult>
     }
 
     busy = true;
-    const wt : string = join( tmpdir(), `rupng-deploy-${req.env}-${Date.now()}` );
-    const cloud : string = join( wt, "cloud" );
+    const worktree : string = join( tmpdir(), `rupng-deploy-${req.env}-${Date.now()}` );
+    const cloud : string = join( worktree, "cloud" );
     const profileEnv : NodeJS.ProcessEnv = { AWS_PROFILE: req.config.profile, AWS_REGION: req.config.region, CDK_DEFAULT_REGION: req.config.region };
 
-    const step = async ( label : string, cmd : string, args : string[], cwd : string, env? : NodeJS.ProcessEnv ) : Promise<boolean> =>
+    // run one labelled command as a streamed step; returns true on a clean (exit 0) finish
+    const step = async ( label : string, command : string, args : Array<string>, cwd : string, env? : NodeJS.ProcessEnv ) : Promise<boolean> =>
     {
         SAY( `\n━━ ${label} ━━` );
-        const code : number = await processManager.exec( DEPLOY_ID, "deploy", cmd, args, cwd, env );
-        if ( code !== 0 ) SAY( `✖ ${label} failed (exit ${code})` );
-        return code === 0;
+        const exitCode : number = await processManager.exec( DEPLOY_ID, "deploy", command, args, cwd, env );
+        if ( exitCode !== 0 ) SAY( `✖ ${label} failed (exit ${exitCode})` );
+        return exitCode === 0;
     };
 
     try
@@ -328,23 +339,23 @@ export async function deployRun( req : DeployRequest ) : Promise<DeployResult>
         const ref : string = resolveRef( req.ref );
 
         // 1) isolated worktree at the committed ref (so we deploy git, not the dirty working tree)
-        if ( !await step( `checkout ${ref} → worktree`, "git", [ "worktree", "add", "--detach", wt, ref ], REPO_ROOT ) )
+        if ( !await step( `checkout ${ref} → worktree`, "git", [ "worktree", "add", "--detach", worktree, ref ], REPO_ROOT ) )
             return { ok: false, stage: "checkout", error: "could not create the deploy worktree" };
 
         // 2) install + build (filtered to the selected services; web needs its bin/ for the S3 upload)
-        if ( !await step( "npm ci", "npm", [ "ci" ], wt ) )
+        if ( !await step( "npm ci", "npm", [ "ci" ], worktree ) )
             return { ok: false, stage: "install" };
 
-        const filters : string[] = req.services.map( ( s ) => `--filter=./apps/core/${s}` );
-        if ( filters.length > 0 && !await step( "turbo build", "npx", [ "turbo", "run", "build", ...filters ], wt ) )
+        const filters : Array<string> = req.services.map( ( service ) => `--filter=./apps/core/${service}` );
+        if ( filters.length > 0 && !await step( "turbo build", "npx", [ "turbo", "run", "build", ...filters ], worktree ) )
             return { ok: false, stage: "build" };
 
         // 3) cdk diff / deploy from the worktree's cloud/. Non-interactive: --require-approval never.
-        const ctx : string[] = [ "-c", `env=${req.env}`, "--profile", req.config.profile ];
-        const cdk : string[] = req.mode === "deploy"
-            ? [ "cdk", "deploy", ...stacks, ...ctx, "--require-approval", "never" ]
-            : [ "cdk", "diff", ...stacks, ...ctx ];
-        if ( !await step( `cdk ${req.mode}`, "npx", cdk, cloud, profileEnv ) )
+        const context : Array<string> = [ "-c", `env=${req.env}`, "--profile", req.config.profile ];
+        const cdkArgs : Array<string> = req.mode === "deploy"
+            ? [ "cdk", "deploy", ...stacks, ...context, "--require-approval", "never" ]
+            : [ "cdk", "diff", ...stacks, ...context ];
+        if ( !await step( `cdk ${req.mode}`, "npx", cdkArgs, cloud, profileEnv ) )
         {
             if ( req.mode === "deploy" ) await record( req, ref, prodTag, "failed" );
             return { ok: false, stage: req.mode };
@@ -369,8 +380,8 @@ export async function deployRun( req : DeployRequest ) : Promise<DeployResult>
     finally
     {
         // 4) always remove the worktree (best-effort)
-        try { git( [ "worktree", "remove", "--force", wt ] ); SAY( `  cleaned up worktree` ); }
-        catch { SAY( `  ⚠ could not remove worktree ${wt} — remove it manually` ); }
+        try { git( [ "worktree", "remove", "--force", worktree ] ); SAY( `  cleaned up worktree` ); }
+        catch { SAY( `  ⚠ could not remove worktree ${worktree} — remove it manually` ); }
         busy = false;
     }
 }
@@ -378,8 +389,8 @@ export async function deployRun( req : DeployRequest ) : Promise<DeployResult>
 /** Does the named approver look like the person running the deploy? (segregation-of-duties guard). */
 function sameActor( approver : string ) : boolean
 {
-    const p : string = approver.trim().toLowerCase();
-    return p.length > 0 && actor().toLowerCase().includes( p );
+    const normalizedApprover : string = approver.trim().toLowerCase();
+    return normalizedApprover.length > 0 && actor().toLowerCase().includes( normalizedApprover );
 }
 
 /**
@@ -388,20 +399,20 @@ function sameActor( approver : string ) : boolean
  */
 async function record( req : DeployRequest, ref : string, tag : string | undefined, result : "success" | "failed" ) : Promise<void>
 {
-    const ids : string[] = listServices().map( ( s ) => s.id );
-    const manifest : Record<string, string> = gitVersions( ref, ids );
+    const serviceIds : Array<string> = listServices().map( ( service ) => service.id );
+    const manifest : Record<string, string> = gitVersions( ref, serviceIds );
     const commit : string = ( () => { try { return git( [ "rev-parse", ref ] ).trim(); } catch { return ""; } } )();
-    const ts : string = new Date().toISOString();
-    const who : string = actor();
+    const timestamp : string = new Date().toISOString();
+    const deployer : string = actor();
     const action : AuditAction = req.emergency ? "hotfix" : ( hasTag( req.ref ) ? "rollback" : "deploy" );
 
     const entry : AuditEntry =
     {
-        ts, actor: who, action, environment: req.env, ref: req.ref, tag, manifest,
+        ts: timestamp, actor: deployer, action, environment: req.env, ref: req.ref, tag, manifest,
         approver: req.approver, ticket: req.ticket, emergency: req.emergency, result, commit,
     };
     const envState : DeployEnvState = result === "success"
-        ? { ref: req.ref, tag, ts, actor: who }
+        ? { ref: req.ref, tag, ts: timestamp, actor: deployer }
         : readState()[ req.env ];   // unchanged pointer on failure
     await recordDeploy( req.env, envState, entry );
 }

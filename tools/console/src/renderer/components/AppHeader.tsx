@@ -42,17 +42,19 @@ export function AppHeader(
 
     // live container metrics (recorded continuously by the singleton) → threshold alert + sound toggle
     const metrics : MetricsSnapshot = useMetrics();
-    const breaches : Breach[] = metrics.breaches;
+    const breaches : Array<Breach> = metrics.breaches;
     const breachTitle : string = breaches.length > 0
-        ? breaches.map( ( b : Breach ) => `${b.name} — ${b.metric} ${b.value.toFixed( 0 )}%` ).join( "\n" )
+        ? breaches.map( ( breach : Breach ) => `${breach.name} — ${breach.metric} ${breach.value.toFixed( 0 )}%` ).join( "\n" )
         : "";
 
+    // chip color tracks the LocalStack lifecycle: green up · grey down · amber transitional
     const color : "success" | "default" | "warning" = localstack.status === "running" ? "success" : localstack.status === "stopped" ? "default" : "warning";
 
-    const run = async ( which : "up" | "down" | "status", fn : () => Promise<LocalStackState> ) : Promise<void> =>
+    // run a LocalStack lifecycle action, flagging the matching button busy until it resolves
+    const run = async ( which : "up" | "down" | "status", action : () => Promise<LocalStackState> ) : Promise<void> =>
     {
         setBusy( which );
-        try { onLocalStack( await fn() ); }
+        try { onLocalStack( await action() ); }
         finally { setBusy( null ); }
     };
 
@@ -62,7 +64,7 @@ export function AppHeader(
                 RumbleUp <Box component="span" sx={{ color: "primary.main" }}>Console</Box>
             </Typography>
 
-            <Tabs value={view} onChange={( _e, v : AppView ) => onView( v )} sx={{ minHeight: 52, "& .MuiTab-root": { minHeight: 52 } }}>
+            <Tabs value={view} onChange={( _event, nextView : AppView ) => onView( nextView )} sx={{ minHeight: 52, "& .MuiTab-root": { minHeight: 52 } }}>
                 <Tab value="develop" icon={<TerminalIcon fontSize="small" />} iconPosition="start" label="Develop" />
                 <Tab value="monitor" icon={<InsightsIcon fontSize="small" />} iconPosition="start" label="Monitor" />
                 <Tab value="repo" icon={<AccountTreeIcon fontSize="small" />} iconPosition="start" label="Repo" />

@@ -56,7 +56,7 @@ export namespace Ports
     export namespace SURVEY       { export const MAIN = 8230; }
 
     // ── assets / links ───────────────────────────────────────────────────────
-    export namespace MEDIA        { export const MAIN = 8240; }
+    export namespace MEDIA        { export const MAIN = 8240; export const BROWSE = 8241; export const STUDIO = 8242; }
     export namespace LINKS        { export const MAIN = 8250; }
 
     // ── insight / ops ────────────────────────────────────────────────────────

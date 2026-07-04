@@ -11,10 +11,13 @@ import { awsErr, cwClient, ecsClient } from "./aws";
 // the donuts + history charts work identically to the LocalStack path.
 //
 
+/** Extract the short cluster name from a full ECS cluster ARN. */
 function clusterName( arn : string ) : string { return arn.split( "/" ).pop() ?? arn; }
 
-function fmtPct( v : number | undefined ) : string | undefined { return v === undefined ? undefined : `${v.toFixed( 2 )}%`; }
+/** Format a 0–100 utilization number as a 2-decimal percent string (undefined passes through). */
+function fmtPct( percent : number | undefined ) : string | undefined { return percent === undefined ? undefined : `${percent.toFixed( 2 )}%`; }
 
+/** Build a single CloudWatch AWS/ECS metric query (per cluster+service, 60s Average) for GetMetricData. */
 function query( id : string, metricName : string, cluster : string, service : string ) : MetricDataQuery
 {
     return {
@@ -34,27 +37,29 @@ function query( id : string, metricName : string, cluster : string, service : st
 
 interface Svc { arn : string; name : string; cluster : string; running : number; desired : number; status : string; }
 
-export async function ecsMetrics() : Promise<{ containers : ContainerInfo[]; error? : string }>
+/** Read every ECS service's latest CPU/memory utilization from CloudWatch, shaped as ContainerInfo. */
+export async function ecsMetrics() : Promise<{ containers : Array<ContainerInfo>; error? : string }>
 {
     try
     {
         const ecs : ReturnType<typeof ecsClient> = ecsClient();
-        const clusters : string[] = ( await ecs.send( new ListClustersCommand( {} ) ).then( ( r ) => r.clusterArns ?? [] ) );
+        const clusters : Array<string> = ( await ecs.send( new ListClustersCommand( {} ) ).then( ( listResult ) => listResult.clusterArns ?? [] ) );
 
-        const services : Svc[] = [];
+        const services : Array<Svc> = [];
         for ( const clusterArn of clusters )
         {
-            const arns : string[] = ( await ecs.send( new ListServicesCommand( { cluster: clusterArn, maxResults: 100 } ) ) ).serviceArns ?? [];
-            const cname : string = clusterName( clusterArn );
-            for ( let i : number = 0; i < arns.length; i += 10 )
+            const serviceArns : Array<string> = ( await ecs.send( new ListServicesCommand( { cluster: clusterArn, maxResults: 100 } ) ) ).serviceArns ?? [];
+            const shortClusterName : string = clusterName( clusterArn );
+            // DescribeServices accepts at most 10 service ARNs per call, so page through in batches of 10
+            for ( let batchStart : number = 0; batchStart < serviceArns.length; batchStart += 10 )
             {
-                const batch : string[] = arns.slice( i, i + 10 );
-                const d : DescribeServicesCommandOutput = await ecs.send( new DescribeServicesCommand( { cluster: clusterArn, services: batch } ) );
-                for ( const s of d.services ?? [] )
-                    if ( s.serviceArn && s.serviceName )
+                const batch : Array<string> = serviceArns.slice( batchStart, batchStart + 10 );
+                const described : DescribeServicesCommandOutput = await ecs.send( new DescribeServicesCommand( { cluster: clusterArn, services: batch } ) );
+                for ( const service of described.services ?? [] )
+                    if ( service.serviceArn && service.serviceName )
                         services.push( {
-                            arn: s.serviceArn, name: s.serviceName, cluster: cname,
-                            running: s.runningCount ?? 0, desired: s.desiredCount ?? 0, status: s.status ?? ""
+                            arn: service.serviceArn, name: service.serviceName, cluster: shortClusterName,
+                            running: service.runningCount ?? 0, desired: service.desiredCount ?? 0, status: service.status ?? ""
                         } );
             }
         }
@@ -62,33 +67,34 @@ export async function ecsMetrics() : Promise<{ containers : ContainerInfo[]; err
         if ( services.length === 0 ) return { containers: [] };
 
         // one CloudWatch call for every service's CPU + memory (latest datapoint)
-        const queries : MetricDataQuery[] = [];
-        services.forEach( ( s, i ) =>
+        const queries : Array<MetricDataQuery> = [];
+        services.forEach( ( service, index ) =>
         {
-            queries.push( query( `cpu${i}`, "CPUUtilization", s.cluster, s.name ) );
-            queries.push( query( `mem${i}`, "MemoryUtilization", s.cluster, s.name ) );
+            queries.push( query( `cpu${index}`, "CPUUtilization", service.cluster, service.name ) );
+            queries.push( query( `mem${index}`, "MemoryUtilization", service.cluster, service.name ) );
         } );
 
         const now : number = Date.now();
-        const res : GetMetricDataCommandOutput = await cwClient().send( new GetMetricDataCommand( {
-            StartTime         : new Date( now - 15 * 60 * 1000 ),
+        const metricData : GetMetricDataCommandOutput = await cwClient().send( new GetMetricDataCommand( {
+            StartTime         : new Date( now - 15 * 60 * 1000 ),   // 15-minute window so a recent datapoint exists
             EndTime           : new Date( now ),
             MetricDataQueries : queries,
             ScanBy            : "TimestampDescending"   // Values[0] = most recent
         } ) );
 
+        // pull the most-recent datapoint for a given query id (cpuN / memN)
         const latest = ( id : string ) : number | undefined =>
-            res.MetricDataResults?.find( ( r ) => r.Id === id )?.Values?.[ 0 ];
+            metricData.MetricDataResults?.find( ( result ) => result.Id === id )?.Values?.[ 0 ];
 
-        const containers : ContainerInfo[] = services.map( ( s, i ) => ( {
-            id         : s.arn,
-            name       : s.name,
-            image      : s.cluster,
+        const containers : Array<ContainerInfo> = services.map( ( service, index ) => ( {
+            id         : service.arn,
+            name       : service.name,
+            image      : service.cluster,
             state      : "running",
-            status     : `${s.running}/${s.desired} tasks${s.status ? ` · ${s.status}` : ""}`,
+            status     : `${service.running}/${service.desired} tasks${service.status ? ` · ${service.status}` : ""}`,
             kind       : "ecs-task",
-            cpuPercent : fmtPct( latest( `cpu${i}` ) ),
-            memPercent : fmtPct( latest( `mem${i}` ) ),
+            cpuPercent : fmtPct( latest( `cpu${index}` ) ),
+            memPercent : fmtPct( latest( `mem${index}` ) ),
             memUsage   : undefined   // CloudWatch reports % utilization, not bytes
         } ) );
 

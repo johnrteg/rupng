@@ -46,8 +46,9 @@ import { EmailUtils } from "@repo/common";
 //
 import KeyOutlinedIcon      from '@mui/icons-material/KeyOutlined';
 import { startAuthentication, type PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/browser";
-import { PostLogin, PostLoginPasskeyOptions, PostLoginPasskeyVerify } from "@repo/api";
+import { PostLogin, PostLoginChallenge, PostLoginPasskeyOptions, PostLoginPasskeyVerify, Login as LoginApi, ContactMethod } from "@repo/api";
 import { RestfulService } from "@repo/endpoint";
+import TextInput           from "@widgets/core/TextInput";
 
 //
 import BrowserUtils         from "@utils/BrowserUtils";
@@ -62,11 +63,18 @@ export function Login( props : Login.Props ) : JSX.Element
 
     // identifier method + credentials, advanced one step at a time (identifier → password → challenge)
     const [step,setStep]            = React.useState< Login.Step >( Login.Step.IDENTIFIER );
-    const [method,setMethod]        = React.useState< Login.Method >( Login.Method.EMAIL );
+    const [method,setMethod]        = React.useState< ContactMethod >( ContactMethod.EMAIL );
     const [email,setEmail]          = React.useState< string >( "" );
     const [phone,setPhone]          = React.useState< string >( "" );
     const [password,setPassword]    = React.useState< string >( "" );
     const [error,setError]          = React.useState< string >( "" );
+
+    // MFA (authenticator app) step — set when sign-in returns a TOTP challenge
+    const [challengeToken,setChallengeToken] = React.useState< string >( "" );
+    const [mfaCode,setMfaCode]               = React.useState< string >( "" );
+
+    // passkey ceremony in flight — guards against a second click aborting the first (AbortError)
+    const [passkeyBusy,setPasskeyBusy]       = React.useState< boolean >( false );
 
     const [languageChoices,setLanugaeChoices]          = React.useState< Array<SelectInput.Choice> >( [] );
 
@@ -98,12 +106,12 @@ export function Login( props : Login.Props ) : JSX.Element
 
         if( EmailUtils.isValid( account ) )
         {
-            setMethod( Login.Method.EMAIL );
+            setMethod( ContactMethod.EMAIL );
             setEmail( account );
         }
         else if( appmodel.ui.locale.phoneValid( account ) )
         {
-            setMethod( Login.Method.PHONE );
+            setMethod( ContactMethod.PHONE );
             setPhone( account );
         }
         // else: not a recognizable email or phone → fill nothing
@@ -113,14 +121,21 @@ export function Login( props : Login.Props ) : JSX.Element
     async function onLogin() : Promise<void>
     {
         setError( "" );
-        const account : string = method === Login.Method.EMAIL ? email : phone;
+        const account : string = method === ContactMethod.EMAIL ? email : phone;
         try
         {
             const reply : RestfulService.Reply<PostLogin.Response> = await appmodel.server.fetch( new PostLogin( { account, password } ) );
             if( reply.ok && reply.data?.complete && reply.data.sessionToken )
             {
-                appmodel.setSession( reply.data.sessionToken );
+                appmodel.setSession( reply.data.sessionToken, reply.data.refreshToken );
                 appmodel.goto( AppRouter.Route.DASHBOARD );
+            }
+            else if( reply.ok && reply.data?.challenge === LoginApi.ChallengeType.TOTP && reply.data.challengeToken )
+            {
+                // authenticator-app gate: password was correct — now ask for the 6-digit code
+                setChallengeToken( reply.data.challengeToken );
+                setMfaCode( "" );
+                setStep( Login.Step.CHALLENGE );
             }
             else
             {
@@ -136,11 +151,11 @@ export function Login( props : Login.Props ) : JSX.Element
 
     // "Continue" is enabled only when the email / phone is actually VALID (not merely non-empty).
     // `identifierDisplay` is the human-readable form shown on the password step (phone is formatted).
-    const identifierValid : boolean = method === Login.Method.EMAIL ? EmailUtils.isValid( email ) : appmodel.ui.locale.phoneValid( phone );
+    const identifierValid : boolean = method === ContactMethod.EMAIL ? EmailUtils.isValid( email ) : appmodel.ui.locale.phoneValid( phone );
     const passwordValid : boolean   = password.trim().length > 0;
 
     // TelephoneInput emits E.164 once valid; the locale pretty-prints it (country auto-detected).
-    const identifierDisplay : string = method === Login.Method.EMAIL ? email : appmodel.ui.locale.phone( phone );
+    const identifierDisplay : string = method === ContactMethod.EMAIL ? email : appmodel.ui.locale.phone( phone );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // step 1 "Continue" → reveal the password step (enabled once an email/phone is entered)
@@ -172,12 +187,52 @@ export function Login( props : Login.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // MFA step — answer the authenticator-app (TOTP) challenge with the 6-digit code → tokens
+    const mfaValid : boolean = mfaCode.trim().length === 6;
+
+    async function onContinueChallenge() : Promise<void>
+    {
+        if( !mfaValid ) return;
+        setError( "" );
+        try
+        {
+            const reply : RestfulService.Reply<PostLoginChallenge.Response> = await appmodel.server.fetch(
+                new PostLoginChallenge( { challengeToken, type: LoginApi.ChallengeType.TOTP, value: mfaCode.trim() } ) );
+            if( reply.ok && reply.data?.complete && reply.data.sessionToken )
+            {
+                appmodel.setSession( reply.data.sessionToken );
+                appmodel.goto( AppRouter.Route.DASHBOARD );
+            }
+            else
+            {
+                setError( "That code didn't match. Check your authenticator app and try again." );
+            }
+        }
+        catch( err )
+        {
+            appmodel.log.warn( "login.mfa", err );
+            setError( "Sign-in failed. Please try again." );
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // "Back" from the MFA step → return to the password step (drops the challenge)
+    function onCancelChallenge() : void
+    {
+        setStep( Login.Step.PASSWORD );
+        setChallengeToken( "" );
+        setMfaCode( "" );
+        setError( "" );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // real <form> submit (the active step's Continue / Enter key) — preventDefault keeps it SPA (no reload)
     function onSubmit( event : React.FormEvent<HTMLFormElement> ) : void
     {
         event.preventDefault();
         if( step === Login.Step.IDENTIFIER )      onContinueIdentifier();
         else if( step === Login.Step.PASSWORD )   void onContinuePassword();
+        else if( step === Login.Step.CHALLENGE )  void onContinueChallenge();
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -200,6 +255,8 @@ export function Login( props : Login.Props ) : JSX.Element
     // then route to the dashboard. Discoverable credential: the authenticator offers the right passkey.
     async function onPasskey() : Promise<void>
     {
+        if( passkeyBusy ) return;   // re-entry guard: a second ceremony aborts the first (AbortError)
+        setPasskeyBusy( true );
         setError( "" );
         try
         {
@@ -223,8 +280,17 @@ export function Login( props : Login.Props ) : JSX.Element
         }
         catch( err )
         {
-            appmodel.log.warn( "passkey", err );   // user cancelled the prompt, no passkey, etc.
-            setError( "Passkey sign-in was cancelled or unavailable." );
+            appmodel.log.warn( "passkey", err );
+            const name : string = ( err as { name? : string } )?.name ?? "";
+            // AbortError = the ceremony was interrupted (a second attempt started before the first finished);
+            // NotAllowedError = the user dismissed the prompt or it timed out; anything else = unavailable.
+            setError( name === "AbortError"     ? "Passkey prompt was interrupted — please try again."
+                    : name === "NotAllowedError" ? "Passkey sign-in was cancelled or timed out."
+                    :                              "Passkey sign-in was cancelled or unavailable." );
+        }
+        finally
+        {
+            setPasskeyBusy( false );
         }
     }
 
@@ -312,23 +378,25 @@ export function Login( props : Login.Props ) : JSX.Element
                                                    fullWidth
                                                    size="small"
                                                    value={ method }
-                                                   onChange={ ( _e : React.MouseEvent, value : Login.Method | null ) => { if( value ) setMethod( value ); } }>
-                                    <ToggleButton value={ Login.Method.EMAIL }>{ appmodel.label( "page.login.method.email" ) }</ToggleButton>
-                                    <ToggleButton value={ Login.Method.PHONE }>{ appmodel.label( "page.login.method.phone" ) }</ToggleButton>
+                                                   onChange={ ( _e : React.MouseEvent, value : ContactMethod | null ) => { if( value ) setMethod( value ); } }>
+                                    <ToggleButton value={ ContactMethod.EMAIL }>{ appmodel.label( "page.login.method.email" ) }</ToggleButton>
+                                    <ToggleButton value={ ContactMethod.PHONE }>{ appmodel.label( "page.login.method.phone" ) }</ToggleButton>
                                 </ToggleButtonGroup>
 
-                                <Show show={ method === Login.Method.EMAIL }>
+                                <Show show={ method === ContactMethod.EMAIL }>
                                     <EmailInput id="login-email"
                                                 label={ appmodel.label( "page.login.method.email" ) }
                                                 value={ email }
+                                                focus
                                                 autoComplete="username"
                                                 onChange={ setEmail } />
                                 </Show>
-                                <Show show={ method === Login.Method.PHONE }>
+                                <Show show={ method === ContactMethod.PHONE }>
                                     <TelephoneInput id="login-phone"
                                                     label={ appmodel.label( "page.login.method.phone" ) }
                                                     value={ phone }
                                                     fullWidth
+                                                    autoFocus
                                                     autoComplete="username"
                                                     onChange={ setPhone } />
                                 </Show>
@@ -344,31 +412,58 @@ export function Login( props : Login.Props ) : JSX.Element
                                     <TextLabel value={ identifierDisplay } />
                                 </Box>
 
+                                {/* passwordless-ish: offer a passkey first (discoverable credential — the
+                                    authenticator picks the right one; no server-side "has a passkey?" lookup,
+                                    so it stays enumeration-neutral). Password remains the fallback below. */}
+                                <Button fullWidth variant="outlined" startIcon={ <KeyOutlinedIcon /> } disabled={ passkeyBusy } onClick={ () => void onPasskey() }>
+                                    Use a passkey
+                                </Button>
+
+                                <Divider>or enter your password</Divider>
+
                                 <PasswordInput id="login-password"
                                                label={ appmodel.label( "page.login.password" ) }
                                                value={ password }
+                                               focus
                                                autoComplete="current-password"
                                                onChange={ setPassword } />
 
                                 <Button type="submit" variant="contained" fullWidth disabled={ !passwordValid }>Continue</Button>
                             </Show>
 
+                            {/* STEP 3 — MFA (authenticator app): the password was correct; enter the 6-digit code */}
+                            <Show show={ step === Login.Step.CHALLENGE }>
+                                <Box sx={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", minHeight: 40 }}>
+                                    <Button size="small" color="inherit" startIcon={ <ArrowBackIcon fontSize="small" /> } onClick={ onCancelChallenge } sx={{ position: "absolute", left: 0 }}>Back</Button>
+                                    <TextLabel value={ "Enter the code from your authenticator app" } />
+                                </Box>
+
+                                <TextInput id="login-mfa-code"
+                                           label={ "6-digit code" }
+                                           value={ mfaCode }
+                                           focus
+                                           autoComplete="one-time-code"
+                                           maxLength={ 6 }
+                                           onChange={ setMfaCode } />
+
+                                <Button type="submit" variant="contained" fullWidth disabled={ !mfaValid }>Verify</Button>
+                            </Show>
+
                         </Stack>
                     </Box>
 
-                    {/* Register (left) + "Forgot Password" (right, on the password step only — there's no
-                        "forgot login" flow: sign-in is by email/phone). (width:auto overrides LinkButton's fullWidth.) */}
-                    <Stack direction="row" spacing={ 1 } sx={{ justifyContent: "space-between", alignItems: "center" }}>
-                        <LinkButton label="Register" onClick={ onRegister } sx={{ width: "auto" }} />
-                        <Show show={ step === Login.Step.PASSWORD }>
+                    {/* "Forgot Password" (password step only — there's no "forgot login" flow: sign-in is by
+                        email/phone). Register moved below the SSO section. (width:auto overrides fullWidth.) */}
+                    <Show show={ step === Login.Step.PASSWORD }>
+                        <Stack direction="row" sx={{ justifyContent: "flex-end", alignItems: "center" }}>
                             <LinkButton label="Forgot Password" onClick={ onForgotPassword } sx={{ width: "auto" }} />
-                        </Show>
-                    </Stack>
+                        </Stack>
+                    </Show>
 
                     {/* SSO — only on the identifier step (hidden once you're entering a password).
                         TODO: an SSO-only account shows only this (resolve via app-bootstrap / account config). */}
                     <Show show={ step === Login.Step.IDENTIFIER }>
-                        <Button fullWidth variant="outlined" startIcon={ <KeyOutlinedIcon /> } onClick={ () => void onPasskey() }>
+                        <Button fullWidth variant="outlined" startIcon={ <KeyOutlinedIcon /> } disabled={ passkeyBusy } onClick={ () => void onPasskey() }>
                             Sign in with a passkey
                         </Button>
 
@@ -393,6 +488,12 @@ export function Login( props : Login.Props ) : JSX.Element
                             </Button>
                         </Stack>
                     </Show>
+
+                    {/* Register — below the SSO section, given prominence for new users */}
+                    <Stack direction="row" spacing={ 0.75 } sx={{ justifyContent: "center", alignItems: "center" }}>
+                        <TextLabel value="New here?" />
+                        <Button variant="text" onClick={ onRegister } sx={{ fontWeight: 700, textTransform: "none" }}>Register Here</Button>
+                    </Stack>
 
                     {/* theme + language */}
                     <Divider />
@@ -439,12 +540,6 @@ export namespace Login
         IDENTIFIER = "identifier",   // choose email/phone + enter it → Continue
         PASSWORD   = "password",     // enter the password → Continue
         CHALLENGE  = "challenge",    // future: emailed/texted code, MFA app, etc. (not yet implemented)
-    }
-
-    export enum Method
-    {
-        EMAIL = "email",
-        PHONE = "phone",
     }
 
     // social / consumer SSO providers (enterprise SAML/OIDC via the org IdP is handled separately)
