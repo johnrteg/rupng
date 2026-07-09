@@ -20,6 +20,16 @@ export class GetVersion extends RestfulEndpoint<GetVersion.Query, undefined, Get
     public readonly timeout  : number | undefined = undefined;        // default
     public readonly audience : RestfulEndpoint.Audience = RestfulEndpoint.Audience.PUBLIC;   // edge-reachable + published
 
+    // published-docs metadata (summary/tags feed the OpenAPI operation) — this endpoint is the reference
+    // example of a fully self-documented PUBLIC contract: docs + a getResponseSchema() with per-field docs.
+    public readonly docs : RestfulEndpoint.Docs =
+    {
+        operationId: "getVersion",
+        summary:     "Get service version",
+        description: "Returns the running service's canonical id and its deployed version. Unauthenticated.",
+        tags:        [ "Meta" ],
+    };
+
     ////////////////////////////////////////////////////////////////////////////////////////////
     constructor( query? : GetVersion.Query )
     {
@@ -42,6 +52,20 @@ export class GetVersion extends RestfulEndpoint<GetVersion.Query, undefined, Get
     public getBodySchema(): RestfulEndpoint.Schema | null
     {
         return null;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // success-response shape (JSON Schema == OpenAPI 3.1); per-field `description`/`examples` render in the docs
+    public getResponseSchema(): RestfulEndpoint.Schema | null
+    {
+        return {
+            type: "object",
+            required: [ "service", "version" ],
+            properties: {
+                service: { type: "string", description: "Canonical service id.",           examples: [ "app" ] },
+                version: { type: "string", description: "Deployed package.json version.",   examples: [ "1.4.2" ] },
+            },
+        };
     }
 }
 

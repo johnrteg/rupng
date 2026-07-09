@@ -5,7 +5,7 @@ import { JSX } from "react";
 
 import { Box, Divider, Stack, Typography } from "@mui/material";
 
-import { Media } from '@repo/api';
+import { Media, MediaConfig } from '@repo/api';
 
 import DialogWindow from '@widgets/core/DialogWindow';
 
@@ -49,6 +49,18 @@ export function ItemInfoDialog( props : ItemInfoDialog.Props ) : JSX.Element
     const audio : Media.AudioMeta | undefined = item.meta?.audio;
     const document : Media.DocumentMeta | undefined = item.meta?.document;
     const derivation : Media.Derivation | undefined = item.derivation;
+    // the malware scan is on the envelope's ORIGINAL bytes — surface it on the original item's info
+    const scan : Media.ScanResult | undefined = item.usage === Media.Usage.ORIGINAL ? props.asset.scan : undefined;
+
+    // a human outcome label for a scan result (not-scanned / advanced-unscanned / threat / clean)
+    function scanOutcome( result : Media.ScanResult ) : string
+    {
+        if( !result.clean ) return "Threat detected";
+        // the noop / "none" provider is a pass-through — the file was NOT actually inspected
+        if( result.provider === MediaConfig.ScanProvider.NONE || result.engine === "noop" ) return "Not scanned (scanning disabled)";
+        if( result.failOpen ) return "Advanced UNSCANNED (engine unavailable)";
+        return "Clean — no threat found";
+    }
 
     return  <DialogWindow id="media-item-info"
                           title={ `Item — ${ itemLabel() }` }
@@ -152,7 +164,21 @@ export function ItemInfoDialog( props : ItemInfoDialog.Props ) : JSX.Element
                         </>
                     }
 
-                    { !image && !video && !audio && !document && !derivation &&
+                    {/* ── security scan (the original file's malware-scan result) ──────────────── */}
+                    { scan &&
+                        <>
+                            <Divider textAlign="left"><Typography variant="caption" sx={{ color: "text.secondary" }}>{"Security scan"}</Typography></Divider>
+                            <Box>
+                                { row( "Result", scanOutcome( scan ) ) }
+                                { row( "Threat", scan.threat ) }
+                                { row( "Provider", scan.provider ) }
+                                { row( "Engine", scan.engine ) }
+                                { row( "Scanned", when( scan.scannedAt ) ) }
+                            </Box>
+                        </>
+                    }
+
+                    { !image && !video && !audio && !document && !derivation && !scan &&
                         <Typography variant="body2" sx={{ color: "text.secondary" }}>{"No probed metadata for this item yet."}</Typography> }
 
                 </Stack>

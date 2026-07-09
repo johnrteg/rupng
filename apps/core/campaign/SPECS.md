@@ -68,7 +68,20 @@ What Campaign **delegates** (calls out to, does not implement):
 
 # Core concepts
 
-* **Campaign** — the top-level definition: name, objective, channels, schedule, owner.
+* **Campaign** — the top-level definition: name, objective, **selected channels**, owner. A campaign **selects
+  `1..N` channels** and is the umbrella all channels, strategies, and plans belong to.
+* **Channel** — one delivery medium selected on the campaign: **Email | Texting | Print | Voice** (extensible).
+  A campaign has **`1..N` channels**, each independently configured (its own content variants, sending
+  number/from-address, strategy, and plans). A channel is enabled/disabled per campaign.
+* **Strategy** — the **per-channel plan of attack**: the channel's *intent* — cadence philosophy (blast vs
+  drip), success metric, audience emphasis, budget slice, and the ordering/relationship of its plans. **Exactly
+  one strategy per channel**; every plan on that channel **feeds up to** (executes toward) its strategy. The
+  strategy is the "why/how" for a channel; the plans are the "when".
+* **Plan** — a **scheduled unit of work within a channel** ("send an email Tuesday", "and another Friday").
+  A channel has **`1..N` plans**; each plan carries its own **send window / schedule** (one-shot or per-recipient
+  timezone), the **content variant(s)** it sends, and its **audience slice** (defaults to the channel's audience).
+  Plans are **schedule-based** — they sequence a channel's sends over time; all of a channel's plans **roll up
+  to that channel's strategy**, and all channels roll up to the campaign.
 * **Variant** — a message version. Content is addressed by **channel × language/locale × A-B variant**: each
   **channel** (SMS/MMS/Email) has its own content, **localized** per the account's languages, with optional
   **A/B** variants *within* a language.
@@ -79,6 +92,29 @@ What Campaign **delegates** (calls out to, does not implement):
 * **Run** — one execution of a campaign against its audience snapshot; tracks
   per-recipient/per-channel send state, retries, and outcomes.
 * **Template** — a reusable, saved campaign definition (no audience/run).
+
+**The hierarchy — `Campaign → Channel (Strategy) → Plan`.** A campaign fans out to the channels it selects;
+each channel owns exactly one strategy and one-or-more schedule-based plans that execute toward it:
+
+```
+Campaign  (name · objective · audience · budget cap · lifecycle)
+   │  selects 1..N channels
+   ├── Channel: Email     ── Strategy (drip · goal=clicks · budget slice)
+   │                          ├── Plan "Welcome"   → send Tue 9am (local)   · variant A/B
+   │                          └── Plan "Reminder"  → send Fri 9am (local)   · variant A
+   ├── Channel: Texting   ── Strategy (blast · goal=replies)
+   │                          └── Plan "Launch SMS" → send now
+   ├── Channel: Print      ── Strategy (…)  ── Plan(s) …
+   └── Channel: Voice      ── Strategy (…)  ── Plan(s) …
+```
+
+* **`1 Campaign : N Channels`**, **`1 Channel : 1 Strategy`**, **`1 Channel : N Plans`**. Plans feed up to their
+  channel's strategy; strategies (via their channels) feed up to the campaign.
+* A **run** executes across the campaign's channels honoring each plan's schedule — the strategy governs
+  *how* a channel's plans relate (order, split, pacing intent); the plans govern *when* each send fires.
+* **Budget, approvals, audience, and lifecycle stay campaign-level** (a channel/plan doesn't get its own
+  approval workflow or budget authority) — the strategy may declare a **budget slice** *within* the campaign cap,
+  never a separate cap.
 
 > Naming: this user-facing **Campaign** is **not** the 10DLC/TCR "campaign"
 > (a registered messaging use-case under a Brand). The registered object is referred
@@ -156,7 +192,7 @@ Application
 # AWS Services and Other Dependencies
 
 **AWS services**
-* **DynamoDB** — campaigns, versions, runs, approvals, audit.
+* **DynamoDB** — campaigns (with their **channels → strategies → plans** hierarchy), versions, runs, approvals, audit.
 * **S3** — the sent-content record (keyed by campaign + contact + message).
 * **EventBridge** — scheduled launches.
 * **SQS** — send dispatch (fair-shared by dispatch).
@@ -202,10 +238,19 @@ Application
   respecting per-channel size limits (SMS, MMS, email attachment).
 * **Test send to self** and **preview** per channel before submit.
 
-## Channels & sending number
-* Channels: **Email | Texting** (extensible).
-* Outgoing number (LC | SC | TF) registered to the account, or a from-address
-  (incl. no-reply) for email.
+## Channels, strategies & plans
+* A campaign **selects `1..N` channels**: **Email | Texting | Print | Voice** (extensible — each maps to a
+  channel-owning service: [email](../email/SPECS.md) · [texting](../texting/SPECS.md) ·
+  [print](../print/SPECS.md) · voice). A channel is added/removed on the campaign and configured independently.
+* **One strategy per channel** — the channel's cadence philosophy (blast vs drip), success metric, audience
+  emphasis, and **budget slice** *within* the campaign cap; it governs how that channel's plans relate (order /
+  split / pacing intent). Not a separate approval or budget authority — those stay campaign-level.
+* **`1..N` plans per channel** — each a **scheduled send unit** ("email Tuesday", "reminder Friday"): its own
+  **send window** (now / future / per-recipient-timezone), the **content variant(s)** it sends, and an optional
+  **audience slice** (defaults to the channel's audience). Plans **sequence a channel's sends over time** and all
+  **roll up to that channel's strategy**. A plan is the smallest schedulable thing a run acts on.
+* **Sending number / from-address is per channel**: an outgoing number (LC | SC | TF) registered to the account
+  for texting/voice, or a from-address (incl. no-reply) for email.
 * The number must map to an **approved 10DLC registration** (via tcr) for the
   campaign's use case, or the send is rejected/carrier-filtered.
 * High-volume sends may use a **number pool / rotation** (delegated to dispatch).
@@ -295,6 +340,12 @@ Application
   * **Composes with the account ceiling** — a send must pass **both** the campaign cap **and** the account
     prepaid balance / `max_out` (the `canSend` balance gate, [texting `texting-11.5`](../texting/SPECS.md)); the
     campaign cap is a **per-campaign sub-limit within** the account balance, never a bypass of it.
+  * **Wallet (the funds behind the cap).** The cap policy lives here; the **money** is an account-owned
+    **campaign wallet** — a reserved sub-balance carved out of the account prepaid balance
+    ([account `account-10.13`](../account/specs/SPECS.md)). Allocate funds into the wallet, sends **reserve
+    then commit** against it, top-up to raise it, and the **unspent remainder is released** back to the account
+    balance on completion/archival. Hard-cap reached ⇔ wallet exhausted → hard-stop. Campaign owns the *cap*;
+    account owns the *wallet*.
 * **Cross-channel + follow-on engagement.** The cap is **campaign config** and spans **all channels** in the
   campaign **and follow-on engagement** — a **link click / QR scan** that triggers a **follow-on action / send**
   counts toward the cap. Campaign **owns** the cap; the channels + **[links](../links/SPECS.md)** (`links-10.3`)
@@ -495,6 +546,18 @@ view is **also** gated by the per-resource **collaborator role** (capped by the 
 | GET, PUT | `/campaign/{id}/audience` | Get/set segment ref + sub-segment filters, holdout, test subset | USER | Audience & segmentation |
 | GET | `/campaign/{id}/reachability` | Reachability estimate (valid address + consent + **supported language**; skipped-by-language breakout) | USER | Audience & segmentation |
 | GET | `/campaign/{id}/cost-estimate` | Cost preview (recipients × channels × rate, incl. SMS segments) | USER | Cost, limits & entitlements |
+
+### Channels, strategies & plans
+| Method | URI | Purpose | Access | Spec § |
+|---|---|---|---|---|
+| GET | `/campaign/{id}/channels` | List the campaign's selected channels (+ their strategy/plan summary) | USER | Channels, strategies & plans |
+| POST | `/campaign/{id}/channels` | Add a channel (Email/Texting/Print/Voice) to the campaign | USER | Channels, strategies & plans |
+| DELETE | `/campaign/{id}/channels/{channel}` | Remove a channel from the campaign | USER | Channels, strategies & plans |
+| GET, PUT | `/campaign/{id}/channels/{channel}/strategy` | Get/set the channel's **strategy** (cadence · goal · budget slice · plan ordering) | USER | Channels, strategies & plans |
+| GET | `/campaign/{id}/channels/{channel}/plans` | List the channel's **plans** | USER | Channels, strategies & plans |
+| POST | `/campaign/{id}/channels/{channel}/plans` | Add a **plan** (schedule + variant(s) + audience slice) to the channel | USER | Channels, strategies & plans |
+| PATCH | `/campaign/{id}/channels/{channel}/plans/{planId}` | Edit a plan (reschedule / retarget / recontent) | USER | Channels, strategies & plans |
+| DELETE | `/campaign/{id}/channels/{channel}/plans/{planId}` | Remove a plan | USER | Channels, strategies & plans |
 
 ### Collaboration (Google-Docs model) & comments
 | Method | URI | Purpose | Access | Spec § |

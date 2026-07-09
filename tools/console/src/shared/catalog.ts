@@ -48,6 +48,7 @@ export const CATALOG : Record<string, CatalogEntry> =
     search       : { label: "Search",       icon: "Search",           blurb: "Search / indexing",                       roles: { main: 8300 } },
     realtime     : { label: "Realtime",     icon: "Bolt",             blurb: "Realtime push / WebSocket",               roles: { main: 8310 } },
     collab       : { label: "Collab",       icon: "Groups",           blurb: "Collaboration",                           roles: { main: 8320 } },
+    "fake-email" : { label: "Fake Email",   icon: "Science",          blurb: "DEV-ONLY simulated email provider (fake ESP)", roles: { main: 9100 } },
     web          : { label: "Web",          icon: "Language",         blurb: "React SPA (Vite dev server)",             roles: { main: 5173 }, frontend: true }
 };
 
@@ -60,5 +61,6 @@ export const CATALOG_ORDER : Array<string> =
     "texting", "email", "voice", "print", "social", "survey",
     "links",
     "analytics", "report", "monitor", "audit", "search",
-    "realtime", "collab"
+    "realtime", "collab",
+    "fake-email"
 ];

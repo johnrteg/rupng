@@ -10,6 +10,8 @@ import { OpenAiAdapter } from "./adapters/OpenAiAdapter";
 import { FishAdapter } from "./adapters/FishAdapter";
 import { ElevenLabsAdapter } from "./adapters/ElevenLabsAdapter";
 import { MagnificAdapter } from "./adapters/MagnificAdapter";
+import { GeminiAdapter } from "./adapters/GeminiAdapter";
+import { AwsTranscribeAdapter } from "./adapters/AwsTranscribeAdapter";
 import { KmsKeyProvider, SecretsKeyProvider } from "./KeyProvider";
 import type { KeyProvider } from "./KeyProvider";
 
@@ -26,6 +28,8 @@ export class AiFactory
         [ Ai.Provider.FISH,       ( options ) => new FishAdapter( options ) ],
         [ Ai.Provider.ELEVENLABS, ( options ) => new ElevenLabsAdapter( options ) ],
         [ Ai.Provider.MAGNIFIC,   ( options ) => new MagnificAdapter( options ) ],
+        [ Ai.Provider.GEMINI,     ( options ) => new GeminiAdapter( options ) ],
+        [ Ai.Provider.AWS_TRANSCRIBE, ( options ) => new AwsTranscribeAdapter( options ) ],
     ] );
 
     /** Global defaults applied to every {@link AiFactory.create} call (set via {@link AiFactory.configure}). */
@@ -72,12 +76,14 @@ export class AiFactory
         const keyRef : string | undefined = opts.keyRef ?? AiFactory.config.keyRef?.( provider );
 
         return make( {
-            model       : opts.model,
+            model            : opts.model,
             keyRef,
             keyProvider,
-            region      : opts.region,
-            maxAttempts : opts.maxAttempts,
-            onUsage     : opts.onUsage ?? AiFactory.config.onUsage,
+            region           : opts.region,
+            maxAttempts      : opts.maxAttempts,
+            videoBucket      : opts.videoBucket,        // Bedrock Nova Reel async output bucket
+            transcribeBucket : opts.transcribeBucket,   // Amazon Transcribe audio staging bucket
+            onUsage          : opts.onUsage ?? AiFactory.config.onUsage,
         } );
     }
 

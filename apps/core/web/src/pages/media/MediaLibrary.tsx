@@ -5,6 +5,7 @@ import { JSX } from "react";
 
 import { Box, Button, Card, CardContent, CardHeader, Chip, CircularProgress, Divider, ImageList, Stack, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from "@mui/material";
 import RefreshOutlinedIcon        from '@mui/icons-material/RefreshOutlined';
+import SecurityOutlinedIcon       from '@mui/icons-material/SecurityOutlined';
 import CloudUploadOutlinedIcon    from '@mui/icons-material/CloudUploadOutlined';
 import VisibilityOutlinedIcon     from '@mui/icons-material/VisibilityOutlined';
 import EditOutlinedIcon           from '@mui/icons-material/EditOutlined';
@@ -33,7 +34,8 @@ import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutl
 import HistoryOutlinedIcon      from '@mui/icons-material/HistoryOutlined';
 
 import { Access } from '@repo/system';
-import { Media, GetAssets, DeleteAsset, PostAssetRescan, PostAssetDuplicate, PostAssetPoster, PostAssetVariants, PostAssetTranscribe, GetMediaUrl, PostAssetArchive } from '@repo/api';
+import { Media, GetAssets, DeleteAsset, PostAssetRescan, PostAssetScan, PostAssetDuplicate, PostAssetPoster, PostAssetVariants, PostAssetTranscribe, PostAssetExtractAudio, GetMediaUrl, PostAssetArchive, Paging, GetCampaigns, Campaign } from '@repo/api';
+import { NetworkUtils } from '@repo/common';
 import { RestfulService } from '@repo/endpoint';
 import BrowserUtils from '@utils/BrowserUtils';
 
@@ -60,18 +62,19 @@ import ItemInfoDialog          from '@pages/media/dialogs/ItemInfoDialog';
 import CopyAssetDialog         from '@pages/media/dialogs/CopyAssetDialog';
 import CaptionEditorDialog     from '@pages/media/dialogs/CaptionEditorDialog';
 import DensityDialog           from '@pages/media/dialogs/DensityDialog';
+import HelpButton from "../../widgets/core/HelpButton";
 
 // row-action ids (referenced by symbol, not retyped literals)
-enum AssetAction { PREVIEW = "preview", OPEN = "open", INFO = "info", EDIT = "edit", VARIANTS = "variants", REFRESH_VARIANTS = "refresh_variants", DENSITY = "density", POSTER = "poster", COMPRESS = "compress", TRANSCRIBE = "transcribe", RESCAN = "rescan", COPY = "copy", CLONE_VOICE = "clone_voice", DOWNLOAD = "download", DOWNLOAD_ZIP = "download_zip", DELETE = "delete", MORE = "more" }
+enum AssetAction { PREVIEW = "preview", OPEN = "open", INFO = "info", EDIT = "edit", VARIANTS = "variants", REFRESH_VARIANTS = "refresh_variants", DENSITY = "density", POSTER = "poster", COMPRESS = "compress", TRANSCRIBE = "transcribe", EXTRACT_AUDIO = "extract_audio", RESCAN = "rescan", SCAN = "scan", COPY = "copy", CLONE_VOICE = "clone_voice", DOWNLOAD = "download", DOWNLOAD_ZIP = "download_zip", DELETE = "delete", MORE = "more" }
 
 // the four library view modes: the existing table + three image-grid sizes
-type ViewMode = "table" | "small" | "medium" | "large";
+enum ViewMode { TABLE = "table", SMALL = "small", MEDIUM = "medium", LARGE = "large" }
 // per-grid-size layout: columns across + thumbnail height (px)
-const GRID_SIZE : Record<Exclude<ViewMode, "table">, { cols : number; img : number }> =
+const GRID_SIZE : Record<Exclude<ViewMode, ViewMode.TABLE>, { cols : number; img : number }> =
 {
-    small:  { cols: 6, img: 110 },
-    medium: { cols: 4, img: 170 },
-    large:  { cols: 3, img: 240 },
+    [ ViewMode.SMALL ]:  { cols: 6, img: 110 },
+    [ ViewMode.MEDIUM ]: { cols: 4, img: 170 },
+    [ ViewMode.LARGE ]:  { cols: 3, img: 240 },
 };
 const GRID_BAR_HEIGHT : number = 54;   // room for the title bar below each image (name + "type · size · status")
 
@@ -118,6 +121,7 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
     const meId : string = appmodel.auth.user?.id ?? "";
 
     const [assets,setAssets]   = React.useState< Array<Media.Asset> >( [] );
+    const [page,setPage]       = React.useState< Paging.Page | null >( null );
     const [loading,setLoading] = React.useState< boolean >( true );
     const [snack,setSnack]     = React.useState< { message : string; severity : SnackAlert.Severity } | null >( null );
     const [confirm,setConfirm] = React.useState< MediaLibrary.Confirm | null >( null );
@@ -127,7 +131,9 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
     const [kind,setKind]       = React.useState< string >( ALL_MEDIA );
     const [fromDate,setFrom]   = React.useState< Date | null >( null );
     const [toDate,setTo]       = React.useState< Date | null >( null );
-    const [view,setView]       = React.useState< ViewMode >( "table" );
+    const [view,setView]       = React.useState< ViewMode >( ViewMode.TABLE );
+    const [campaignId,setCampaignId] = React.useState< string >( "" );                       // "" = all campaigns (server-side filter)
+    const [campaigns,setCampaigns]   = React.useState< Array<Campaign.Entity> >( [] );        // choices for the campaign filter
 
     // dialogs
     const [uploadOpen,setUploadOpen] = React.useState< boolean >( false );
@@ -147,13 +153,32 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     React.useEffect( () => void load(), [] );
+    // load the account's campaigns once for the filter choices
+    React.useEffect( () => void loadCampaigns(), [] );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    async function load() : Promise<void>
+    async function loadCampaigns() : Promise<void>
+    {
+        const reply : RestfulService.Reply<GetCampaigns.Response> = await appmodel.server.fetch( new GetCampaigns() );
+        if( reply.ok && reply.data ) setCampaigns( reply.data.records );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // filter by campaign → reload from the server with the new campaignId
+    function onCampaign( value : string ) : void
+    {
+        setCampaignId( value );
+        void load( undefined, value );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    async function load( token? : string, campaign : string = campaignId ) : Promise<void>
     {
         setLoading( true );
-        const reply : RestfulService.Reply<GetAssets.Response> = await appmodel.server.fetch( new GetAssets( { scope: Media.Scope.ACCOUNT } ) );
-        if( reply.ok && reply.data ) setAssets( reply.data.assets.filter( ( asset ) => asset.status !== Media.Status.DELETED ) );
+        const query : GetAssets.Query = { scope: Media.Scope.ACCOUNT, start: token };
+        if( campaign !== "" ) query.campaignId = campaign;   // server-side campaign filter
+        const reply : RestfulService.Reply<GetAssets.Response> = await appmodel.server.fetch( new GetAssets( query ) );
+        if( reply.ok && reply.data ) { setAssets( reply.data.records.filter( ( asset ) => asset.status !== Media.Status.DELETED ) ); setPage( reply.data.page ); }
         setLoading( false );
     }
 
@@ -255,7 +280,7 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
                         {
                             const key : string = Media.itemKey( item.usage, item.profile );
                             const ready : boolean = item.status === Media.Status.OK;
-                            const previewable : boolean = item.kind === Media.Kind.IMAGE || item.kind === Media.Kind.VIDEO;
+                            const previewable : boolean = item.kind === Media.Kind.IMAGE || item.kind === Media.Kind.VIDEO || item.kind === Media.Kind.AUDIO;
                             const editableCaption : boolean = item.usage === Media.Usage.TRANSCRIPT && ( item.profile === "srt" || item.profile === "vtt" );
                             return  <React.Fragment key={ item.id }>
                                         <Typography variant="body2" noWrap>{ itemLabel( item ) }</Typography>
@@ -287,33 +312,39 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
         const act : string = action === AssetAction.MORE ? ( choice ?? "" ) : action;
         const asset : Media.Asset | undefined = assets.find( ( entry ) => entry.guid === row.id );
         if( !asset ) return;
-        if( act === AssetAction.PREVIEW )  setPreview( asset );
-        else if( act === AssetAction.OPEN )     void openLink( asset );
-        else if( act === AssetAction.INFO )     setInfoAsset( asset );
-        else if( act === AssetAction.EDIT )     setEditAsset( asset );
-        else if( act === AssetAction.VARIANTS ) setVariants( asset );
-        else if( act === AssetAction.REFRESH_VARIANTS ) void refreshVariants( asset );
-        else if( act === AssetAction.POSTER )   setPosterAsset( asset );
-        else if( act === AssetAction.COMPRESS ) setCompressAsset( asset );
-        else if( act === AssetAction.DENSITY ) setDensityAsset( asset );
-        else if( act === AssetAction.TRANSCRIBE ) void transcribe( asset );
-        else if( act === AssetAction.CLONE_VOICE ) setVoiceAsset( asset );
-        else if( act === AssetAction.RESCAN )   void rescan( asset );
-        else if( act === AssetAction.COPY ) setCopyAsset( asset );
-        else if( act === AssetAction.DOWNLOAD )     { const original : Media.Item | undefined = originalOf( asset ); if( original ) void downloadItem( asset, original ); }
-        else if( act === AssetAction.DOWNLOAD_ZIP ) void requestArchive( asset );
-        else if( act === AssetAction.DELETE )
-            setConfirm( {
-                title: "Delete media", yesLabel: "Delete", destructive: true,
-                body: `Delete "${ asset.name }"? This can't be undone.`,
-                run: async () : Promise<boolean> =>
-                {
-                    const reply : RestfulService.Reply<DeleteAsset.Response> = await appmodel.server.fetch( new DeleteAsset( asset.guid ) );
-                    // media-1.5: an asset associated with a campaign can't be deleted (409)
-                    if( !reply.ok && reply.status === 409 ) { setSnack( { message: "This asset is used by a campaign and can't be deleted.", severity: "warning" } ); return false; }
-                    return reply.ok;
-                },
-            } );
+        switch( act )
+        {
+            case AssetAction.PREVIEW:          setPreview( asset ); break;
+            case AssetAction.OPEN:             void openLink( asset ); break;
+            case AssetAction.INFO:             setInfoAsset( asset ); break;
+            case AssetAction.EDIT:             setEditAsset( asset ); break;
+            case AssetAction.VARIANTS:         setVariants( asset ); break;
+            case AssetAction.REFRESH_VARIANTS: void refreshVariants( asset ); break;
+            case AssetAction.POSTER:           setPosterAsset( asset ); break;
+            case AssetAction.COMPRESS:         setCompressAsset( asset ); break;
+            case AssetAction.DENSITY:          setDensityAsset( asset ); break;
+            case AssetAction.TRANSCRIBE:       void transcribe( asset ); break;
+            case AssetAction.EXTRACT_AUDIO:    void extractAudio( asset ); break;
+            case AssetAction.CLONE_VOICE:      setVoiceAsset( asset ); break;
+            case AssetAction.RESCAN:           void rescan( asset ); break;
+            case AssetAction.SCAN:             void scanForThreats( asset ); break;
+            case AssetAction.COPY:             setCopyAsset( asset ); break;
+            case AssetAction.DOWNLOAD:         { const original : Media.Item | undefined = originalOf( asset ); if( original ) void downloadItem( asset, original ); break; }
+            case AssetAction.DOWNLOAD_ZIP:     void requestArchive( asset ); break;
+            case AssetAction.DELETE:
+                setConfirm( {
+                    title: "Delete media", yesLabel: "Delete", destructive: true,
+                    body: `Delete "${ asset.name }"? This can't be undone.`,
+                    run: async () : Promise<boolean> =>
+                    {
+                        const reply : RestfulService.Reply<DeleteAsset.Response> = await appmodel.server.fetch( new DeleteAsset( asset.guid ) );
+                        // media-1.5: an asset associated with a campaign can't be deleted (409)
+                        if( !reply.ok && reply.status === NetworkUtils.Status.CONFLICT ) { setSnack( { message: "This asset is used by a campaign and can't be deleted.", severity: "warning" } ); return false; }
+                        return reply.ok;
+                    },
+                } );
+                break;
+        }
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -384,6 +415,15 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // extract a video's audio track → an `audio` variant on the asset (appears async when the job finishes)
+    async function extractAudio( asset : Media.Asset ) : Promise<void>
+    {
+        const reply : RestfulService.Reply<PostAssetExtractAudio.Response> = await appmodel.server.fetch( new PostAssetExtractAudio( asset.guid ) );
+        if( reply.ok ) setSnack( { message: "Extracting audio — the audio variant will appear when ready.", severity: "success" } );
+        else setSnack( { message: "Could not start audio extraction. Please try again.", severity: "error" } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // rebuild EVERY system-configured variant profile for the asset (PostAssetVariants with no profile) →
     // snack + reload; the items refresh async as the pipeline re-derives + versions them
     async function refreshVariants( asset : Media.Asset ) : Promise<void>
@@ -420,6 +460,16 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
         if( reply.ok ) { setSnack( { message: "Rescanning content…", severity: "success" } ); setInfoAsset( null ); void load(); }
         else setSnack( { message: "Could not start the rescan. Please try again.", severity: "error" } );
         return reply.ok;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // re-run the malware scan on the ORIGINAL bytes (row action) — puts the asset back to SCANNING; the
+    // result shows in the item Info once it settles. Snack + reload; distinct from `rescan` (metadata).
+    async function scanForThreats( asset : Media.Asset ) : Promise<void>
+    {
+        const reply : RestfulService.Reply<PostAssetScan.Response> = await appmodel.server.fetch( new PostAssetScan( asset.guid ) );
+        if( reply.ok ) { setSnack( { message: "Scanning for threats…", severity: "success" } ); void load(); }
+        else setSnack( { message: "Could not start the scan. Please try again.", severity: "error" } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -471,9 +521,12 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
         const servable  : boolean = asset.status === Media.Status.OK;
         const canVary   : boolean = servable && ( asset.kind === Media.Kind.IMAGE || asset.kind === Media.Kind.VIDEO );
         const canRescan : boolean = asset.status !== Media.Status.UPLOADING && ( asset.kind === Media.Kind.IMAGE || asset.kind === Media.Kind.VIDEO );
+        // malware re-scan applies to ANY kind that has bytes (audio/document/other included) — not just a/v
+        const canScan   : boolean = asset.status !== Media.Status.UPLOADING && asset.status !== Media.Status.DELETED;
         const canPoster : boolean = servable && asset.kind === Media.Kind.VIDEO;   // video only
         const canClone  : boolean = servable && asset.kind === Media.Kind.AUDIO;   // audio → clone a voice
         const canCaption : boolean = servable && ( asset.kind === Media.Kind.AUDIO || asset.kind === Media.Kind.VIDEO );   // speech → captions
+        const canExtract : boolean = servable && asset.kind === Media.Kind.VIDEO;   // video → pull the audio track out
         const canDensity : boolean = servable && asset.kind === Media.Kind.IMAGE;   // image → DPI/density render
         return [
             ...( servable ? [ AssetAction.PREVIEW as string, AssetAction.OPEN as string ] : [] ),
@@ -484,9 +537,11 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
             ...( canPoster ? [ AssetAction.POSTER as string ] : [] ),
             ...( canPoster ? [ AssetAction.COMPRESS as string ] : [] ),   // video only (same gate as poster)
             ...( canCaption ? [ AssetAction.TRANSCRIBE as string ] : [] ),   // audio/video → generate captions
+            ...( canExtract ? [ AssetAction.EXTRACT_AUDIO as string ] : [] ),   // video → extract the audio track
             ...( canClone ? [ AssetAction.CLONE_VOICE as string ] : [] ),   // audio only
 
             ...( canRescan ? [ AssetAction.RESCAN as string ] : [] ),
+            ...( canScan ? [ AssetAction.SCAN as string ] : [] ),   // re-run the malware scan on the original (any kind)
             AssetAction.COPY,
             ...( servable ? [ AssetAction.DOWNLOAD as string ] : [] ),
             ...( servable ? [ AssetAction.DOWNLOAD_ZIP as string ] : [] ),
@@ -529,8 +584,10 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
         { id: AssetAction.COMPRESS,  label: "Compress video",    icon: <CompressOutlinedIcon fontSize="small" /> },
         { id: AssetAction.DENSITY,   label: "Change density (DPI)", icon: <HighQualityOutlinedIcon fontSize="small" /> },
         { id: AssetAction.TRANSCRIBE, label: "Generate captions", icon: <SubtitlesOutlinedIcon fontSize="small" /> },
+        { id: AssetAction.EXTRACT_AUDIO, label: "Extract audio", icon: <AudiotrackOutlinedIcon fontSize="small" /> },
         { id: AssetAction.CLONE_VOICE, label: "Clone voice",     icon: <RecordVoiceOverOutlinedIcon fontSize="small" /> },
         { id: AssetAction.RESCAN,    label: "Rescan content",    icon: <ReplayOutlinedIcon fontSize="small" /> },
+        { id: AssetAction.SCAN,      label: "Scan for threats",  icon: <SecurityOutlinedIcon fontSize="small" /> },
         { id: AssetAction.COPY,      label: "Copy",              icon: <ContentCopyOutlinedIcon fontSize="small" /> },
         { id: AssetAction.DOWNLOAD,     label: "Download",          icon: <DownloadOutlinedIcon fontSize="small" /> },
         { id: AssetAction.DOWNLOAD_ZIP, label: "Download all (zip)", icon: <FolderZipOutlinedIcon fontSize="small" /> },
@@ -577,6 +634,7 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
                                         <Stack direction="row" spacing={ 1 } sx={{ alignItems: "center", mt: 1, mr: 1 }}>
                                             <Button variant="contained" startIcon={ <CloudUploadOutlinedIcon /> } onClick={ () => setUploadOpen( true ) }>{"Upload"}</Button>
                                             <ButtonIcon id="media-refresh" label={"Refresh"} icon={ <RefreshOutlinedIcon fontSize="small" /> } size="small" disabled={ loading } onClick={ () => void load() } />
+                                            <HelpButton value={"5454594759475"} />
                                         </Stack>
                                     } />
                         <Divider />
@@ -591,18 +649,18 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
                                         <DateInput id="media-from" label={"From"} value={ fromDate } clearable width={ 170 } onChange={ setFrom } />
                                         <Typography>{"-"}</Typography>
                                         <DateInput id="media-to"   label={"To"}   value={ toDate }   clearable width={ 170 } onChange={ setTo } />
-                                        <Tooltip title={"Campaign filtering is coming soon"}>
-                                            <span><SelectInput id="media-campaign" label={"Campaign"} value={""} choices={ [ { value: "", label: "All campaigns" } ] } disabled sx={{ width: 180 }} /></span>
-                                        </Tooltip>
+                                        <SelectInput id="media-campaign" label={"Campaign"} value={ campaignId } disabled={ loading }
+                                                     choices={ [ { value: "", label: "All campaigns" }, ...campaigns.map( ( campaign : Campaign.Entity ) : SelectInput.Choice => ( { value: campaign.id, label: campaign.name } ) ) ] }
+                                                     onChange={ onCampaign } sx={{ width: 180 }} />
                                     </Stack>
 
                                     {/* view toggle: table list + small/medium/large image grids */}
-                                    <ToggleButtonGroup exclusive size="small" value={ view } sx={{ flexShrink: 0 }}
-                                                       onChange={ ( _e, next : ViewMode | null ) => { if( next ) setView( next ); } }>
-                                        <ToggleButton value="table"  aria-label="table list"><Tooltip title={"List"}><ViewListOutlinedIcon fontSize="small" /></Tooltip></ToggleButton>
-                                        <ToggleButton value="small"  aria-label="small grid"><Tooltip title={"Small grid"}><PhotoOutlinedIcon fontSize="small" /></Tooltip></ToggleButton>
-                                        <ToggleButton value="medium" aria-label="medium grid"><Tooltip title={"Medium grid"}><PhotoOutlinedIcon fontSize="medium" /></Tooltip></ToggleButton>
-                                        <ToggleButton value="large"  aria-label="large grid"><Tooltip title={"Large grid"}><PhotoOutlinedIcon fontSize="large" /></Tooltip></ToggleButton>
+                                    <ToggleButtonGroup exclusive size="small" value={ view } sx={{ flexShrink: 0, p : 0 }}
+                                                       onChange={ ( _e : React.MouseEvent<HTMLElement, MouseEvent>, next : ViewMode | null ) => { if( next ) setView( next ); } }>
+                                        <ToggleButton value={ ViewMode.TABLE }  aria-label="table list"><Tooltip title={"List"}><ViewListOutlinedIcon fontSize="small" /></Tooltip></ToggleButton>
+                                        <ToggleButton value={ ViewMode.SMALL }  aria-label="small grid"><Tooltip title={"Small grid"}><PhotoOutlinedIcon fontSize="small" /></Tooltip></ToggleButton>
+                                        <ToggleButton value={ ViewMode.MEDIUM } aria-label="medium grid"><Tooltip title={"Medium grid"}><PhotoOutlinedIcon fontSize="medium" /></Tooltip></ToggleButton>
+                                        <ToggleButton value={ ViewMode.LARGE }  aria-label="large grid"><Tooltip title={"Large grid"}><PhotoOutlinedIcon fontSize="large" /></Tooltip></ToggleButton>
                                     </ToggleButtonGroup>
                                 </Stack>
 
@@ -613,18 +671,25 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
                                 { !loading && rows.length === 0 &&
                                     <Typography variant="body2" sx={{ color: "text.secondary", p: 2 }}>{ assets.length === 0 ? "No media yet — upload your first file." : "No media matches your filters." }</Typography> }
 
-                                { !loading && rows.length > 0 && view === "table" &&
+                                { !loading && rows.length > 0 && view === ViewMode.TABLE &&
                                     <TableInput id="media-assets"
                                                 columns={ columns }
                                                 data={ rows }
                                                 actions={ tableActions }
+
+                                                total={ page?.total }
+                                                next={ page?.next }
+
                                                 onAction={ onAction }
                                                 expandedRenderer={ itemsRenderer }
-                                                selectable={ TableInput.Selectable.NONE } /> }
+                                                selectable={ TableInput.Selectable.NONE }
+                                                paging={ TableInput.Paging.TOKEN }
+                                                
+                                                onNext={ ( token : string ) : void => void load( token ) } /> }
 
-                                { !loading && rows.length > 0 && view !== "table" &&
+                                { !loading && rows.length > 0 && view !== ViewMode.TABLE &&
                                     <ImageList cols={ GRID_SIZE[ view ].cols } gap={ 12 } rowHeight={ GRID_SIZE[ view ].img + GRID_BAR_HEIGHT } sx={{ m: 0 }}>
-                                        { filtered().map( ( asset ) =>
+                                        { filtered().map( ( asset : Media.Asset ) =>
                                             <MediaGridItem key={ asset.guid }
                                                            asset={ asset }
                                                            imgHeight={ GRID_SIZE[ view ].img }
@@ -633,6 +698,14 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
                                                            actions={ actionsFor( asset ).map( ( id ) => actionDefs.find( ( a ) => a.id === id ) ).filter( ( a ) : a is TableInput.Action => a !== undefined ) }
                                                            onAction={ ( actionId : string ) => onAction( actionId, { id: asset.guid } as TableInput.Row ) } /> ) }
                                     </ImageList> }
+
+                                {/* grid view has no built-in pager → a matching token pager below the tiles */}
+                                { !loading && view !== ViewMode.TABLE && page && page.total > 0 &&
+                                    <Stack direction="row" spacing={ 2 } sx={{ alignItems: "center", mt: 1 }}>
+                                        <Typography variant="caption" sx={{ color: "text.secondary" }}>{ `Showing ${ assets.length } of ${ page.total }` }</Typography>
+                                        <Box sx={{ flexGrow: 1 }} />
+                                        { page.next && <Button size="small" disabled={ loading } onClick={ () => void load( page.next ) }>{"Next page"}</Button> }
+                                    </Stack> }
 
                             </Stack>
                         </CardContent>

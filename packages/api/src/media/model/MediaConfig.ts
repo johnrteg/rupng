@@ -99,6 +99,16 @@ export namespace MediaConfig
      *  the target so the physical print size is preserved at the higher DPI (never downscales for density). */
     export interface DensityTarget { label : string; dpi : number; upscale? : boolean; }
 
+    /** The engine a Studio video render (media-21) uses. A closed set — one SQS queue + consumer per value.
+     *  `FFMPEG` composites via the in-process `filter_complex` graph (light, fast, some effects approximated);
+     *  `REMOTION` renders the SAME composition via headless Chromium (`@remotion/renderer`) for exact
+     *  preview==output fidelity (heavier — needs a Chromium-capable worker). Config picks which queue jobs go to. */
+    export enum RenderEngine { FFMPEG = "ffmpeg", REMOTION = "remotion" }
+
+    /** Studio render policy (media-21.18) — which engine the render Job uses. Switchable WITHOUT a redeploy:
+     *  the endpoint routes each render to that engine's queue. */
+    export interface Render { engine : RenderEngine; }
+
     export interface Config
     {
         upload    : Upload;
@@ -111,6 +121,7 @@ export namespace MediaConfig
         downloads    : Downloads;
         videoTargets : Record<string, VideoTarget>;   // named compression targets (media-10.10)
         densities    : Record<string, DensityTarget>;  // named DPI targets for image density variants (media-4)
+        render       : Render;                          // Studio video-render engine selection (media-21.18)
     }
 
     // ── Schema + validator (shared: service / web / Console) ────────────────────────────────────
@@ -193,6 +204,11 @@ export namespace MediaConfig
                     },
                 },
             },
+            // Studio render engine (media-21.18) — optional so older configs tolerate drift (withDefaults fills it)
+            render: {
+                type: "object", additionalProperties: false, required: [ "engine" ],
+                properties: { engine: { type: "string", enum: Object.values( RenderEngine ) } },
+            },
         },
     };
 
@@ -214,7 +230,7 @@ export namespace MediaConfig
         },
         delivery:  { signedUrlTtlSec: 900, defaultTier: Media.Tier.PROTECTED },
         lifecycle: { glacierAfterDays: 180, softDeleteSweepDays: 30, defaultTtlDays: 0 },
-        scan:      { enabled: false, provider: ScanProvider.NONE, failClosed: true, clamd: { host: "localhost", port: 3310, timeoutMs: 30000 } },   // stub gate until clamd is wired
+        scan:      { enabled: true, provider: ScanProvider.HEURISTIC, failClosed: false, clamd: { host: "localhost", port: 3310, timeoutMs: 30000 } },   // real zero-infra first-line scan by default; switch provider→clamav (+ clamd) for full AV
         limits:    { apiRatePerMinute: 120 },
         autoTag:   { enabled: false, maxTags: 12 },   // vision auto-tagging off until an AI key is configured
         downloads: { ttlDays: 7 },                    // generated download zips are swept after a week
@@ -229,6 +245,7 @@ export namespace MediaConfig
             "web":   { label: "Web (72 dpi)",   dpi: 72,  upscale: false },
             "print": { label: "Print (300 dpi)", dpi: 300, upscale: true },
         },
+        render: { engine: RenderEngine.FFMPEG },      // ffmpeg by default; switch to remotion for exact-fidelity Chromium renders (media-21.18)
     };
 }
 

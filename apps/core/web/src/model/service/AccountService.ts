@@ -1,5 +1,5 @@
 //
-import { GetMemberships, GetUserMeta, PostUserMeta, User } from "@repo/api";
+import { GetMemberships, GetUserMeta, PostUserMeta, GetAccount, User, Account } from "@repo/api";
 import { Access, RestfulService } from "@repo/endpoint";
 
 import AppModel from "../AppModel";
@@ -19,6 +19,8 @@ export class AccountService
 
     public accounts : Array<User.Membership> = [];          // accounts the user can act in
     public current  : User.Membership | null = null;        // the account currently being acted in
+    public palette  : Array<string> = [];                   // the acting account's brand palette (for app-wide color pickers)
+    public fonts    : Array<Account.BrandFont> = [];        // the acting account's brand fonts (for app-wide font choices)
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
     constructor( app : AppModel )
@@ -31,6 +33,8 @@ export class AccountService
     {
         this.accounts = [];
         this.current  = null;
+        this.palette  = [];
+        this.fonts    = [];
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -67,6 +71,8 @@ export class AccountService
     private applyCurrent( account : User.Membership | null ) : void
     {
         this.current = account;
+        this.palette = [];   // cleared until the acting account's brand identity (re)loads below
+        this.fonts   = [];
         // the effective role is the caller's max role in the ACTING account — so the nav reflects this account
         this.appmodel.auth.setRole( account ? account.maxRole : Access.AccountRole.USER );
         if( account )
@@ -75,8 +81,21 @@ export class AccountService
             // tell the server which account we're acting in (X-Account) so it resolves the role for THIS
             // account on every request (the JWT is identity-only).
             this.appmodel.server.setHeader( "X-Account", account.accountId );
+            // cache the acting account's brand palette for app-wide color pickers (best-effort, async)
+            void this.loadPalette();
         }
         this.appmodel.pubsub.publish( PubSubService.Type.ACCOUNT, account );
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** Fetch the ACTING account's brand identity (Account.palette + Account.fonts, via the X-Account header) and
+     *  cache it so every color picker / font choice can offer the account's brand. Best-effort — a miss leaves
+     *  them empty. */
+    private async loadPalette() : Promise<void>
+    {
+        const reply : RestfulService.Reply<GetAccount.Response> = await this.appmodel.server.fetch( new GetAccount() );
+        this.palette = reply.ok && reply.data ? ( reply.data.palette ?? [] ) : [];
+        this.fonts   = reply.ok && reply.data ? ( reply.data.fonts ?? [] ) : [];
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////

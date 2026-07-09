@@ -121,6 +121,21 @@ public-edge Public, scaled/isolated separately so an intake flood can't starve t
 **auth + CORS + throttling**; secrets (e.g. Zendesk) stay server-side.
 **Where:** [app/SPECS.md § Two security tiers](../apps/core/app/SPECS.md), [endpoint/SPECS.md](../packages/endpoint/SPECS.md).
 
+**File & content scanning (uploads / imports).** Every service that ingests external bytes — media uploads,
+Browse imports, AI-generated media, and (as they land) Contacts imports and any future importer — scans them
+for malware **before** the bytes are promoted to usable. This is a **shared platform service**
+(`@repo/services` → `Scanner` contract + engine adapters + `ScanFactory`), so there is one scan implementation
+and one security posture across the whole platform, not a per-service reimplementation. The gate: ingested
+bytes sit in a non-servable state (`SCANNING` → `QUARANTINED`/`PROCESSING`), are scanned by the configured
+engine, and **only a CLEAN verdict promotes them**; a detection **quarantines** the item (never delivered) and
+records the threat name. Pluggable engines, selected per service via config (`scan.provider`): **ClamAV**
+(clamd signature engine — full AV) or a zero-infra **heuristic** first-line check (EICAR + executable-magic
+detection) that runs anywhere without a daemon. **Fail-closed by default** — an unreachable engine holds the
+item in `SCANNING` and redelivers rather than waving it through. The scan outcome (engine, verdict, threat,
+timestamp) is **persisted on the item and shown in its Info**, and an on-demand **re-scan** can be triggered.
+**Where:** [shared scan module](../packages/services/src/scan/), media pipeline scan gate
+([MediaPipeline](../apps/core/media/src/pipeline/MediaPipeline.ts)), config `scan.provider` (per service).
+
 ### 10. Resilience, availability & DR
 **What:** survive failures without data leaving its jurisdiction.
 **How:** **multi-AZ** every stateful tier; **DynamoDB PITR** + hourly cross-region copy (≈ 1 h RPO), **S3 CRR**,

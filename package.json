@@ -24,7 +24,9 @@
         "proxy.local": "npm run dev -- --filter=proxy -- --config local",
         "web": "npm run dev -- --filter=web",
         "web.watch": "npm --workspace web run build -- --watch",
-        "web.build": "npm run build -- --filter=web"
+        "web.build": "npm run build -- --filter=web",
+        "openapi": "tsx tools/openapi/generate.ts",
+        "openapi.sync": "rdme openapi upload ./openapi.json --key=$README_KEY"
     },
     "devDependencies": {
         "@repo/tsconfig": "*",

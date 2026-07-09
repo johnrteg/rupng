@@ -1,0 +1,578 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "RumbleUp API",
+    "version": "1.0.0",
+    "description": "The RumbleUp developer API. Authenticate with a developer API key: `Authorization: Bearer rup_<keyId>.<secret>` (create one under Settings → API)."
+  },
+  "paths": {
+    "/api/app/v1/openapi.json": {
+      "get": {
+        "operationId": "getOpenApi",
+        "summary": "Get the API specification",
+        "description": "Returns this API's OpenAPI 3.1 document (JSON), generated live from the endpoints. Unauthenticated.",
+        "tags": [
+          "Meta"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "openapi",
+                    "info",
+                    "paths"
+                  ],
+                  "properties": {
+                    "openapi": {
+                      "type": "string",
+                      "description": "OpenAPI version.",
+                      "examples": [
+                        "3.1.0"
+                      ]
+                    },
+                    "info": {
+                      "type": "object",
+                      "description": "Title / version / description."
+                    },
+                    "paths": {
+                      "type": "object",
+                      "description": "The documented operations, keyed by path."
+                    },
+                    "components": {
+                      "type": "object",
+                      "description": "Shared schemas + security schemes."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "500": {
+            "description": "Failed to build the specification"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/media/v1/assets": {
+      "get": {
+        "operationId": "listMediaAssets",
+        "summary": "List media assets",
+        "description": "Lists the acting account's media library, optionally filtered by scope / kind / status / campaign. Soft-deleted assets are excluded by default.",
+        "tags": [
+          "Media"
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "account",
+                "user"
+              ],
+              "description": "Owner scope (account library vs a user's avatars)."
+            }
+          },
+          {
+            "name": "scopeId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "User id — for a USER/avatar-scoped listing."
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "image",
+                "video",
+                "audio",
+                "document",
+                "other"
+              ],
+              "description": "Filter by media kind."
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "uploading",
+                "scanning",
+                "processing",
+                "ok",
+                "failed",
+                "quarantined",
+                "deleted"
+              ],
+              "description": "Filter by lifecycle status."
+            }
+          },
+          {
+            "name": "campaignId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Filter to assets used by a campaign."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "assets"
+                  ],
+                  "properties": {
+                    "assets": {
+                      "type": "array",
+                      "description": "The account's media assets (envelopes).",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "guid": {
+                            "type": "string",
+                            "description": "Envelope id (the media id).",
+                            "examples": [
+                              "8920054f-…"
+                            ]
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Display name."
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "image",
+                              "video",
+                              "audio",
+                              "document",
+                              "other"
+                            ],
+                            "description": "Media family (from the original)."
+                          },
+                          "tier": {
+                            "type": "string",
+                            "enum": [
+                              "public",
+                              "protected",
+                              "private"
+                            ],
+                            "description": "Delivery tier."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "uploading",
+                              "scanning",
+                              "processing",
+                              "ok",
+                              "failed",
+                              "quarantined",
+                              "deleted"
+                            ],
+                            "description": "Readiness / lifecycle."
+                          },
+                          "accessRole": {
+                            "type": "string",
+                            "description": "Minimum role to access a protected/private envelope."
+                          },
+                          "scope": {
+                            "type": "string",
+                            "enum": [
+                              "account",
+                              "user"
+                            ],
+                            "description": "Owner scope."
+                          },
+                          "campaignIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Campaigns using this asset."
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "items": {
+                            "type": "array",
+                            "description": "The original + derived media items."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Failed to list assets"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "x-min-role": "user"
+      }
+    },
+    "/api/media/v1/assets/{guid}": {
+      "get": {
+        "operationId": "getMediaAsset",
+        "summary": "Get a media asset",
+        "description": "Returns one media asset (the envelope index record + its items) by id.",
+        "tags": [
+          "Media"
+        ],
+        "parameters": [
+          {
+            "name": "guid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "asset"
+                  ],
+                  "properties": {
+                    "asset": {
+                      "type": "object",
+                      "properties": {
+                        "guid": {
+                          "type": "string",
+                          "description": "Envelope id (the media id)."
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Display name."
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "image",
+                            "video",
+                            "audio",
+                            "document",
+                            "other"
+                          ],
+                          "description": "Media family."
+                        },
+                        "tier": {
+                          "type": "string",
+                          "enum": [
+                            "public",
+                            "protected",
+                            "private"
+                          ],
+                          "description": "Delivery tier."
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "uploading",
+                            "scanning",
+                            "processing",
+                            "ok",
+                            "failed",
+                            "quarantined",
+                            "deleted"
+                          ],
+                          "description": "Readiness / lifecycle."
+                        },
+                        "accessRole": {
+                          "type": "string",
+                          "description": "Minimum role to access a protected/private envelope."
+                        },
+                        "scope": {
+                          "type": "string",
+                          "enum": [
+                            "account",
+                            "user"
+                          ],
+                          "description": "Owner scope."
+                        },
+                        "campaignIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Campaigns using this asset."
+                        },
+                        "tags": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "items": {
+                          "type": "array",
+                          "description": "The original + derived media items."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Asset not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "x-min-role": "user"
+      }
+    },
+    "/api/auth/v1/accounts": {
+      "get": {
+        "operationId": "listAccounts",
+        "summary": "List accounts",
+        "description": "The accounts the caller can act in, each with the caller's maximum role — the account/role switcher list.",
+        "tags": [
+          "Account"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "accounts"
+                  ],
+                  "properties": {
+                    "accounts": {
+                      "type": "array",
+                      "description": "Accounts the caller can act in.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "accountId": {
+                            "type": "string",
+                            "description": "Account id."
+                          },
+                          "accountName": {
+                            "type": "string",
+                            "description": "Account display name."
+                          },
+                          "parentName": {
+                            "type": "string",
+                            "description": "Immediate parent account name (for a sub-account)."
+                          },
+                          "maxRole": {
+                            "type": "string",
+                            "description": "The caller's ceiling role in this account."
+                          },
+                          "owner": {
+                            "type": "boolean",
+                            "description": "True when the caller owns this account."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "x-min-role": "user"
+      }
+    },
+    "/api/acct/v1/sub-accounts": {
+      "post": {
+        "operationId": "createSubAccount",
+        "summary": "Create a sub-account",
+        "description": "Creates a sub-account under the acting account; the caller becomes its owner + admin. Enforces the configured hierarchy caps (depth / fan-out).",
+        "tags": [
+          "Account"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "organization": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "carryOver": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "account"
+                  ],
+                  "properties": {
+                    "account": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "Sub-account id."
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Display name."
+                        },
+                        "status": {
+                          "type": "string",
+                          "description": "Account status."
+                        },
+                        "ownerId": {
+                          "type": "string",
+                          "description": "The owner (the admin who created it)."
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "409": {
+            "description": "Hierarchy cap reached (max depth or sub-accounts per parent)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "x-min-role": "account"
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Developer API key — `Authorization: Bearer rup_<keyId>.<secret>` (create one under Settings → API)."
+      }
+    }
+  }
+}

@@ -3,7 +3,7 @@ import AppModel from "@model/AppModel";
 import React from 'react';
 import { JSX } from "react";
 
-import { Box, Button, Card, CardContent, CardHeader, Chip, CircularProgress, Divider, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Button, Card, CardContent, CardHeader, Chip, CircularProgress, Divider, Stack, Tab, Tabs, Typography } from "@mui/material";
 import RefreshOutlinedIcon       from '@mui/icons-material/RefreshOutlined';
 import AddOutlinedIcon           from '@mui/icons-material/AddOutlined';
 import DeleteOutlineOutlinedIcon from '@mui/icons-material/DeleteOutlineOutlined';
@@ -13,12 +13,14 @@ import { ApiKey, GetApiKeys, PostApiKey, DeleteApiKey } from '@repo/api';
 import { RestfulService } from '@repo/endpoint';
 
 import AuthPage    from '@widgets/app/AuthPage';
+import ButtonIcon  from '@widgets/core/ButtonIcon';
 import TableInput  from '@widgets/core/TableInput';
 import SnackAlert  from '@widgets/core/SnackAlert';
 import AlertPrompt from '@widgets/core/AlertPrompt';
 import AccountChange from '@widgets/app/AccountChange';
 import CreateApiKeyDialog from '@pages/settings/dialogs/CreateApiKeyDialog';
 import ApiKeySecretDialog from '@pages/settings/dialogs/ApiKeySecretDialog';
+import ApiDocsViewer from '@pages/settings/ApiDocsViewer';
 
 // TableInput row-action ids
 enum KeyAction { REVOKE = "revoke" }
@@ -40,6 +42,7 @@ export function SettingsApi( props : SettingsApi.Props ) : JSX.Element
     const [revoke,setRevoke]   = React.useState< ApiKey.View | null >( null );        // pending revoke → confirm
     const [secret,setSecret]   = React.useState< { name : string; secret : string } | null >( null );   // show-once reveal
     const [snack,setSnack]     = React.useState< { message : string; severity : SnackAlert.Severity } | null >( null );
+    const [tab,setTab]         = React.useState< number >( 0 );   // 0 = Keys, 1 = Documentation
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     React.useEffect( () => { if( editable ) void load(); else setLoading( false ); }, [] );
@@ -107,9 +110,9 @@ export function SettingsApi( props : SettingsApi.Props ) : JSX.Element
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // key-id cell — show the public prefix `rup_<keyId>` in monospace (the secret half is never stored)
-    function keyIdRenderer( _col : TableInput.Column, row : TableInput.Row ) : JSX.Element
+    function keyIdRenderer( _col : TableInput.Column, _row : TableInput.Row, value : string ) : JSX.Element
     {
-        return <Typography variant="body2" sx={{ fontFamily: "monospace", color: "text.secondary" }}>{ `rup_${ row.id }` }</Typography>;
+        return <Typography variant="body2" sx={{ fontFamily: "monospace", color: "text.secondary" }}>{ `rup_${ value }` }</Typography>;
     }
 
     // ── TableInput config ──────────────────────────────────────────────────────────────────────
@@ -132,6 +135,7 @@ export function SettingsApi( props : SettingsApi.Props ) : JSX.Element
 
     const keyRows : Array<TableInput.Row> = keys.map( ( key : ApiKey.View ) => ( {
         id:         key.keyId,
+        keyId:      key.keyId,   // the CUSTOM cell only renders when its field is defined on the row (TableInput guard)
         name:       key.name,
         roleLabel:  roleLabel( key.role ),
         status:     key.status,
@@ -143,7 +147,7 @@ export function SettingsApi( props : SettingsApi.Props ) : JSX.Element
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     return  <AuthPage minAccess={ Access.AccountRole.ACCOUNT } title={"Settings : API"}>
-                <Box sx={{ p: 2, maxWidth: 1000, mx: "auto" }}>
+                <Box sx={{ p: 2, mx: "auto" }}>
 
                     { !editable &&
                         <Typography variant="body2" sx={{ color: "text.secondary", p: 2 }}>{"Only account admins can manage API keys."}</Typography> }
@@ -152,46 +156,50 @@ export function SettingsApi( props : SettingsApi.Props ) : JSX.Element
                         <Stack direction="row" spacing={ 1 } sx={{ alignItems: "center", p: 2 }}><CircularProgress size={ 18 } /><Typography variant="body2" sx={{ color: "text.secondary" }}>{"Loading…"}</Typography></Stack> }
 
                     { editable && !loading &&
-                        <Stack spacing={ 2 }>
+                        <Box>
+
+                            {/* Keys + Docs under tabs so each gets the full width/height */}
+                            <Tabs value={ tab } onChange={ ( _event : React.SyntheticEvent, value : number ) : void => setTab( value ) } sx={{ mb: 2 }}>
+                                <Tab label={"API Keys"} />
+                                <Tab label={"Documentation"} />
+                            </Tabs>
 
                             {/* ── Developer API keys ───────────────────────────────────────────────── */}
-                            <Card variant="outlined">
-                                <CardHeader title={"API Keys"}
-                                            subheader={"Keys authenticate programmatic requests as this account. A key's role caps what it can do. The full key is shown only once, when created."}
-                                            action={
-                                                <Stack direction="row" spacing={ 1 } sx={{ mt: 1, mr: 1 }}>
-                                                    <Tooltip title={"Refresh"}><span><IconButton size="small" onClick={ () => void load() } disabled={ loading }><RefreshOutlinedIcon fontSize="small" /></IconButton></span></Tooltip>
-                                                    <Button variant="contained" size="small" startIcon={ <AddOutlinedIcon /> } onClick={ () => setCreateOpen( true ) }>{"Create key"}</Button>
-                                                </Stack>
-                                            } />
-                                <Divider />
-                                <CardContent>
-                                    { keys.length === 0
-                                        ? <Typography variant="body2" sx={{ color: "text.secondary" }}>{"No API keys yet. Create one to start making authenticated API requests."}</Typography>
-                                        : <TableInput id="settings-api-keys"
-                                                      columns={ keyColumns }
-                                                      data={ keyRows }
-                                                      actions={ keyActions }
-                                                      onAction={ onKeyAction }
-                                                      selectable={ TableInput.Selectable.NONE } />
-                                    }
-                                </CardContent>
-                            </Card>
+                            { tab === 0 &&
+                                <Card variant="outlined">
+                                    <CardHeader title={"API Keys"}
+                                                subheader={"Keys authenticate programmatic requests as this account. A key's role caps what it can do. The full key is shown only once, when created."}
+                                                action={
+                                                    <Stack direction="row" spacing={ 1 } sx={{ mt: 1, mr: 1 }}>
+                                                        <ButtonIcon id="api-keys-refresh" label={"Refresh"} size="small" disabled={ loading } icon={ <RefreshOutlinedIcon fontSize="small" /> } onClick={ () => void load() } />
+                                                        <Button variant="contained" size="small" startIcon={ <AddOutlinedIcon /> } onClick={ () => setCreateOpen( true ) }>{"Create key"}</Button>
+                                                    </Stack>
+                                                } />
+                                    <Divider />
+                                    <CardContent>
+                                        { keys.length === 0
+                                            ? <Typography variant="body2" sx={{ color: "text.secondary" }}>{"No API keys yet. Create one to start making authenticated API requests."}</Typography>
+                                            : <TableInput id="settings-api-keys"
+                                                          columns={ keyColumns }
+                                                          data={ keyRows }
+                                                          actions={ keyActions }
+                                                          onAction={ onKeyAction }
+                                                          selectable={ TableInput.Selectable.NONE } />
+                                        }
+                                    </CardContent>
+                                </Card> }
 
-                            {/* ── API documentation (later) ────────────────────────────────────────── */}
-                            <Card variant="outlined">
-                                <CardHeader title={"API Documentation"} subheader={"Reference for the public API — endpoints, authentication, and examples."} />
-                                <Divider />
-                                <CardContent>
-                                    <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                                        { "Authenticate requests with the " }
-                                        <Box component="span" sx={{ fontFamily: "monospace" }}>{ "Authorization: Bearer rup_<keyId>.<secret>" }</Box>
-                                        { " header. Full endpoint documentation is coming soon." }
-                                    </Typography>
-                                </CardContent>
-                            </Card>
+                            {/* ── API documentation — interactive OpenAPI reference (native MUI) ─────── */}
+                            { tab === 1 &&
+                                <Card variant="outlined">
+                                    <CardHeader title={"API Documentation"} subheader={"Interactive reference for the public API — generated live from the endpoints. Enter a key up top, pick an endpoint, and \"Try it\"."} />
+                                    <Divider />
+                                    <CardContent>
+                                        <ApiDocsViewer />
+                                    </CardContent>
+                                </Card> }
 
-                        </Stack>
+                        </Box>
                     }
                 </Box>
 

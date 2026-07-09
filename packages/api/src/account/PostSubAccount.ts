@@ -14,7 +14,16 @@ export class PostSubAccount extends RestfulEndpoint<{}, PostSubAccount.Body, Pos
     public readonly method   : NetworkUtils.Method = NetworkUtils.Method.POST;
     public readonly access   : Access.Role = Access.AccountRole.ACCOUNT;
     public readonly timeout  : number | undefined = undefined;
-    public readonly audience : RestfulEndpoint.Audience = RestfulEndpoint.Audience.APP;
+    public readonly audience : RestfulEndpoint.Audience = RestfulEndpoint.Audience.PUBLIC;
+
+    public readonly docs : RestfulEndpoint.Docs =
+    {
+        operationId: "createSubAccount",
+        summary:     "Create a sub-account",
+        description: "Creates a sub-account under the acting account; the caller becomes its owner + admin. Enforces the configured hierarchy caps (depth / fan-out).",
+        tags:        [ "Account" ],
+        errors:      { 409: "Hierarchy cap reached (max depth or sub-accounts per parent)" },
+    };
 
     constructor( body? : PostSubAccount.Body ) { super( {}, body ); }
     public getMappings(): Array<RestfulEndpoint.FieldMap> { return []; }
@@ -28,6 +37,27 @@ export class PostSubAccount extends RestfulEndpoint<{}, PostSubAccount.Body, Pos
                 name:         { type: "string", minLength: 1 },
                 organization: { type: "object", additionalProperties: true },
                 carryOver:    { type: "object", additionalProperties: true },
+            },
+        };
+    }
+
+    // success body — the created sub-account node
+    public getResponseSchema(): RestfulEndpoint.Schema | null
+    {
+        return {
+            type: "object",
+            required: [ "account" ],
+            properties: {
+                account: {
+                    type: "object",
+                    properties: {
+                        id:        { type: "string", description: "Sub-account id." },
+                        name:      { type: "string", description: "Display name." },
+                        status:    { type: "string", description: "Account status." },
+                        ownerId:   { type: "string", description: "The owner (the admin who created it)." },
+                        createdAt: { type: "string", format: "date-time" },
+                    },
+                },
             },
         };
     }

@@ -4,6 +4,8 @@ import { Browse } from "@repo/api";
 import { BrowseProvider } from "./BrowseProvider";
 import { PexelsAdapter } from "./adapters/PexelsAdapter";
 import { UnsplashAdapter } from "./adapters/UnsplashAdapter";
+import { SvglAdapter } from "./adapters/SvglAdapter";
+import { IconifyAdapter } from "./adapters/IconifyAdapter";
 
 //
 // BrowseFactory — the registry of provider adapters (media-13.2), mirroring @repo/ai's AiFactory: a
@@ -15,6 +17,8 @@ export class BrowseFactory
     private readonly registry : Map<Browse.Provider, () => BrowseProvider> = new Map<Browse.Provider, () => BrowseProvider>( [
         [ Browse.Provider.PEXELS,   () => new PexelsAdapter() ],
         [ Browse.Provider.UNSPLASH, () => new UnsplashAdapter() ],
+        [ Browse.Provider.SVGL,     () => new SvglAdapter() ],
+        [ Browse.Provider.ICONIFY,  () => new IconifyAdapter() ],
         // add more (Pixabay, Artlist, OpenAI, Magnific, ElevenLabs) here as adapters land.
     ] );
 

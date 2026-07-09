@@ -33,7 +33,10 @@ export class PexelsAdapter implements BrowseProvider
 
         if( query.kinds.includes( Media.Kind.IMAGE ) )
         {
-            const url : string = `https://api.pexels.com/v1/search?query=${ encodeURIComponent( query.text ) }&per_page=${ perPage }&page=${ page }`;
+            // Pexels supports a dominant-color filter on photo search (named colors; "purple" is "violet" there)
+            const color : string | undefined = query.filters?.color;
+            const colorParam : string = color ? `&color=${ color === "purple" ? "violet" : color }` : "";
+            const url : string = `https://api.pexels.com/v1/search?query=${ encodeURIComponent( query.text ) }&per_page=${ perPage }&page=${ page }${ colorParam }`;
             const data = await this.fetchJson( url, ctx.apiKey );
             for( const photo of ( data?.photos ?? [] ) as Array<Record<string, unknown>> ) results.push( this.photoResult( photo ) );
         }

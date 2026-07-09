@@ -10,6 +10,7 @@
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {
+        "clamscan": "2.4.0",
         "@aws-sdk/client-apigatewaymanagementapi": "3.1073.0",
         "@aws-sdk/client-appconfig": "3.1073.0",
         "@aws-sdk/client-appconfigdata": "3.1073.0",

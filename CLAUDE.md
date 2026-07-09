@@ -5,6 +5,11 @@ These are **guidance** — for hard enforcement of the type rules, see *Enforcem
 
 ## TypeScript style
 
+- **These conventions apply to ALL code in the repo, no exceptions** — including the tooling in `tools/*`
+  (the Electron **Console**, scripts) and both the Electron **main** and **renderer** processes. Console code
+  is held to the same bar as service/web code: explicit variable types, meaningful (never single-char) names,
+  a comment on every function + inline step comments on non-trivial bodies, `Array<T>`, Results over throws,
+  etc. Don't write terser "it's just a tool" code.
 - **Explicitly type everything** — variables, parameters, return types, and **EVERY `await` result. No
   exceptions.** Do not rely on inference for locals. This is non-negotiable: if you write `await`, the result
   goes into a variable with an explicit type annotation — **even when the result is discarded/ignored**
@@ -36,7 +41,62 @@ These are **guidance** — for hard enforcement of the type rules, see *Enforcem
   block. Keep inline lambdas to a single expression.
   - ✓ `onSaved={ onEdited }` · `onClick={ () => setOpen( true ) }`
   - ✗ `onSaved={ ( ok : boolean ) => { setSnack( … ); setEditAsset( null ); void load(); return ok; } }`
+- **One function call per line.** Never put **more than one function call on the same line** — whether nested,
+  chained, or just two separate statements. Each call goes on its own line, indented one level in from its
+  enclosing bracket, with the closing bracket back at the opener's indent. This applies to nested calls, fluent
+  chains, argument lists that are themselves calls, AND multiple statements crammed onto one line with `;`. A
+  single standalone call (no nesting) stays on one line.
+  - ✗ two calls on one line (even a one-line `if`/block) — `if( ok ) { setHtml( body ); setMode( DESKTOP ); }`
+  - ✓ split — each statement + call on its own line:
+    ```
+    if( ok )
+    {
+        setHtml( body );
+        setMode( PreviewViewport.DESKTOP );
+    }
+    ```
+  - **Exception:** a single `.map`/`.filter`/`.forEach` (etc.) whose callback body is **just one function
+    call** stays on one line — that's one collection method + one call, not nesting.
+    - ✓ `const providers : Array<string> = data.providers.map( ( info : ProviderInfo ) : string => info.provider );`
+    - ✓ `rows.forEach( ( row : Row ) : void => remove( row ) );`
+    - ✗ still not OK once it chains — `data.filter( ( row : Row ) => keep( row ) ).map( ( row : Row ) => toView( row ) )`
+  - ✓ single call — `const wrote : Type.Result<void> = await this.dynamo.put( TABLE, row );`
+  - ✗ nested/chained on one line — `setRows( data.filter( ( row : Row ) => keep( row ) ).map( ( row : Row ) => toView( row ) ) );`
+  - ✓ each call on its own line, indented from the brackets:
+    ```
+    const views : Array<View> = data
+        .filter( ( row : Row ) : boolean => keep( row ) )
+        .map( ( row : Row ) : View => toView( row ) );
+    ```
+  - ✗ call-as-argument on one line — `publish( Events.envelope( { object, verb, data: toWire( row ) } ) );`
+  - ✓ break the inner call out first:
+    ```
+    const envelope : Events.Envelope = Events.envelope( {
+        object, verb, data: toWire( row ),
+    } );
+    const sent : Type.Result<void> = await this.kafka.publishEvent( envelope );
+    ```
 - Prefer `readonly`/`const`; don't mutate inputs.
+- **A declared function's opening brace + body go on their OWN lines (Allman braces) — NEVER collapse the body
+  onto the declaration line.** This holds even for a one-statement body and applies to every function/method
+  declaration (module-scope, class methods, functions declared inside a component). The `{` starts the next
+  line, the body is indented, the `}` closes on its own line. (Inline arrow callbacks that are one short
+  expression stay inline per the inline-function rule — this rule is about *declared* functions, not lambdas.)
+  - ✓
+    ```
+    function socialBaseUrl( network : string ) : string
+    {
+        return SOCIAL_BASE_URL[ network ] ?? "https://";
+    }
+    ```
+  - ✗ one-liner — `function socialBaseUrl( network : string ) : string { return SOCIAL_BASE_URL[ network ] ?? "https://"; }`
+- **Don't NEST declared functions inside other functions.** Declare helpers at the top level of their scope —
+  module scope, a class method, or (for a component) the component body per the Web-UI rule — not inside another
+  function/handler/render-helper. A render helper that needs sub-helpers (e.g. an inspector panel with
+  `renameKey`/`addAttr`) declares them as sibling functions in the component body and passes what they need as
+  args, rather than nesting them. By and large: no nested `function` declarations. **Few exceptions** — a tiny
+  closure that must capture a loop/local variable, or a one-off passed straight to `map`/`filter` (an inline
+  lambda, not a `function` declaration) — but default to NOT nesting.
 
 ## Naming
 
@@ -62,6 +122,11 @@ These are **guidance** — for hard enforcement of the type rules, see *Enforcem
   - Wrap fallible bodies in `ResultUtils.from( async () => … )` (captures throws), or return `ResultUtils.ok/err(...)`.
 - Endpoint impls translate a failed Result into an HTTP status (`{ status, data:{ message } }`) — they don't rethrow.
 - Throw only for truly unrecoverable programmer errors, never for expected failure paths.
+- **`appmodel.server.fetch(...)` / `RestfulService` NEVER throws — it returns a `Reply` (a Result).** Branch on
+  `reply.ok` (then read `reply.data` / `RestfulService.error( reply, … )`). **Do NOT wrap a `fetch` call in
+  `try/catch`** (nor `try/finally` "to reset a spinner") — the catch is dead code. A statement after the
+  `await` (e.g. `setBusy( false )`) always runs. Same for the data-layer facades (`dynamo.*`, `s3.*`, `sqs.*`,
+  …): they return `Type.Result<T>`, so branch on `.ok`, don't `try/catch`.
 
 ## Models & closed sets
 
@@ -86,7 +151,13 @@ These are **guidance** — for hard enforcement of the type rules, see *Enforcem
 - **UI strings are `{"..."}` literals** (localization-ready) — not localized yet; don't wire the label lookup.
 - **Reuse house widgets**, don't hand-roll: `TableInput`, `SaveBar`, `DialogWindow`, `SnackAlert`,
   `TextInput`/`EmailInput`/`PasswordInput`/`SelectInput`/`CountryInput`/`ZipInput`/`TimezoneInput`/`UrlInput`,
-  `AddressInput`, `OrganizationInput`.
+  `AddressInput`, `OrganizationInput`, `CoordinateInput`.
+- **Never use MUI `IconButton` directly — use the house `ButtonIcon`** (`id` + `icon` + `label` + `onClick`,
+  optional `size`/`disabled`). It carries the tooltip + a11y label + consistent sizing. The only place raw
+  `IconButton` is allowed is INSIDE the primitive icon-button widgets themselves (`ButtonIcon`, `ButtonIconDropdown`,
+  …) and as an input adornment inside a core field widget (e.g. `PasswordInput`'s show/hide toggle).
+- **A flex spacer is `<Pusher/>`, never `<Box sx={{ flexGrow: 1 }} />`.** Use the house `Pusher` to push
+  siblings apart in a row.
 - **Any action that changes state goes through a confirm `DialogWindow`** (remove, suspend, cancel, role change…).
 - **`Stack` spacing: `1` for a `direction="row"` Stack, `2` for a column (default/vertical) Stack.** Text/theme
   come from the MUI theme (`CssBaseline` is mounted) — inherited text must flip with dark mode.
@@ -100,6 +171,13 @@ These are **guidance** — for hard enforcement of the type rules, see *Enforcem
   manual `` `${ (amount/100).toFixed(2) } ${ currency }` `` (amounts are minor units/cents, so pass
   `amount / 100`). **Byte sizes:** `appmodel.ui.locale.bytes( value )` — never a hand-rolled KB/MB helper.
 - Renderer/helper functions used by a component live **inside** that component, not at module scope.
+- **`useEffect` (and other hook) callbacks are NAMED functions passed by reference, never inline multi-statement
+  lambdas.** The component-mount effect calls a `componentLoaded()` function; other effects call an intent-named
+  function (`onSelectionChanged`, …). Declare it inside the component and pass it by reference.
+  - ✓ `function componentLoaded() : void { void load(); … }` then `React.useEffect( componentLoaded, [] );`
+  - ✗ `React.useEffect( () => { void load(); const open = …; if( open ) setEditingId( open ); }, [] );`
+  - (A one-line effect body may stay inline — same rule as any inline function.) The named function may return a
+    cleanup function like any effect callback.
 - **All functions live inside the component.** Event handlers, data-loading, formatting, and render helpers
   are declared in the component function body (closing over its props/state) — never at module scope. Only
   pure, stateless constants/types that don't depend on the component may sit at module scope.
@@ -111,6 +189,19 @@ These are **guidance** — for hard enforcement of the type rules, see *Enforcem
   component, never inlined in a page/parent. The parent owns open/close state and passes it in
   (`open`/`onClose` + typed callbacks); the dialog owns its own inner form state. Name it `<Thing>Dialog`
   (e.g. `BalanceTopupDialog`) and colocate it with its page (`pages/<area>/dialogs/`) or under `widgets/` if shared.
+- **Prefer breaking a big component into smaller components over one giant file that does everything.** When a
+  component grows large (many render helpers, distinct panels/sections, a toolbar, an inspector, repeated rows),
+  extract cohesive pieces into their OWN component files (e.g. `<Thing>Toolbar`, `<Thing>Inspector`,
+  `<Thing>SectionRow`) and compose them — passing state down + typed callbacks up. A single multi-hundred-line
+  `.tsx` doing the whole feature is a smell; decompose it. (This refines "one component per file": a large
+  presentation-only helper that would otherwise bloat the file should become its own file, not stay inline.)
+- **STRICTLY one component per file — no exceptions for size.** A big feature component lives as a FAMILY of
+  files in its OWN sub-directory (e.g. `widgets/email/editor/` → `EmailTemplateEditor.tsx` (the composer),
+  `EmailBlockInspector.tsx`, `EmailDocumentSettings.tsx`, `SortableSection.tsx`, `SortableColumn.tsx`, …), with
+  shared constants + pure helpers in a sibling non-component module (`<Thing>Model.ts(x)`). Each `.tsx` exports
+  exactly ONE React component. If a `.tsx` grows past a few hundred lines or holds more than one component,
+  split it into a sub-directory before adding more. A single render helper that renders a distinct panel/row is
+  a component → its own file, not an inline function.
 
 ## Architecture & boundaries
 
@@ -132,11 +223,25 @@ These are **guidance** — for hard enforcement of the type rules, see *Enforcem
   webhooks, and the **UI (over websockets, later)** consume — so it's not optional. **Document each event** in
   [packages/system/EVENTS.md](packages/system/EVENTS.md) (service → `action` id → `data` model → emitting site).
   See `MediaService.publishAsset` / `AccountService.emit` / `AuthService.emit` for the pattern.
+- **Every service is Kafka-connected — it both PUBLISHES its own entity events AND CONSUMES the events it
+  reacts to.** Assume the bus is always available to a service. A cross-service reaction is a **consumer**, not
+  a peer API/DB call: subscribe with `kafka.subscribeEvents( "<consumer-group>", Events.Object.X, handler )` in
+  the MAIN role's startup (best-effort — a bus outage must not block boot; log + carry on), switch on the
+  envelope's `verb`, and keep the handler **idempotent** (redelivery is at-least-once). The handler updates only
+  its OWN tables (never a peer's). Correlation is automatic: `publishEvent` stamps the ambient
+  `RequestContext.transactionId()` onto `envelope.source.transactionId` + a Kafka header. Example: auth's
+  `auth-avatar` consumer reacts to `media.asset` (USER scope) to link a processed avatar to its user.
 
 ## Auth & security
 
 - JWT is **identity-only**; roles/permissions resolve **per request** from DynamoDB (the `Authorizer`).
   The client sends the acting account via the **`X-Account`** header (→ `auth.accountId`).
+- **Dev API keys are the PUBLIC-API credential ONLY.** A `Authorization: Bearer rup_<keyId>.<secret>` key
+  (verified by `Authorizer.verifyApiKey`) authenticates **only `audience: PUBLIC` endpoints**. Presented to
+  an `APP` (first-party) or `INTERNAL` (S2S) endpoint it's rejected with **403** ("API keys can only be used
+  with the public API") — even when the key is valid. Session JWTs work across audiences as normal; only the
+  dev-key path is audience-gated (enforced in `Service.processEndpoint`). So a key can reach an endpoint iff
+  the endpoint is **PUBLIC** *and* the key's role meets `access`.
 - **Enumeration-neutral** on registration / login / password reset. Reveal "already exists" only after a
   passed bot check (fail-closed). `GetUserExists` is authenticated-admin only.
 - Secrets live in **Secrets Manager**, not AppConfig. Token signature is **decode-only in dev**; prod verifies.

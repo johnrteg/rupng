@@ -75,7 +75,12 @@ export namespace User
     {
         id            : Type.ID;        // = the Cognito `sub` (the record key)
         status        : Status;
+        appRole?      : Access.AppRole;   // global staff/platform role (SUPPORT/APPLICATION/ROOT), if any —
+                                          // surfaced so the client can gate app/root-only UI (the Cognito group
+                                          // is the authoritative edge ceiling; this is a read-only projection)
         icon?         : Type.Url;         // app-chosen icon name/key (NOT a Cognito attribute)
+        avatarAssetId? : Type.ID;         // the USER-scope media asset (guid) the profile photo lives in — its
+                                          // AVATAR variants (xl→xs) are what surfaces render (media-23)
         lastLoginAt?  : Type.ISODateTime;
         createdAt     : Type.ISODateTime;
         modifiedAt    : Type.ISODateTime;
@@ -96,7 +101,7 @@ export namespace User
     export interface Update
     {
         cognito?   : Partial<CognitoProfile>;
-        augmented? : Partial<Pick<Augmented, "icon">>;
+        augmented? : Partial<Pick<Augmented, "icon" | "avatarAssetId">>;
     }
 
     /**
@@ -144,6 +149,7 @@ export namespace User
             id:          { type: "string" },            // = Cognito sub
             status:      { type: "string", enum: Object.values( Status ) },
             icon:        { type: "string" },            // app icon key/name
+            avatarAssetId: { type: "string" },          // media asset guid of the profile photo (media-23)
             lastLoginAt: { type: "string", format: "date-time" },
             createdAt:   { type: "string", format: "date-time" },
             modifiedAt:  { type: "string", format: "date-time" },

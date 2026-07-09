@@ -210,6 +210,11 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
             const responseSchema : Schema | null   = endpoint.getResponseSchema();
             const secured        : boolean         = endpoint.access !== undefined;
 
+            // the endpoint's declared error responses (status → description), merged into the standard set
+            const declaredErrors : Record<string, { description : string }> = {};
+            for( const [ status, description ] of Object.entries( ( endpoint.docs?.errors ?? {} ) as Record<string, string> ) )
+                declaredErrors[ status ] = { description };
+
             const operation : Record<string, unknown> = {
                 operationId : endpoint.docs?.operationId ?? endpoint.constructor.name,
                 summary     : endpoint.docs?.summary,
@@ -222,8 +227,12 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
                     "200": { description: "Success", ...( responseSchema ? { content: { "application/json": { schema: responseSchema } } } : {} ) },
                     "400": { description: "Validation error" },
                     ...( secured ? { "401": { description: "Unauthenticated" }, "403": { description: "Forbidden" } } : {} ),
+                    ...declaredErrors,   // endpoint-specific errors (e.g. 404 Not found) from docs.errors
                 },
-                security    : secured ? [ { devKey: [] }, { bearer: [] } ] : [],
+                security    : secured ? [ { bearer: [] } ] : [],
+                // vendor extension: the RBAC minimum role a caller needs (drives the docs' auth/role chips).
+                // Absent when the endpoint is unauthenticated (access === undefined).
+                ...( secured ? { "x-min-role": endpoint.access } : {} ),
             };
 
             ( paths[ path ] ??= {} )[ endpoint.method.toLowerCase() ] = operation;
@@ -234,9 +243,10 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
             info,
             paths,
             components : {
+                // ONE scheme: the developer API key is a bearer token `Authorization: Bearer rup_<keyId>.<secret>`
+                // (not a JWT — same header the platform Authorizer verifies). See auth ApiKey / Authorizer.verifyApiKey.
                 securitySchemes : {
-                    devKey : { type: "apiKey", in: "header", name: RestfulEndpoint.RestfulHeaders.DEVKEY },
-                    bearer : { type: "http", scheme: "bearer", bearerFormat: "JWT" },
+                    bearer : { type: "http", scheme: "bearer", description: "Developer API key — `Authorization: Bearer rup_<keyId>.<secret>` (create one under Settings → API)." },
                 },
             },
         };
@@ -508,6 +518,10 @@ export namespace RestfulEndpoint
         operationId? : string;                    // stable id for SDK codegen (default: the class name)
         deprecated?  : boolean;
         examples?    : Record<string, unknown>;   // example request/response payloads
+        errors?      : Record<number, string>;    // endpoint-specific error responses: HTTP status → description
+                                                  // (e.g. `{ 404: "Project not found" }`) — merged into the docs
+                                                  // responses on top of the standard 400/401/403. Mirror the
+                                                  // namespace `Error` enum here so the spec lists real failures.
     }
 
     // Route metadata extracted from an endpoint definition (see RestfulEndpoint.toRoutes).

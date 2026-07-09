@@ -7,11 +7,12 @@ import { ServiceButton, type ServiceDot } from "./ServiceButton";
 // The top strip of service tiles. Horizontally scrollable so the fleet can grow without wrapping.
 //
 export function ServiceBar(
-    { services, selected, statusOf, onSelect } :
+    { services, selected, statusOf, needsRedeploy, onSelect } :
     {
         services : Array<ServiceInfo>;
         selected : string | null;
         statusOf : ( id : string ) => Array<ServiceDot>;
+        needsRedeploy : ( id : string ) => boolean;
         onSelect : ( id : string ) => void;
     }
 )
@@ -40,6 +41,7 @@ export function ServiceBar(
                     service={service}
                     selected={selected === service.id}
                     dots={statusOf( service.id )}
+                    needsRedeploy={needsRedeploy( service.id )}
                     onSelect={() => onSelect( service.id )}
                 />
             ) )}

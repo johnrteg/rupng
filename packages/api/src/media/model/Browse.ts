@@ -17,6 +17,8 @@ export namespace Browse
         OPENAI     = "openai",       // AI image generation (via @repo/ai)
         MAGNIFIC   = "magnific",     // AI image upscale / generate
         ELEVENLABS = "elevenlabs",   // AI audio / voice / sfx generation
+        SVGL       = "svgl",         // SVG logos (svgl.app — public, keyless)
+        ICONIFY    = "iconify",      // SVG icon sets (iconify.design — public, keyless)
     }
 
     /** What a provider can do — declared by its adapter, drives fan-out + the UI. */

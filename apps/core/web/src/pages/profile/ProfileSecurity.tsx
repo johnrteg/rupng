@@ -3,9 +3,8 @@ import AppModel from "@model/AppModel";
 import React from 'react';
 import { JSX } from "react";
 
-import { Box, Button, Card, CardContent, CardHeader, Chip, CircularProgress, Divider, IconButton, List, ListItem, ListItemText, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Button, Card, CardContent, CardHeader, Chip, CircularProgress, Divider, List, ListItem, ListItemText, Stack, Typography } from "@mui/material";
 import KeyOutlinedIcon           from '@mui/icons-material/KeyOutlined';
-import LockResetOutlinedIcon     from '@mui/icons-material/LockResetOutlined';
 import DeleteOutlineOutlinedIcon from '@mui/icons-material/DeleteOutlineOutlined';
 import SendOutlinedIcon          from '@mui/icons-material/SendOutlined';
 import SmartphoneOutlinedIcon    from '@mui/icons-material/SmartphoneOutlined';
@@ -14,17 +13,17 @@ import { startRegistration, type PublicKeyCredentialCreationOptionsJSON } from "
 import { QRCodeSVG } from "qrcode.react";
 
 import { Access, RestfulService } from '@repo/endpoint';
-import { GetPasskeys, DeletePasskey, PostPasskeyRegisterOptions, PostPasskeyRegisterVerify, PostPasswordForgot, PostPasswordReset, PostMfaTotpBegin, PostMfaTotpVerify, DeleteMfaTotp } from '@repo/api';
+import { GetPasskeys, DeletePasskey, PostPasskeyRegisterOptions, PostPasskeyRegisterVerify, PostPasswordForgot, PostMfaTotpBegin, PostMfaTotpVerify, DeleteMfaTotp } from '@repo/api';
 import { MfaMethod } from '@repo/api';
 
 import LocaleService   from '@model/service/LocaleService';
 import AuthPage        from '@widgets/app/AuthPage';
+import ButtonIcon      from '@widgets/core/ButtonIcon';
 import TextInput       from '@widgets/core/TextInput';
-import PasswordInput   from '@widgets/core/PasswordInput';
 
 //
 // Profile : Security — the signed-in user's credential controls, one logical panel per card:
-//   • Password       — reset via an emailed verification code (send code → enter code + new password).
+//   • Password       — email a branded reset LINK; the no-auth reset landing page sets the new password.
 //   • Passkeys        — list / add (WebAuthn ceremony) / remove the caller's passkeys.
 //   • Authenticator   — TOTP app enrolment (not yet wired server-side — see note below).
 // Mirrors the Profile : Details card style; each panel owns its own local state + status line.
@@ -35,9 +34,7 @@ export function ProfileSecurity( props : ProfileSecurity.Props ) : JSX.Element
     const email : string = appmodel.auth.user?.email ?? "";
 
     // ── password reset ───────────────────────────────────────────────────────────────────────────
-    const [codeSent,setCodeSent]   = React.useState< boolean >( false );
-    const [code,setCode]           = React.useState< string >( "" );
-    const [newPassword,setNewPass] = React.useState< string >( "" );
+    const [linkSent,setLinkSent]   = React.useState< boolean >( false );
     const [pwBusy,setPwBusy]       = React.useState< boolean >( false );
     const [pwStatus,setPwStatus]   = React.useState< string >( "" );
 
@@ -65,45 +62,24 @@ export function ProfileSecurity( props : ProfileSecurity.Props ) : JSX.Element
     }
 
     // ── password reset ─────────────────────────────────────────────────────────────────────────
-    // Step 1 — email the caller a verification code (enumeration-neutral; the reply is always "sent").
-    async function onSendCode() : Promise<void>
+    // Email the caller a branded reset LINK (enumeration-neutral; the reply is always "sent"). The link opens
+    // the no-auth reset landing page, which collects + sets the new password — so this page never handles the
+    // password itself. `origin` lets the link resolve to this exact host (white-label / local dev aware).
+    async function onSendResetLink() : Promise<void>
     {
         if( email === "" ) return;
         setPwBusy( true );
         setPwStatus( "" );
-        const reply : RestfulService.Reply<PostPasswordForgot.Response> = await appmodel.server.fetch( new PostPasswordForgot( { account: email } ) );
+        const reply : RestfulService.Reply<PostPasswordForgot.Response> = await appmodel.server.fetch( new PostPasswordForgot( { account: email, origin: window.location.origin } ) );
         setPwBusy( false );
         if( reply.ok )
         {
-            setCodeSent( true );
-            setPwStatus( "We sent a verification code to your email." );
+            setLinkSent( true );
+            setPwStatus( "We emailed you a password reset link. Open it to choose a new password." );
         }
         else
         {
             setPwStatus( "Could not start the password reset. Please try again." );
-        }
-    }
-
-    ////////////////////////////////////////////////////////////////////////////////////////////
-    // Step 2 — set the new password using the emailed code as proof.
-    async function onResetPassword() : Promise<void>
-    {
-        if( code.trim() === "" || newPassword === "" ) return;
-        setPwBusy( true );
-        setPwStatus( "" );
-        const reply : RestfulService.Reply<PostPasswordReset.Response> = await appmodel.server.fetch(
-            new PostPasswordReset( { account: email, code: code.trim(), password: newPassword } ) );
-        setPwBusy( false );
-        if( reply.ok && reply.data?.ok )
-        {
-            setCodeSent( false );
-            setCode( "" );
-            setNewPass( "" );
-            setPwStatus( "Your password has been updated." );
-        }
-        else
-        {
-            setPwStatus( "That code was invalid or expired, or the password didn't meet the policy." );
         }
     }
 
@@ -250,31 +226,19 @@ export function ProfileSecurity( props : ProfileSecurity.Props ) : JSX.Element
 
                         {/* ── Password ─────────────────────────────────────────────────────────── */}
                         <Card variant="outlined">
-                            <CardHeader title={"Password"} subheader={"Reset your password with a verification code sent to your email."} />
+                            <CardHeader title={"Password"} subheader={"Reset your password with a secure link sent to your email."} />
                             <Divider />
                             <CardContent>
                                 <Stack spacing={ 2 }>
                                     <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                                        { email !== "" ? `A code will be sent to ${ email }.` : "No email is on file for this account." }
+                                        { email !== "" ? `A reset link will be sent to ${ email }.` : "No email is on file for this account." }
                                     </Typography>
 
-                                    { !codeSent
-                                        ? <Button variant="outlined" startIcon={ <SendOutlinedIcon /> } disabled={ pwBusy || email === "" } onClick={ () => void onSendCode() } sx={{ alignSelf: "flex-start" }}>
-                                              {"Send reset code"}
-                                          </Button>
-                                        : <>
-                                              <TextInput id="security-reset-code" label={"Verification code"} value={ code } onChange={ setCode } fullWidth />
-                                              <PasswordInput id="security-new-password" label={"New password"} value={ newPassword } autoComplete="new-password" onChange={ setNewPass } />
-                                              <Stack direction="row" spacing={ 1 }>
-                                                  <Button variant="contained" startIcon={ <LockResetOutlinedIcon /> } disabled={ pwBusy || code.trim() === "" || newPassword === "" } onClick={ () => void onResetPassword() }>
-                                                      {"Update password"}
-                                                  </Button>
-                                                  <Button variant="text" color="inherit" disabled={ pwBusy } onClick={ () => void onSendCode() }>
-                                                      {"Resend code"}
-                                                  </Button>
-                                              </Stack>
-                                          </>
-                                    }
+                                    <Stack direction="row" spacing={ 1 }>
+                                        <Button variant="outlined" startIcon={ <SendOutlinedIcon /> } disabled={ pwBusy || email === "" } onClick={ () => void onSendResetLink() } sx={{ alignSelf: "flex-start" }}>
+                                            { linkSent ? "Resend reset link" : "Send reset link" }
+                                        </Button>
+                                    </Stack>
 
                                     { pwStatus !== "" && <Typography variant="body2" sx={{ color: "text.secondary" }}>{ pwStatus }</Typography> }
                                 </Stack>
@@ -293,13 +257,9 @@ export function ProfileSecurity( props : ProfileSecurity.Props ) : JSX.Element
                                               { passkeys.map( ( passkey : GetPasskeys.Passkey ) =>
                                                   <ListItem key={ passkey.credentialId } disableGutters
                                                             secondaryAction={
-                                                                <Tooltip title={"Remove"}>
-                                                                    <span>
-                                                                        <IconButton edge="end" disabled={ pkBusy } onClick={ () => void onDeletePasskey( passkey.credentialId ) }>
-                                                                            <DeleteOutlineOutlinedIcon />
-                                                                        </IconButton>
-                                                                    </span>
-                                                                </Tooltip>
+                                                                <ButtonIcon id={ `passkey-remove-${ passkey.credentialId }` } label={"Remove"} edge="end" disabled={ pkBusy }
+                                                                            icon={ <DeleteOutlineOutlinedIcon /> }
+                                                                            onClick={ () => void onDeletePasskey( passkey.credentialId ) } />
                                                             }>
                                                       <KeyOutlinedIcon sx={{ mr: 1.5, color: "text.secondary" }} />
                                                       <ListItemText primary={ shortId( passkey.credentialId ) } secondary={ `Added ${ displayDate( passkey.createdAt ) }` }

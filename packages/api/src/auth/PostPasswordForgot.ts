@@ -30,7 +30,10 @@ export class PostPasswordForgot extends RestfulEndpoint<{}, PostPasswordForgot.B
     {
         return {
             type: 'object',
-            properties: { account: { type: 'string', minLength: 3 } },
+            properties: {
+                account: { type: 'string', minLength: 3 },
+                origin:  { type: 'string' },   // the caller's origin (protocol+host) → base for the reset link
+            },
             required: ['account'],
             additionalProperties: false
         };
@@ -44,6 +47,7 @@ export namespace PostPasswordForgot
     export interface Body extends RestfulEndpoint.NonAuthRequest
     {
         account : string;   // email or phone (E.164)
+        origin? : string;   // caller's origin (protocol+host) — resolves the reset link's base URL (white-label aware)
     }
 
     export interface Response

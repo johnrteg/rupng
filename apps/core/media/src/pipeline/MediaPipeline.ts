@@ -7,7 +7,7 @@ import { FileUtils, type Type } from "@repo/common";
 import { Ai } from "@repo/ai";
 
 import { MediaAnalyzer } from "./MediaAnalyzer";
-import type { MalwareScanner } from "../scan/MalwareScanner";
+import { Scanner } from "@repo/services";
 
 //
 // MediaPipeline — the ingest processing shared by both runtimes (the Main service drains the queues locally;
@@ -28,7 +28,7 @@ export namespace MediaPipeline
         // The AI client for the CHAT modality (auto-tag vision) — undefined when auto-tag is off; suggestTags falls back.
         chatAi? : Ai;
         // The malware scanner for the ingest gate (media-5) — the config-selected adapter; NoopScanner when off.
-        scanner? : MalwareScanner;
+        scanner? : Scanner;
     }
 
     const TABLE : string = "media";
@@ -89,29 +89,39 @@ export namespace MediaPipeline
         const bytes : Uint8Array = await object.data.Body.transformToByteArray();
 
         // scan with the config-selected engine (Noop = pass-through when disabled)
-        const scanner : MalwareScanner = deps.scanner ?? { provider: MediaConfig.ScanProvider.NONE, scan: () => Promise.resolve( { ok: true, data: { clean: true, engine: "noop" } } ) };
-        const verdict : Type.Result<MalwareScanner.Verdict> = await scanner.scan( bytes, asset.name );
+        const scanner : Scanner = deps.scanner ?? { provider: Scanner.Provider.NONE, scan: () => Promise.resolve( { ok: true, data: { clean: true, engine: "noop" } } ) };
+        const verdict : Type.Result<Scanner.Verdict> = await scanner.scan( bytes, asset.name );
+        const provider : string = deps.config.scan.provider;   // the configured engine id — recorded on the result
+        const scannedAt : string = new Date().toISOString();
 
         // engine error → fail-closed (default): throw so the message redelivers and the file stays SCANNING
         if( !verdict.ok )
         {
-            deps.log.warn( "media.scan engine error", { accountId, guid, provider: deps.config.scan.provider, error: verdict.error } );
+            deps.log.warn( "media.scan engine error", { accountId, guid, provider, error: verdict.error } );
             if( deps.config.scan.failClosed !== false ) throw new Error( `scan engine unavailable ${ accountId }/${ guid }` );
             deps.log.warn( "media.scan fail-OPEN — advancing unscanned", { accountId, guid } );   // explicit: not silently dropped
-        }
 
-        // detection → quarantine (never promoted / delivered), record the threat + stop
-        if( verdict.ok && !verdict.data.clean )
-        {
-            deps.log.warn( "media.scan THREAT — quarantined", { accountId, guid, engine: verdict.data.engine, threat: verdict.data.threat } );
-            await deps.dynamo.put( TABLE, { ...asset, status: Media.Status.QUARANTINED, scanThreat: verdict.data.threat, modifiedAt: new Date().toISOString() } );
+            // fail-open: advance to processing but RECORD that it went through unscanned (visible in Info)
+            const failOpenScan : Media.ScanResult = { clean: true, provider, failOpen: true, scannedAt };
+            await deps.dynamo.put( TABLE, { ...asset, status: Media.Status.PROCESSING, scanThreat: undefined, scan: failOpenScan, modifiedAt: scannedAt } );
+            await deps.sqs.send( "media-process", { accountId, guid } );
             return;
         }
 
-        // clean → advance to processing
-        await deps.dynamo.put( TABLE, { ...asset, status: Media.Status.PROCESSING, scanThreat: undefined, modifiedAt: new Date().toISOString() } );
+        // detection → quarantine (never promoted / delivered), record the threat + result, and stop
+        if( !verdict.data.clean )
+        {
+            deps.log.warn( "media.scan THREAT — quarantined", { accountId, guid, engine: verdict.data.engine, threat: verdict.data.threat } );
+            const threatScan : Media.ScanResult = { clean: false, provider, engine: verdict.data.engine, threat: verdict.data.threat, scannedAt };
+            await deps.dynamo.put( TABLE, { ...asset, status: Media.Status.QUARANTINED, scanThreat: verdict.data.threat, scan: threatScan, modifiedAt: scannedAt } );
+            return;
+        }
+
+        // clean → record the clean result + advance to processing
+        const cleanScan : Media.ScanResult = { clean: true, provider, engine: verdict.data.engine, scannedAt };
+        await deps.dynamo.put( TABLE, { ...asset, status: Media.Status.PROCESSING, scanThreat: undefined, scan: cleanScan, modifiedAt: scannedAt } );
         await deps.sqs.send( "media-process", { accountId, guid } );
-        deps.log.info( "media.scan clean → processing", { accountId, guid, engine: verdict.ok ? verdict.data.engine : "none" } );
+        deps.log.info( "media.scan clean → processing", { accountId, guid, engine: verdict.data.engine } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////
@@ -280,6 +290,10 @@ export namespace MediaPipeline
         const original : Media.Item | undefined = Media.originalItem( asset );
         if( !original ) return;
 
+        // a USER-scope image is an AVATAR envelope — it gets square CROPPED renditions (once a crop is framed),
+        // never the generic DISPLAY variants
+        const isAvatarAsset : boolean = asset.scope === Media.Scope.USER && original.kind === Media.Kind.IMAGE;
+
         const onDemand : boolean = profileName !== undefined && profileName !== "";
         const selected : string = onDemand ? ( profileName as string ) : DISPLAY_PROFILE;
 
@@ -292,7 +306,7 @@ export namespace MediaPipeline
         const specsForProfile : Array<Media.VariantSpec> = deps.config.variants.profiles[ selected ]
             ?? ( selected === DISPLAY_PROFILE ? [ ...Media.DISPLAY_VARIANTS ] : [] );
         const runNow : boolean = onDemand || deps.config.variants.strategy === "preprocess";
-        const specs : Array<Media.VariantSpec> = runNow ? specsForProfile.filter( ( spec ) => mimeMatches( spec.mime, original.mime ) ) : [];
+        const specs : Array<Media.VariantSpec> = ( runNow && !isAvatarAsset ) ? specsForProfile.filter( ( spec ) => mimeMatches( spec.mime, original.mime ) ) : [];
 
         // fetch the original ONCE — reused to resize renditions + probe stats (image/video only)
         const isVisual : boolean = original.kind === Media.Kind.IMAGE || original.kind === Media.Kind.VIDEO;
@@ -328,6 +342,25 @@ export namespace MediaPipeline
                 meta: { image: spec.width ? { width: spec.width, height: spec.height ?? 0 } : undefined },
                 derivation: { job: "process", sourceItemId: original.id },
             } ) );
+        }
+
+        // AVATAR → square cropped renditions (xl→xs) from the framed crop rect (initial pass, once a crop is set)
+        if( isAvatarAsset && asset.avatarCrop && originalBytes && !onDemand )
+        {
+            for( const spec of Media.AVATAR_VARIANTS.filter( ( entry ) => mimeMatches( entry.mime, original.mime ) ) )
+            {
+                const rendition : MediaAnalyzer.Rendition | null = await MediaAnalyzer.cropResizeImage( originalBytes, asset.avatarCrop, spec );
+                if( !rendition ) continue;
+                const item : Media.Item = makeItem( {
+                    usage: Media.Usage.AVATAR, profile: spec.label, kind: Media.Kind.IMAGE, mime: mimeForFormat( rendition.format ), extension: rendition.format,
+                    size: rendition.size, status: Media.Status.OK,
+                    meta: { image: { width: rendition.width, height: rendition.height, format: rendition.format } },
+                    derivation: { job: "avatar", sourceItemId: original.id },
+                } );
+                const put : Type.Result<void> = await deps.s3.put( "media", itemKey( asset, item ), Buffer.from( rendition.bytes ), item.mime );
+                item.status = put.ok ? Media.Status.OK : Media.Status.FAILED;
+                produced.push( item );
+            }
         }
 
         // VIDEO → a first-frame POSTER (initial pass only) so the grid has a thumbnail

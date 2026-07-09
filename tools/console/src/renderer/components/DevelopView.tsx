@@ -48,9 +48,18 @@ export function DevelopView()
     const [ health, setHealth ]           = useState<Record<string, Array<HealthResult>>>( {} );
     const [ claudeMode, setClaudeMode ]   = useState<ClaudeMode>( "ondemand" );
     const [ buildQueue, setBuildQueue ]   = useState<BuildQueue | null>( null );
+    const [ drift, setDrift ]             = useState<Record<string, boolean>>( {} );   // service id → manifest changed since last deploy (needs redeploy)
     const [ browserOpen, setBrowserOpen ] = useState<boolean>( false );   // a local frontend "runs" in the app window
     const [ settingsTick, setSettingsTick ] = useState<number>( 0 );      // bump to recompute dots when a target/Auto toggle changes
     const [ buildAllLaunch, setBuildAllLaunch ] = useState<boolean>( loadBuildAllOnLaunch );   // build all + run selected on launch
+
+    // refresh the "needs redeploy" flag for every service (manifest hash changed since last LocalStack deploy)
+    const checkDrift = useCallback( async ( list : Array<ServiceInfo> ) : Promise<void> =>
+    {
+        const entries : Array<[ string, boolean ]> = await Promise.all(
+            list.map( ( service : ServiceInfo ) : Promise<[ string, boolean ]> => api.manifestDrift( service.id ).then( ( result ) : [ string, boolean ] => [ service.id, result.drifted ] ) ) );
+        setDrift( Object.fromEntries( entries ) );
+    }, [] );
 
     // initial load: pull services + all derived state, select a default service, optionally build-all
     useEffect( () =>
@@ -59,6 +68,7 @@ export function DevelopView()
         {
             const list : Array<ServiceInfo> = await api.listServices();
             setServices( list );
+            void checkDrift( list );
             setStageStates( await api.getStageStates() );
             setClaudeMode( await api.claudeGetMode() );
             setRunning( foldProcs( {}, await api.getProcStates() ) );
@@ -82,7 +92,7 @@ export function DevelopView()
     {
         const offProc  = api.onProc( ( proc : ProcState ) => setRunning( ( prev ) => foldProcs( prev, [ proc ] ) ) );
         const offStage = api.onStage( ( { service, state } ) => setStageStates( ( prev ) => ( { ...prev, [ service ]: state } ) ) );
-        const offQueue = api.onBuildQueue( ( queue : BuildQueue ) => setBuildQueue( queue ) );
+        const offQueue = api.onBuildQueue( ( queue : BuildQueue ) => { setBuildQueue( queue ); void checkDrift( services ); } );
         const offBrowser = api.onBrowser( ( browser : BrowserState ) => setBrowserOpen( browser.open ) );
         // re-push the build config + recompute dots whenever a target/Auto toggle changes (fired by saveBuildSettings)
         const onSettings = () : void => { void api.buildConfigure( allBuildSettings( services.map( ( service ) => service.id ) ) ); setSettingsTick( ( tick ) => tick + 1 ); };
@@ -222,7 +232,7 @@ export function DevelopView()
                 </Tooltip>
             </Box>
 
-            <ServiceBar services={services} selected={selected} statusOf={statusOf} onSelect={setSelected} />
+            <ServiceBar services={services} selected={selected} statusOf={statusOf} needsRedeploy={( id : string ) => drift[ id ] ?? false} onSelect={setSelected} />
 
             {/* sequential build-queue progress (auto-build across services) */}
             {buildQueue && buildQueue.total > 0 && (

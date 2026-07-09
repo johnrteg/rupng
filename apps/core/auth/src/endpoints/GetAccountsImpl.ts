@@ -1,5 +1,5 @@
 //
-import { GetAccounts } from '@repo/api';
+import { GetAccounts, Paging } from '@repo/api';
 import { NetworkUtils } from '@repo/common';
 import { RestfulEndpoint } from '@repo/endpoint';
 import AuthService from '../services/AuthService';
@@ -23,7 +23,7 @@ export class GetAccountsImpl extends GetAccounts
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
         if( !auth.userId ) return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
-        const reply : GetAccounts.Response = { accounts: [] };
+        const reply : GetAccounts.Response = Paging.paginate( [], this.query ?? {} );   // STUB — empty until role_grants is wired
         return { status: NetworkUtils.Status.OK, data: reply };
     }
 }

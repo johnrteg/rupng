@@ -18,6 +18,8 @@ import { CognitoCodesView } from "./components/CognitoCodesView";
 import { ProcessView } from "./components/ProcessView";
 import { RepoView } from "./components/RepoView";
 import { DeployView } from "./components/DeployView";
+import { SimulatorsView } from "./components/SimulatorsView";
+import { ActionsView } from "./components/ActionsView";
 
 //
 // Shell: the two top-level tabs (Develop = build/deploy workspace; Monitor = LocalStack observability)
@@ -88,6 +90,16 @@ export function App()
             {view === "deploy" && (
                 <Box sx={{ flexGrow: 1, minHeight: 0 }}>
                     <DeployView />
+                </Box>
+            )}
+            {view === "fake" && (
+                <Box sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                    <SimulatorsView />
+                </Box>
+            )}
+            {view === "actions" && (
+                <Box sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                    <ActionsView />
                 </Box>
             )}
 

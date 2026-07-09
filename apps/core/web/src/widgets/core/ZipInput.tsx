@@ -60,10 +60,11 @@ export function ZipInput( props: ZipInput.Props ) : JSX.Element
     //////////////////////////////////////////////////////////////////////////////////////////////////////
     function onChange( new_value : string ) : void
     {
-        if( props.country === "US" && new_value.length > 5 )
+        // US: digits only, 5-digit ZIP with an OPTIONAL 4-digit ZIP+4 addition (auto-hyphenated: #####-####)
+        if( props.country === "US" )
         {
-            new_value = StringUtils.removeAll( new_value, "-" );
-            new_value = new_value.substring(0,5) + "-" + new_value.substring(5);
+            const digits : string = new_value.replace( /\D/g, "" ).substring( 0, 9 );   // up to 5 + 4 digits
+            new_value = digits.length > 5 ? `${ digits.substring( 0, 5 ) }-${ digits.substring( 5 ) }` : digits;
         }
         setValue( new_value );
         if( props.onChange )props.onChange( new_value );

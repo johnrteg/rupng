@@ -199,7 +199,7 @@ export function AccountBilling( props : AccountBilling.Props ) : JSX.Element
     ];
 
     return  <AuthPage minAccess={ Access.AccountRole.BILLING } title={"Account : Billing"}>
-                <Box sx={{ p: 2, pb: 12, maxWidth: 960, mx: "auto" }}>
+                <Box sx={{ p: 2, pb: 12, mx: "auto" }}>
 
                     { loading && <Stack direction="row" spacing={ 1 } sx={{ alignItems: "center", p: 2 }}><CircularProgress size={ 18 } /><Typography variant="body2" sx={{ color: "text.secondary" }}>{"Loading…"}</Typography></Stack> }
                     { !loading && error !== "" && <Typography variant="body2" sx={{ color: "error.main", p: 2 }}>{ error }</Typography> }

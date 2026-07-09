@@ -18,6 +18,9 @@ export default class AuthService
     // ladder role is resolved server-side per request; until that's surfaced to the client, default to the
     // account owner (new sign-ups are provisioned as admins). TODO: set from the resolved membership role.
     private _role               : Access.Role = Access.AccountRole.ACCOUNT;
+    // the caller's GLOBAL staff/app role (from the session profile's Cognito group), if any — lets the client
+    // gate app/root-only UI. Separate from the per-account role; the effective role() is the higher of the two.
+    private _appRole?           : Access.AppRole;
     public passwordPolicies     : PasswordPolicy;
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -55,13 +58,22 @@ export default class AuthService
     public setUser( user : GetSession.Response | null ) : void
     {
         this.user = user;
+        this._appRole = user?.appRole;   // surface the global staff/app role (drives app/root-only UI gating)
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    /** The caller's effective account role — drives role-based UI (which nav items / actions are shown). */
-    public role() : Access.Role { return this._role; }
+    /** The caller's EFFECTIVE role — the higher-ranked of the per-account role and the global staff/app role.
+     *  So account-gated UI works as before, and an app/root staff member additionally clears an AppRole floor. */
+    public role() : Access.Role
+    {
+        if( this._appRole !== undefined && Access.rank( this._appRole ) > Access.rank( this._role ) ) return this._appRole;
+        return this._role;
+    }
 
-    /** Set the caller's effective account role (from the resolved membership role, once surfaced). */
+    /** The global staff/app role (SUPPORT/APPLICATION/ROOT), if any — undefined for a non-staff user. */
+    public appRole() : Access.AppRole | undefined { return this._appRole; }
+
+    /** Set the caller's effective account role (from the resolved membership role in the acting account). */
     public setRole( role : Access.Role ) : void { this._role = role; }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////

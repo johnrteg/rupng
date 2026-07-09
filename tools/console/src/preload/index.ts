@@ -18,6 +18,8 @@ import {
     type BrowserState, type BuildSettings, type BuildQueue, type ManifestDrift,
     type MonitorState, type MonitorEvent, type MonitorSync,
     type SesListing, type CognitoCodeListing,
+    type FakeEmailListing, type FakeEmailConfigResult, type FakeEmailSaveResult,
+    type AuthActionsListing, type AuthActionCancelResult,
     type ProcessListing, type ReapResult
 } from "../shared/types";
 
@@ -196,6 +198,15 @@ const api =
     // ses viewer (Email sub-tab)
     sesMessages      : () : Promise<SesListing> => ipcRenderer.invoke( IPC.sesMessages ),
     sesClear         : () : Promise<void> => ipcRenderer.invoke( IPC.sesClear ),
+
+    // fake providers (Fake → Email)
+    fakeInbox        : () : Promise<FakeEmailListing> => ipcRenderer.invoke( IPC.fakeInbox ),
+    fakeClear        : () : Promise<void> => ipcRenderer.invoke( IPC.fakeClear ),
+    fakeConfigGet    : () : Promise<FakeEmailConfigResult> => ipcRenderer.invoke( IPC.fakeConfigGet ),
+    fakeConfigSave   : ( config : unknown ) : Promise<FakeEmailSaveResult> => ipcRenderer.invoke( IPC.fakeConfigSave, config ),
+    // auth actions (Actions tab)
+    authActionsList   : ( status : string ) : Promise<AuthActionsListing> => ipcRenderer.invoke( IPC.authActionsList, status ),
+    authActionsCancel : ( actionId : string ) : Promise<AuthActionCancelResult> => ipcRenderer.invoke( IPC.authActionsCancel, actionId ),
     cognitoCodes     : () : Promise<CognitoCodeListing> => ipcRenderer.invoke( IPC.cognitoCodes ),
 
     // kafka monitor (Events sub-tab)

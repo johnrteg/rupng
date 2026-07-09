@@ -1,5 +1,5 @@
 //
-import { PostRegister, ContactMethod } from '@repo/api';
+import { PostRegister, ContactMethod, Email } from '@repo/api';
 import { NetworkUtils } from '@repo/common';
 import { RestfulEndpoint } from '@repo/endpoint';
 import AuthService from '../services/AuthService';
@@ -8,9 +8,11 @@ import { authError, type AuthFailure } from './AuthErrors';
 import { verifyBotToken } from './BotCheck';
 
 //
-// Create the pending account: Cognito SignUp (sends the verification code) + a DynamoDB `users` row.
-// Enumeration-neutral — an already-registered identifier returns the SAME acknowledgement (the truthful
-// "you already have an account" is emailed to the owner out-of-band, never surfaced here).
+// Create the account APP-DRIVEN: `UserStore.register` makes the Cognito credential with NO Cognito mail, we
+// publish `auth.user.created` (the account service provisions the account), then we send a BRANDED email-
+// verification link through the email service (which mints the TTL landing token). Enumeration-neutral — an
+// already-registered identifier returns the SAME acknowledgement (the truthful "you already have an account"
+// is surfaced only after a passed bot check, never here).
 //
 export class PostRegisterImpl extends PostRegister
 {
@@ -35,6 +37,26 @@ export class PostRegisterImpl extends PostRegister
             const registered : UserStore.Registered = await this.service.users.register( {
                 method: body.method, account, firstName: body.firstName, lastName: body.lastName, accountName: body.accountName, password: body.password,
             } );
+
+            // provision the account (the user exists now — verification confirms the email, it doesn't gate sign-in)
+            await this.service.publishUserCreated( {
+                userId: registered.userId, firstName: body.firstName, lastName: body.lastName,
+                accountName: body.accountName ?? "",
+                email: body.method === ContactMethod.PHONE ? undefined : account,
+                phone: body.method === ContactMethod.PHONE ? account : undefined,
+            } );
+
+            // send the BRANDED verification link for the EMAIL rail (SMS verification follows once that rail is live)
+            if( body.method !== ContactMethod.PHONE )
+                await this.service.sendNotification( {
+                    type:        Email.NotificationType.EMAIL_VERIFICATION,
+                    target:      account,
+                    userId:      registered.userId,
+                    requestedBy: registered.userId,
+                    origin:      body.origin,
+                    mergeData:   { "name.first": body.firstName, "name.last": body.lastName },
+                } );
+
             const reply : PostRegister.Response = {
                 registrationToken: account, verify: registered.verify,
                 codeExpiresInSec: PostRegister.CODE_EXPIRES_SEC, resendCooldownSec: PostRegister.RESEND_COOLDOWN_SEC,

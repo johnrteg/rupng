@@ -190,12 +190,17 @@ export function ActionToolbar(
             </Button>
 
             {/* manifest changed since the last LocalStack deploy → its AWS footprint is stale (new
-                resources won't resolve until redeployed). Offer a one-click redeploy. */}
+                resources won't resolve until redeployed). Offer a one-click redeploy. Disabled while a
+                build/deploy is already running so we never stack a second cdklocal deploy on top. */}
             {drifted && (
-                <Tooltip title="CloudManifest changed since the last LocalStack deploy — redeploy to create/apply its AWS resources (code changes don't need this; manifest/footprint changes do)">
-                    <Button size="small" color="warning" variant="contained" startIcon={<WarningAmberIcon />} onClick={() => void api.buildRunStep( service.id, "deploy" )}>
-                        Redeploy
-                    </Button>
+                <Tooltip title={busy ? "Deploying…" : "CloudManifest changed since the last LocalStack deploy — redeploy to create/apply its AWS resources (code changes don't need this; manifest/footprint changes do)"}>
+                    <span>
+                        <Button size="small" color="warning" variant="contained" disabled={busy}
+                                startIcon={busy ? <CircularProgress size={14} color="inherit" /> : <WarningAmberIcon />}
+                                onClick={() => void api.buildRunStep( service.id, "deploy" )}>
+                            {busy ? "Redeploying…" : "Redeploy"}
+                        </Button>
+                    </span>
                 </Tooltip>
             )}
         </Box>

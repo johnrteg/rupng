@@ -26,9 +26,10 @@ export class PatchAssetImpl extends PatchAsset
         const current : Media.Asset = ObjectUtils.withDefaults( got.data, Media.DEFAULT );
         const asset : Media.Asset = {
             ...current,
-            tags:       this.body?.tags !== undefined ? this.body.tags : current.tags,
-            name:       this.body?.name !== undefined ? this.body.name : current.name,
-            modifiedAt: new Date().toISOString(),
+            tags:        this.body?.tags !== undefined ? this.body.tags : current.tags,
+            name:        this.body?.name !== undefined ? this.body.name : current.name,
+            campaignIds: this.body?.campaignIds !== undefined ? this.body.campaignIds : current.campaignIds,   // 0..N campaigns using this asset
+            modifiedAt:  new Date().toISOString(),
         };
         const put : Type.Result<void> = await this.service.dynamo.put( "media", { ...asset } );
         if( !put.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "media write failed" } };

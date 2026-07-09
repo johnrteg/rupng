@@ -1,6 +1,8 @@
 //
 import { GetBootstrap } from '@repo/api';
 import { GetBootstrapImpl } from '../endpoints/GetBootstrapImpl';
+import { GetOpenApiImpl } from '../endpoints/GetOpenApiImpl';
+import { GetArticleImpl } from '../endpoints/GetArticleImpl';
 import AppService from './AppService';
 import { Type } from '@repo/common';
 
@@ -35,6 +37,8 @@ export class AppPublicService extends AppService
     {
         await super.registerEndpoints();              // keeps /health
         this.register( new GetBootstrapImpl( this ) );
+        this.register( new GetOpenApiImpl( this ) );   // GET /api/app/v1/openapi.json — the live published API spec
+        this.register( new GetArticleImpl( this ) );   // GET /api/app/v1/articles/:id — help article (stub)
     }
 }
 

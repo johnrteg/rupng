@@ -54,6 +54,8 @@ export namespace AiRouting
         ELEVENLABS = "elevenlabs",   // text-to-speech / speech cloning
         FISH       = "fish",         // fish.audio — text-to-speech / speech cloning
         MAGNIFIC   = "magnific",     // image generation / upscale
+        GEMINI     = "gemini",       // Google Gemini — chat/vision, Imagen (image), Veo (video), Gemini TTS
+        AWS_TRANSCRIBE = "aws-transcribe",   // Amazon Transcribe — speech-to-text (IAM; S3-staged async job)
     }
 
     /** What an AI provider can do — the modalities it supports + a display label. Drives the AI Gen UI's
@@ -97,9 +99,12 @@ export namespace AiRouting
         { provider: Provider.BEDROCK,    label: "AWS Bedrock", modalities: [ Modality.CHAT, Modality.IMAGE, Modality.VIDEO ],
           candidates: { [ Modality.IMAGE ]: { min: 1, max: 4, default: 1 } } },
         { provider: Provider.ELEVENLABS, label: "ElevenLabs",  modalities: [ Modality.TEXT_TO_SPEECH, Modality.SPEECH_CLONING, Modality.SOUND, Modality.SPEECH_TO_TEXT ] },
-        { provider: Provider.FISH,       label: "fish.audio",  modalities: [ Modality.TEXT_TO_SPEECH, Modality.SPEECH_CLONING ] },
+        { provider: Provider.FISH,       label: "fish.audio",  modalities: [ Modality.TEXT_TO_SPEECH, Modality.SPEECH_CLONING, Modality.SOUND ] },
         { provider: Provider.MAGNIFIC,   label: "Magnific",    modalities: [ Modality.IMAGE ],
           candidates: { [ Modality.IMAGE ]: { min: 1, max: 4, default: 2 } } },
+        { provider: Provider.GEMINI,     label: "Google Gemini", modalities: [ Modality.CHAT, Modality.IMAGE, Modality.VIDEO, Modality.TEXT_TO_SPEECH, Modality.SPEECH_TO_TEXT ],
+          candidates: { [ Modality.IMAGE ]: { min: 1, max: 4, default: 1 } } },
+        { provider: Provider.AWS_TRANSCRIBE, label: "Amazon Transcribe", modalities: [ Modality.SPEECH_TO_TEXT ] },
     ];
 
     /** The providers that can serve a modality (for a UI provider picker / route validation). */
@@ -118,6 +123,53 @@ export namespace AiRouting
     export function providerInfo( provider : Provider ) : ProviderInfo | undefined
     {
         return CATALOG.find( ( info ) => info.provider === provider );
+    }
+
+    //
+    // Per-(provider, modality) DEFAULT MODEL — the model the backend uses for a modality when the caller
+    // doesn't pin one. This is the single place the platform "picks the model" (each modality needs a
+    // DIFFERENT model — e.g. Gemini chat = gemini-2.5-flash but image = imagen-4.0, video = veo-3.1 — so the
+    // chat default must NOT leak into image/video/tts). A per-account / marketplace-provided model overrides
+    // this (passed as the request/route `model`). Absent → the adapter's own built-in default for that modality.
+    //
+    export const MODELS : Partial<Record<Provider, Partial<Record<Modality, string>>>> =
+    {
+        [ Provider.OPENAI ]: {
+            [ Modality.CHAT ]:           "gpt-4o-mini",
+            [ Modality.IMAGE ]:          "gpt-image-1",
+            [ Modality.SPEECH_TO_TEXT ]: "whisper-1",
+        },
+        [ Provider.GEMINI ]: {
+            [ Modality.CHAT ]:           "gemini-2.5-flash",
+            [ Modality.IMAGE ]:          "gemini-2.5-flash-image",   // native image gen (:generateContent) — FREE tier; Imagen (:predict) is paid-only
+            [ Modality.VIDEO ]:          "veo-3.1-generate-preview",
+            [ Modality.TEXT_TO_SPEECH ]: "gemini-2.5-flash-preview-tts",
+            [ Modality.SPEECH_TO_TEXT ]: "gemini-2.5-flash",
+        },
+        [ Provider.ANTHROPIC ]: {
+            [ Modality.CHAT ]: "claude-3-5-sonnet-latest",
+        },
+        [ Provider.BEDROCK ]: {
+            [ Modality.CHAT ]:  "anthropic.claude-3-5-sonnet-20240620-v1:0",
+            [ Modality.IMAGE ]: "amazon.titan-image-generator-v1",
+            [ Modality.VIDEO ]: "amazon.nova-reel-v1:0",
+        },
+        [ Provider.ELEVENLABS ]: {
+            [ Modality.TEXT_TO_SPEECH ]: "eleven_multilingual_v2",
+            [ Modality.SPEECH_TO_TEXT ]: "scribe_v1",   // ElevenLabs Scribe speech-to-text
+        },
+        [ Provider.FISH ]: {
+            [ Modality.TEXT_TO_SPEECH ]: "speech-1.6",
+        },
+        [ Provider.MAGNIFIC ]: {
+            [ Modality.IMAGE ]: "mystic",
+        },
+    };
+
+    /** The default model for a (provider, modality) pair, or undefined (→ the adapter's own modality default). */
+    export function modelFor( provider : Provider, modality : Modality ) : string | undefined
+    {
+        return MODELS[ provider ]?.[ modality ];
     }
 
     /** How many solutions a provider returns for a media type — the configured range or a single solution. */

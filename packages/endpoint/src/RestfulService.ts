@@ -76,6 +76,10 @@ export class RestfulService
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** The API base URL this client targets (e.g. for a docs "Try It" that calls the real edge with a dev key). */
+    public get baseUrl() : string { return this.base_url; }
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////
     public passHeaders( headers: any, names : Array<string> ) : void
     {
         let i : number;

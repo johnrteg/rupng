@@ -1,5 +1,5 @@
 //
-import { GetInvites, Account } from '@repo/api';
+import { GetInvites, Account, Paging } from '@repo/api';
 import { NetworkUtils } from '@repo/common';
 import { RestfulEndpoint, Access } from '@repo/endpoint';
 import AccountService from '../services/AccountService';
@@ -37,7 +37,7 @@ export class GetInvitesImpl extends GetInvites
                 invitedBy:  ( row.invitedBy as Account.Invite[ "invitedBy" ] ) || undefined,
             } ) );
 
-        const reply : GetInvites.Response = { invites };
+        const reply : GetInvites.Response = Paging.paginate( invites, this.query ?? {} );
         return { status: NetworkUtils.Status.OK, data: reply };
     }
 }

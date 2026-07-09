@@ -134,7 +134,7 @@ export function DialogWindow( props : DialogWindow.Props ) : JSX.Element
                 <Divider />
                 <DialogActions>
 
-                    { props.helpUrl !== undefined ? <HelpButton id="help" url={ props.helpUrl } /> : null }
+                    { props.helpUrl !== undefined ? <HelpButton id="help" value={ props.helpUrl } /> : null }
                     { props.moreAction !== undefined && props.moreAction !== null ? props.moreAction : null }
                     
                     <Pusher />

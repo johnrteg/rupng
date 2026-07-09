@@ -35,6 +35,10 @@ export class ProxyService extends Service
         // proxy defaults to 8080 (the dev front door); PORT overrides. No role — single-instance proxy.
         super( Register.Service.WEBPROXY, undefined, parseInt( process.env.PORT ?? "8080" ) );
         this.wss = new WebSocketServer( { noServer: true } );
+
+        // report a real version on /version (was "unset") — read from apps/core/webproxy/package.json
+        const pkg : Application.PackageInfo = this.loadPackageInfo( __dirname );
+        this.setVersion( pkg.version );
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -88,12 +92,58 @@ export class ProxyService extends Service
     {
         super.addServerRegister();      // @fastify/formbody
 
+        this.forwardRawBodies();        // a proxy must forward request bodies verbatim — never parse them
+        this.registerErrorLog();        // surface proxy-level errors (a silent 500 here is otherwise invisible)
         this.registerStatic();
         this.registerRouteTable();      // LOCAL: per-endpoint → role-service dispatch (mirrors the gateway)
         this.registerProxies();         // REMOTE/static: prefix → single upstream (cloud edge, ws holder)
         this.registerWebSocketUpgrade();
         this.registerExtraRoutes();
         this.registerSpaFallback();     // must be last — it's the not-found handler
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Forward request bodies verbatim. The base registers body parsers (`@fastify/formbody` + Fastify's default
+     * JSON parser); those PARSE a POST body into an object BEFORE `@fastify/http-proxy` sees it, and the proxy
+     * then can't forward the parsed object as raw bytes — an empty POST becomes `{}` and http-proxy throws
+     * `ERR_INVALID_ARG_TYPE` ("string argument must be … Received Empty {}"). A pure reverse-proxy must not
+     * parse bodies at all: drop every parser and keep the raw Buffer so the body streams through untouched.
+     * (The proxy's own routes — /ping, /article, /health — are GETs with no body, so this is safe.)
+     */
+    private forwardRawBodies() : void
+    {
+        if( !this.server ) return;
+
+        // A bodyless POST/PUT/PATCH that still carries a content-type (e.g. the browser defaulting an empty
+        // action POST to `application/x-www-form-urlencoded`) gets PARSED into `{}` by a body parser, and
+        // @fastify/http-proxy's reply-from then throws ERR_INVALID_ARG_TYPE trying to forward that object.
+        // For an EMPTY body there's nothing to forward — drop the content-type/length headers before parsing
+        // so no parser runs and the request forwards clean.
+        this.server.addHook( "onRequest", async ( request : FastifyRequest ) : Promise<void> =>
+        {
+            const method : string = request.method;
+            if( method === "GET" || method === "HEAD" ) return;
+            const length : string | undefined = request.headers[ "content-length" ] as string | undefined;
+            if( length === undefined || length === "0" )
+            {
+                delete request.headers[ "content-type" ];
+                delete request.headers[ "content-length" ];
+            }
+        } );
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////
+    /** Log a proxy-level error for an /api request. Without this a forwarding failure surfaces to the client as
+     *  a bare 500 with nothing in the proxy log — which is what made the archive body-forwarding bug so hard to
+     *  pin down. Keeps error visibility without per-request noise. */
+    private registerErrorLog() : void
+    {
+        if( !this.server ) return;
+        this.server.addHook( "onError", async ( request : FastifyRequest, _reply : FastifyReply, error : Error ) : Promise<void> =>
+        {
+            if( request.url.startsWith( "/api/" ) ) this.log.error( "proxy request error", { method: request.method, url: request.url, error: String( error ) } );
+        } );
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////

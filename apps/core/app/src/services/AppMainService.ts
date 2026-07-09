@@ -30,6 +30,9 @@ export class AppMainService extends AppService
     // Best-effort: a Kafka outage must not stop the BFF from serving — log and carry on.
     private async startEventConsumer() : Promise<void>
     {
+        // no Kafka brokers configured (local dev) → skip quietly; only WARN on a real outage
+        if( !this.kafka.configured() ) { this.log.info( "app-readmodel consumer skipped — no Kafka brokers configured (dev)" ); return; }
+
         try
         {
             await this.kafka.subscribeEvents( "app-readmodel", [ Events.Object.ACCOUNT_ACCOUNT, Events.Object.AUTH_USER ], async ( event ) =>

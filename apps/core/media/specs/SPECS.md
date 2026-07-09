@@ -489,6 +489,288 @@ tipping fleet are the failure mode of doing it inline).
 - **media-19.5** **Idempotent + retry-safe** — keyed by `guid` (+ operation), so an SQS redelivery re-runs
   cleanly; DLQ captures the poison-pill after `maxReceiveCount`.
 
+## media-21.0 Studio — compose & edit — B
+
+Studio is the creation surface (`/media/studio/*`): named PROJECTS (image | video | audio) under a campaign,
+each with a saved CANVAS (S3) + lightweight metadata (DDB `studio_projects`). Two editors today — a tldraw
+IMAGE editor and a multi-track VIDEO editor — both read-only by default with an Edit toggle (the Edit button
+lives in the studio banner, on the title line) and two-tier autosave (localStorage + low-cadence server sync).
+Export renders to a library asset (create-or-replace).
+
+- **media-21.1** **Image editor** (tldraw) — page frame (size/DPI), add-from-library/providers, PNG/JPEG export
+  to a library IMAGE (update-in-place); inserted images parent into the page frame so z-order works vs text.
+- **media-21.2** **Video timeline model** — `StudioProject.VideoDoc`: TRACKS (array order = paint order;
+  mute/hide) + CLIPS (absolute `startSec`/`durationSec`, `trimStartSec`, `sourceDurationSec`, per-clip
+  `volume`/`fadeIn`/`fadeOut`, text geometry `xPct/yPct/fontPct/align`). Single source of truth for BOTH the
+  Remotion `<Player>` preview AND the ffmpeg render. Legacy sequential scene docs migrate on load.
+- **media-21.3** **Editing** — drag move (across tracks), edge trim/resize (never past the source length —
+  audio/video carry `sourceDurationSec` and drop in at FULL length, trim shorter only), **split at playhead**,
+  add clips (library image/video/audio + kind/campaign filters, provider stock images, mp3 upload, text),
+  per-clip **audio waveforms** (Web Audio decode → cached peaks), playhead scrub + zoom.
+- **media-21.4** **Transitions** — per-clip **fade in/out** (opacity + audio volume, matched in preview &
+  render); crossfade by overlapping clips on separate tracks.
+- **media-21.5** **Multi-format** — author one master format + auto-generate a per-DESTINATION variant
+  (YouTube / Reels / TikTok / IG / …); relatively-positioned overlays reflow across aspect ratios.
+- **media-21.6** **Render** — `PostStudioRender` → `studio-render` SQS → `MediaMainService` consumer →
+  `MediaAnalyzer.renderComposite`: ONE ffmpeg `filter_complex` graph (base canvas + per-clip cover-fit / trim /
+  `setpts` / `overlay` with `enable` time-windows in paint order + `drawtext` text + alpha `fade` + `afade` /
+  `amix` audio) → saves the master as the ORIGINAL + a COMPRESSED variant per destination. Runs **in-process on
+  the media Node service** (`ffmpeg-static`), NOT Lambda/Chromium. UNVERIFIED at author time; `drawtext` needs a
+  runtime font; needs a LocalStack redeploy of the `studio-render` queue.
+
+- **media-21.8** **Transition library** — a per-clip entry `transitionIn` OBJECT (`{ type, durationSec }`,
+  `StudioProject.Transition`) on `TimelineClip`, distinct from the manual fades of media-21.4: **dissolve**,
+  **wipe** (L/R/up/down), **slide** (L/R/up/down). Semantics: the incoming clip's Sequence starts EARLIER by
+  `durationSec` so it overlaps the previous clip and reveals over that window. **Preview** (`StudioVideoComposition`
+  `ClipLayer` + `transitionStyle`) animates the true reveal via CSS (opacity / `clip-path inset` / `translate`).
+  **Render** (`runStudioRender`) approximates ALL types as a dissolve/crossfade — start-earlier + alpha `fade`
+  in over `durationSec` — because the `overlay` graph has no moving mask; wipe/slide export as a dissolve
+  (preview-only fidelity). Inspector control is in `StudioClipInspector` (non-audio clips). BACKLOG: true
+  ffmpeg `xfade` / moving-mask wipes & slides; circle/radial, pixelize, fade-to-color; transition on EXIT.
+
+- **media-21.9** **Text & graphics — styling** (first slice of the Text & graphics section): a `TextStyle`
+  object (`StudioProject.TextStyle`) on `TimelineClip.style` / `VideoOverlay.style` — **fill color**, **outline**
+  (`{ color, widthPct }`), **drop shadow** (on/off), **background box** (`{ color, opacity, padPct }`), plus
+  **font family** (`TextFont` enum: sans/serif/mono) and **bold**. Widths/padding are fractions of the font
+  size so they scale across destination formats. **Preview** (`StudioVideoComposition.textStyleCss`) maps to
+  CSS (color / `WebkitTextStroke` / `textShadow` / background box); **render** (`MediaAnalyzer.drawtextStyleOptions`)
+  maps the SAME fields to ffmpeg drawtext (`fontcolor` / `borderw`+`bordercolor` / `shadowcolor` / `box`+`boxcolor`),
+  so preview and export match. `DEFAULT_TEXT_STYLE` (white fill + shadow + sans + bold) keeps existing/unstyled
+  text unchanged. Colors are free-form CONTENT hex values (NOT app theme tokens). Inspector controls in
+  `StudioClipInspector.textFields`. CAVEAT: `fontFamily`/`bold` are PREVIEW-fidelity — the server render uses its
+  single bundled drawtext font until matching font files are bundled. BACKLOG (rest of Text & graphics): text-in
+  animations (typewriter, slide/fade), title & lower-third templates, logo/watermark overlay, editable
+  outline-width / background-opacity controls, and auto-captions from the transcription adapters (word highlight).
+
+- **media-21.10** **Text & graphics — entry animations** (second slice): a `TextAnimateIn` object
+  (`StudioProject.TextAnimation` enum: fade / typewriter / slide L·R·up·down / pop) on `TimelineClip.animateIn`,
+  played over the text clip's first `durationSec`. Distinct from a clip {@link Transition} (which overlaps the
+  PREVIOUS clip) — this animates the text itself IN, in place. **Preview**: `StudioVideoComposition.ClipLayer`
+  computes progress from the sequence-local frame and applies `textAnimateStyle` (opacity for fade; opacity+scale
+  for pop; opacity+translate for slides) to the wrapper, and `typewriterSlice` reveals characters left→right for
+  typewriter; transition + animation transforms compose. **Render** (`runStudioRender`): every type is
+  approximated as an alpha **fade-in** over its duration (max'd with any manual fade) — slide/pop/typewriter have
+  no drawtext equivalent in the overlay graph, so they export as a fade (preview-only fidelity, mirroring the
+  transition wipe/slide→dissolve approach). Inspector: "Animate in" select + duration in
+  `StudioClipInspector.textFields`. BACKLOG: true render fidelity for slide/pop (Remotion/xfade-style),
+  typewriter-in-render (per-char enable windows), animate-OUT.
+
+- **media-21.11** **Text & graphics — logo / watermark** (third slice): a DOC-LEVEL `Watermark`
+  (`StudioProject.Watermark` on `VideoDoc.watermark`) — a library IMAGE burned over the WHOLE timeline
+  (top-most). Fields: `assetGuid` (durable ref the render resolves bytes from) + `src` (time-limited preview
+  URL), `corner` (`WatermarkCorner` enum), `scalePct` (width ÷ frame width), `opacity` (0..1), `marginPct`
+  (edge inset ÷ frame width) — fractions so it scales across destination formats. `DEFAULT_WATERMARK` seeds the
+  placement (bottom-right, 15%, 80%, 3% margin) when an image is picked. **Preview**
+  (`StudioVideoComposition.watermarkCss`) renders a corner-anchored `<Img>` above all tracks. **Inspector**:
+  a Watermark section in `StudioClipInspector.compositionSettings` (nothing-selected panel) — pick from library,
+  corner select, size/opacity sliders, replace/remove; the editor opens a `StudioLibraryPickerDialog` scoped to
+  `WATERMARK_KINDS` (image only) and stores the pick via `onSetWatermark`. **Render**
+  (`MediaAnalyzer.renderComposite` `CompositeWatermark`): the watermark is the last ffmpeg input (looped),
+  scaled to its width, alpha'd via `colorchannelmixer=aa`, and `overlay`-composited in its corner over the whole
+  duration (after text → top-most); `runStudioRender` resolves the bytes ONCE (shared across all output formats).
+
+- **media-21.12** **Text & graphics — title / lower-third templates** (fourth slice): built-in text LAYOUTS
+  (`StudioProject.TextTemplate` enum + `TEXT_TEMPLATES` defs: Title, Title+subtitle, Lower third, Caption bar)
+  — each a set of `TextTemplateLayer`s (relative geometry + baseline `TextStyle` + placeholder text). Pure
+  composition of the existing model: the timeline's "Add text" `ButtonIcon` became a `ButtonIconDropdown`
+  (`StudioTimeline.ADD_TEXT_CHOICES`: "Plain text" + each template); `StudioVideoEditor.addTextTemplate`
+  materializes each layer into a normal editable TEXT clip on the overlay track at the playhead (shared start).
+  NO render changes — templates produce ordinary styled text clips (media-21.9/.10 handle their draw/animation).
+- **media-21.13** **Text & graphics — auto-captions** (fifth slice): `StudioVideoEditor.generateCaptions`
+  turns a video/audio clip's speech transcript into timed caption TEXT clips. Reuses the existing transcription
+  pipeline (media-18/19): fetches the source asset (`GetAsset`), reads its TRANSCRIPT item's
+  `meta.document.transcript.segments`; each segment → a caption clip on the overlay track, offset by the clip's
+  timeline position minus its trim in-point and CLAMPED to the clip's visible window (blank/out-of-window
+  segments skipped), styled with `StudioProject.CAPTION_GEOMETRY` + `CAPTION_STYLE` (boxed bottom-center). If
+  the asset has no transcript yet, it POSTs `PostAssetTranscribe` and snackbars "try again in a moment" (the
+  transcribe Job is async). Trigger: a "Generate captions" button in `StudioClipInspector.mediaFields`
+  (video/audio clips). Captions are plain caption-styled TEXT clips, so they render/burn like any other text —
+  no render changes. BACKLOG: live word-highlight, re-sync/regenerate on edit, caption track management.
+
+- **media-21.14** **Per-clip transform + Ken Burns**: a `ClipTransform` (`StudioProject.ClipTransform` on
+  `TimelineClip.transform`) for IMAGE/VIDEO layers — `xPct`/`yPct` position offset (fraction of frame from
+  center), `scale` (zoom, 1 = base fit), `rotation` (deg), `opacity`, and `fit` (`FitMode` cover/contain) — plus
+  a `KenBurns` (`TimelineClip.kenBurns`) animated pan/zoom (from→to scale + center offset), offered as named
+  `KEN_BURNS_PRESETS` (zoom in/out, pan L·R·up·down). **Preview** (`StudioVideoComposition.visualTransformStyle`)
+  composes the static transform with the frame-interpolated Ken Burns into the layer wrapper's CSS
+  transform/opacity, and `renderClip` honors `fit` via `objectFit`. **Inspector**
+  (`StudioClipInspector.transformFields`, shown for IMAGE/VIDEO): fit select, scale/rotation/opacity + offset
+  X/Y sliders, and a Ken Burns preset select. **Render** (`MediaAnalyzer.renderComposite`): transformed layers
+  take a generalized path — fit (cover=increase / contain=decrease) → user `scale` → `rotate` → `format=yuva`
+  +`colorchannelmixer=aa` (opacity) → `fade` alpha → `overlay` CENTERED + offset (frame clips overflow); the
+  fast cover-crop path is unchanged for untransformed clips (no regression). Ken Burns exports as a STATIC
+  MIDPOINT zoom/offset — the animated pan/zoom is preview-only fidelity (consistent with the transition/text-
+  animation approximations). BACKLOG: true animated Ken Burns render via `zoompan`, crop,
+  background/solid clips, speed/slow-mo/reverse, freeze frame, blend modes.
+- **media-21.15** **Effects / filters**: a `ClipFilters` (`StudioProject.ClipFilters` on `TimelineClip.filters`)
+  for IMAGE/VIDEO layers — `brightness` (-1..1, 0 neutral), `contrast`/`saturation` (0..2, 1 neutral),
+  `grayscale`, `blur` (0..1 → `FILTER_BLUR_MAX` px), `vignette`. **Preview**
+  (`StudioVideoComposition.clipFilterCss`) maps to CSS `filter` (brightness/contrast/saturate/grayscale/blur) on
+  the media element; a `vignette` is a separate radial-gradient overlay (`withVignette`). **Inspector**
+  (`StudioClipInspector.effectsFields`, IMAGE/VIDEO): brightness/contrast/saturation/blur sliders + grayscale &
+  vignette switches (saturation disabled while grayscale is on). **Render** (`MediaAnalyzer.videoFilterChain`):
+  the SAME fields map to ffmpeg `eq=brightness:contrast:saturation` (grayscale = saturation 0), `gblur=sigma`,
+  `vignette`, spliced into BOTH the fast cover-crop path AND the transform generalized path — full-fidelity, no
+  approximation. BACKLOG: LUTs, gradients, per-effect keyframing.
+- **media-21.16** **Audio — detach + background-music loop**: (a) **Detach audio** — `StudioVideoEditor.detachAudio`
+  splits a VIDEO clip's soundtrack into its own AUDIO clip on the audio track (same asset + timing) and silences
+  the source video's audio (volume 0, so it drops from the render's `amix`); button in
+  `StudioClipInspector.mediaFields` for VIDEO clips. (b) **Loop** — `TimelineClip.loop` (audio) loops the source
+  to fill the clip's timeline duration (background music); preview via Remotion `<Audio loop>`, render via a
+  `-stream_loop -1` input option (the existing `atrim=duration` cuts it to length); switch in `mediaFields` for
+  AUDIO clips. Per-clip volume + fades already existed (media-21.4). BACKLOG: **ducking** (music under voice via
+  sidechaincompress), volume envelope / keyframes, background-music trim UI, waveform-based sync.
+
+- **media-21.17** **Editing UX — undo/redo + duplicate + keyboard shortcuts** (first Editing-UX slice, editor
+  state only — no model/render change): `StudioVideoEditor` keeps a `historyRef` (`past`/`future` doc-snapshot
+  stacks + `lastAt`); `mutate()` records the pre-change doc, but rapid bursts COALESCE (a snapshot is pushed only
+  when the previous commit was > `HISTORY_COALESCE_MS` ago) so a continuous drag = ONE undo step; `HISTORY_LIMIT`
+  caps depth. `undo`/`redo` swap via a history-neutral `applyDoc`; `canUndo`/`canRedo` surface through
+  `historyState`. `duplicateSelected` clones the selected clip immediately after itself. Keyboard (while editing,
+  ignored when typing in a field): ⌘/Ctrl+Z undo, ⇧+Z or ⌘/Ctrl+Y redo, ⌘/Ctrl+D duplicate, Delete/Backspace
+  remove selected, Space play/pause. Toolbar gains Undo / Redo / Duplicate `ButtonIcon`s in `StudioTimeline`.
+  BACKLOG (rest of Editing UX): copy/paste across projects, multi-select, snapping (playhead / edges / grid),
+  ripple delete/trim, same-track overlap prevention.
+
+- **media-21.18** **Render engine — config-selectable ffmpeg vs Remotion/Chromium**: the render Job is now
+  engine-pluggable via config. `MediaConfig.RenderEngine` (`FFMPEG | REMOTION`) + `MediaConfig.render.engine`
+  (DEFAULT `FFMPEG`; optional in SCHEMA so older configs tolerate drift, `withDefaults` fills it) — switchable
+  WITHOUT a redeploy. **Two queues, two consumers, one payload**: `enqueueStudioRender` reads the config and
+  routes to `studio-render` (ffmpeg) or `studio-render-remotion` (Chromium); `MediaMainService` drains both
+  (`startStudioRenderConsumer` / `startStudioRenderRemotionConsumer`), each calling `runStudioRender(…, engine)`.
+  `runStudioRender` branches: FFMPEG → the existing `filter_complex` gather + `renderComposite`; REMOTION →
+  `MediaAnalyzer.renderCompositeRemotion` (skips the ffmpeg S3-byte gather — Remotion renders from the doc as
+  inputProps). Both save via `saveRenderedVideo` and emit the same `studio-render` `media.job` events, so the
+  client/UI is engine-agnostic. The new queue auto-provisions from `CloudManifest.queues` (CDK
+  `ServiceStack.makeQueue`) — **needs a LocalStack/CDK redeploy of the media stack** to create it.
+  **GATED / UNVERIFIED (the Chromium path):** `renderCompositeRemotion` lazy-loads `@remotion/bundler` +
+  `@remotion/renderer` via NON-LITERAL dynamic imports (so the media build compiles and the ffmpeg engine works
+  WITHOUT the heavy Chromium deps), and imports a shared composition entry `@repo/studio-composition`
+  (`registerRoot` + a `<Composition>` wrapping `StudioVideoComposition`, which today lives only in the web app).
+  Until the render worker image installs those deps, the remotion path returns null (Job fails cleanly) — keep
+  the config on `FFMPEG`. TODO to make it live: (1) ✅ DONE — `StudioVideoComposition` extracted into the shared
+  `@repo/studio-composition` package (one component drives both the web `<Player>` preview and the render
+  worker; the package's `Root` = `registerRoot` + `<Composition id="studio">`, `ENTRY_POINT`/`COMPOSITION_ID`
+  exported for the bundler); (2) install `@remotion/bundler`/`@remotion/renderer` on a Chromium-capable worker
+  image; (3) refresh each clip's signed `src` into the doc before enqueueing a remotion render (URLs must be
+  valid at render time).
+
+- **media-21.19** **Playback speed (slow-mo / fast-motion)**: a per-clip `TimelineClip.speed` (VIDEO/AUDIO;
+  1 = normal, <1 slow-mo, >1 fast). The clip's TIMELINE duration is unchanged — speed changes how much SOURCE
+  is consumed (`durationSec × speed`). **Preview**: `playbackRate` on Remotion `<OffthreadVideo>` / `<Audio>`.
+  **Render**: video consumes `duration × speed` of source then `setpts=(PTS-STARTPTS)/speed` compresses/stretches
+  it back (both the fast cover-crop and transform paths); audio consumes the same and an `atempoChain` (pitch-
+  preserving, decomposed into [0.5,2.0] factors so 0.25→0.5,0.5 and 4→2,2 work) brings it to length before the
+  fades/mix. Inspector: a Speed slider (0.25–4×) in `StudioClipInspector.mediaFields`. Full-fidelity both sides.
+  BACKLOG: reverse + freeze-frame (need whole-clip buffering — `reverse`/`areverse`), speed ramps/keyframes.
+
+- **media-21.20** **Editing UX — snapping** (magnetic drag): dragging a clip's body or either edge now snaps
+  to nearby MAGNETIC TARGETS — other clips' start/end (any track, excluding the dragged clip), the playhead, and
+  0 — within an `SNAP_PX` (8px) radius, else falls back to the grid. `StudioTimeline.snapEdge` collects the
+  targets + returns the nearest with its delta; MOVE snaps whichever of the clip's two edges locks on closer,
+  RESIZE_RIGHT snaps the out edge, RESIZE_LEFT snaps the in edge (then re-clamps to source/duration bounds).
+  Pure client-side (timeline drag math) — no model/render change. BACKLOG: visual snap guide-line, snap toggle.
+
+- **media-21.21** **Track reorder (z-order)**: up/down controls in each track's gutter row reorder the tracks
+  array — which IS the paint order (index 0 = top lane, composites ON TOP), so moving a track up brings its
+  clips forward in the z-stack. `StudioVideoEditor.moveTrack(id, delta)` splices the track (clamped to the ends,
+  recorded in undo history); `StudioTimeline` gutter shows ↑/↓ `ButtonIcon`s (disabled at first/last). Both
+  preview and render already paint by track order, so no render change.
+- **media-21.22** **Copy / paste**: a one-clip clipboard buffer (`StudioVideoEditor.clipboard` ref). `copySelected`
+  stashes the selected clip; `pasteClip` drops a fresh-id clone at the PLAYHEAD (read via `currentSecRef` to
+  avoid a stale closure) on its original track. Keyboard: ⌘/Ctrl+C / ⌘/Ctrl+V (in the existing shortcut handler,
+  ignored while typing). Complements duplicate (media-21.17) with paste-at-playhead + persistence across
+  selection. BACKLOG: cross-project paste, multi-clip clipboard.
+
+- **media-21.23** **Export quality presets**: `VideoDoc.quality` (`StudioProject.VideoQuality`: DRAFT / STANDARD
+  / HIGH) maps via `VIDEO_QUALITY` to an x264 `crf` + `preset` (draft 30/veryfast, standard 23/medium, high
+  18/slow). `runStudioRender` resolves it from the doc and passes `{ crf, preset }` to
+  `MediaAnalyzer.renderComposite`, which emits `-crf`/`-preset` in the ffmpeg output options (applies to every
+  format variant). Inspector: an "Export quality" select in `StudioClipInspector.compositionSettings`
+  (nothing-selected panel). EXPORT-ONLY — no preview effect. BACKLOG: explicit bitrate targets, GIF export,
+  poster/thumbnail pick, per-destination quality; the remotion engine currently ignores the preset (its
+  renderMedia can take a crf later).
+
+- **media-21.24** **Blend modes**: `TimelineClip.blend` (`StudioProject.BlendMode`: normal/multiply/screen/
+  overlay/darken/lighten/difference) → CSS `mix-blend-mode` on the preview layer; inspector select in
+  `transformFields`. PREVIEW-ONLY fidelity — the ffmpeg overlay graph composites `normal` (documented).
+- **media-21.25** **Solid / background color clips**: a `VideoSceneKind.SOLID` clip with a `color` fill.
+  Preview renders a colored `AbsoluteFill`; render adds a lavfi `color` source input (no bytes) composited like
+  any layer. Added via the timeline "Add" dropdown ("Solid color") → `addSolid` (base track); inspector shows a
+  color picker. Full-fidelity both sides.
+- **media-21.26** **Editing UX — ripple delete + overlap prevention + cross-project paste**: (a) `rippleDeleteSelected`
+  removes the clip and slides later same-track clips left (⇧+Delete). (b) `moveClip` clamps a drag into the gap
+  between same-track neighbors (no overlap; resize-overlap still backlog). (c) copy/paste is backed by
+  localStorage (`CLIPBOARD_KEY`) so it works ACROSS projects, remapping the clip's track by kind if absent.
+- **media-21.27** **Explicit bitrate**: `VideoDoc.bitrateKbps` (0 = CRF) → render emits `-b:v/-maxrate/-bufsize`
+  (ABR) instead of `-crf`; inspector numeric field. Complements the quality presets (media-21.23).
+- **media-21.28** **Reverse**: `TimelineClip.reverse` → render `reverse` (video) / `areverse` (audio). Inspector
+  switch in `mediaFields`. EXPORT-accurate; the preview plays FORWARD (Remotion has no negative playback —
+  documented). **Freeze-frame DEFERRED**: needs `tpad` frame-hold + has no Remotion preview path (low value).
+- **media-21.29** **Poster + GIF export**: `VideoDoc.posterSec` extracts that frame from the master render
+  (`MediaAnalyzer.extractPosterFrame`) → a POSTER item; `VideoDoc.gif` converts the master to an animated GIF
+  (`MediaAnalyzer.toGif`, palettegen/paletteuse) → a `gif`-profile COMPRESSED item. Both saved alongside the
+  video variants in `saveRenderedVideo`. Inspector: "Poster @ playhead" + "Also export GIF" switches.
+- **media-21.30** **Multi-select**: selection is now an ARRAY (`selection`) with the PRIMARY (last) driving the
+  inspector + single-clip ops (drag/duplicate/copy) via a derived `selectedClipId` + shim setter — so the whole
+  single-select flow is unchanged. Shift/⌘-click toggles a clip (`toggleSelect`); the timeline highlights the
+  full set; Delete bulk-removes all selected (`removeSelected`). GROUP-DRAG deferred (a drag still moves the
+  primary only).
+- **CROP DEFERRED (by design)**: for cover-fit, the per-clip transform (scale + x/y offset, media-21.14) already
+  covers zoom/pan into a region; a true arbitrary-aspect source-rect crop needs a wrapping/clip approach for
+  modest marginal value — revisit if a hard crop rect is needed.
+- **REMOTION go-live (infra, remaining)**: media-21.18 items 2–3 — install `@remotion/bundler`/`@remotion/renderer`
+  on a Chromium-capable render worker image (+ build `@repo/studio-composition`'s `bin/`), and refresh signed
+  clip `src` URLs into the doc before enqueueing a remotion render. Not code-completable in this repo alone.
+
+- **media-21.31** **Inspector layout — accordion**: the clip properties panel (`StudioClipInspector`) is split
+  into collapsible `AccordionSection`s (Text / Color / Media / Transform / Effects / Timing) with the clip header
+  (kind + start/duration + track) always visible on top and Remove at the bottom; one section open at a time
+  (`section` state). Fades + transition moved into a "Timing" section. Within the Text section, the styling has
+  labeled dividers — Style / Background / Animation — each laying its switch + color picker in a column row
+  (outline/background show their color picker beside the on/off switch).
+
+- **media-21.32** **SVG shape / graphic overlays**: a `VideoSceneKind.SHAPE` clip carrying a `shape`
+  (`StudioProject.SHAPE_LIBRARY` key — rectangle/rounded/circle/triangle/diamond/hexagon/pentagon/star/badge/
+  heart/arrow/bubble) + `shapeStyle` (fill, stroke color + width). `buildShapeSvg` composes a self-contained,
+  recolored SVG shared by preview + render. **Preview**: a data-URI `<img>` positioned/scaled/rotated by the
+  clip TRANSFORM (SHAPE is now a "visual" for transform). **Render**: `MediaAnalyzer.rasterizeSvg` (sharp →
+  transparent PNG) turns it into an image layer composited through the transform (alpha-aware) path — so it's
+  FULL-fidelity, not an approximation; the Remotion engine renders the SVG natively. Inspector: a "Shape"
+  section (library select + Fill + Stroke) with geometry in the Transform section; added via the "Add" dropdown
+  → `addShape` (centered ~40% rectangle default, contain fit). One mechanism spans simple geometry AND a badge/
+  icon library. BACKLOG: account-uploaded SVGs (as media assets) to extend the library; multi-color recolor.
+
+**media-21.7 Video editing BACKLOG (remaining — infra / deferred-by-design only):**
+- **Group-drag for multi-select**, resize-overlap prevention, freeze-frame, crop — see media-21.24–21.30 notes.
+- **Audio** — volume envelope / keyframes, **ducking** (music under voice), background-music trim UI (loop +
+  detach done in media-21.16).
+- **Export** — burn-in captions per destination (quality/bitrate in media-21.23/.27; GIF + poster in media-21.29).
+- **Fidelity fork** — arbitrary keyframed motion graphics via the **Remotion server render** (plumbing +
+  shared composition done, media-21.18; the Chromium worker image is the remaining infra).
+
+## media-23.0 Profile avatars — B
+
+A user PROFILE AVATAR built on the media plane (USER scope): the user selects/uploads a photo, PANS/ZOOMS it
+under a circular overlay to frame it, and the service keeps the ORIGINAL and derives a set of square variants
+from LARGE → very small for the profile view, the nav / menu bar, and the UserChip widget.
+
+- **media-23.1** **Original kept** — the uploaded photo is a USER-scoped `Media.Asset` (ORIGINAL item), like any
+  library item; nothing is destroyed by cropping (re-framing is non-destructive).
+- **media-23.2** **Crop framing** — the client captures a normalized crop RECT (centerX / centerY / zoom, or
+  x/y/size as fractions of the original) from the pan/zoom + circle overlay, stored on the asset (item meta) so
+  the crop is re-editable and the variants are reproducible.
+- **media-23.3** **Variants** — a Job crops to a SQUARE at the framed region and resizes to a fixed avatar size
+  set (`xl` 512 · `lg` 256 · `md` 128 · `sm` 64 · `xs` 32) via `sharp` (`extract` + `resize`), stored as
+  `Usage.AVATAR` items keyed by profile. The circle is a UI mask (CSS `border-radius`), so variants stay square.
+- **media-23.4** **Reference & resolution** — the user/profile model carries the avatar asset `guid`; a single
+  reusable web widget **`UserAvatar`** (`size` prop → `xl`/`lg`/`md`/`sm`/`xs`) resolves the correct variant via
+  `GET /media/{guid}/variants/avatar-<size>` and renders the circular MUI Avatar with an **initials fallback**
+  when unset. Every surface uses it — profile view (`lg`/`xl`), nav / menu bar (`sm`), UserChip (`xs`/`sm`) — so
+  variant selection lives in ONE place.
+- **media-23.5** **Update-in-place** — re-framing or replacing re-runs the crop+resize Job and bumps the variant
+  versions (same guid), so every surface updates without changing the stored reference.
+
 # Endpoints (first cut)
 
 A first pass at the endpoint surface, in [`@repo/endpoint`](../../../packages/endpoint/SPECS.md) style — all
@@ -531,6 +813,14 @@ gate delivery on top of the ladder.
 | Method | URI | Purpose | Access | Req |
 |---|---|---|---|---|
 | GET, PUT | `/media/settings/variants` | Read / set variant strategy (**pre-process** vs **on-demand+cache**) — account-admin override | ACCOUNT | media-4.4 |
+
+### Profile avatar (media-23)
+| Method | URI | Purpose | Access | Req |
+|---|---|---|---|---|
+| POST | `/media/avatar` | Set/replace the acting user's avatar from an uploaded/library image + a normalized crop rect → creates/keeps the ORIGINAL (USER scope) and **enqueues** square crop+resize variant generation; returns the asset `guid` | USER | media-23.1/23.3 |
+| GET | `/media/{guid}/variants/avatar-{size}` | Resolve a specific avatar size (`xl`/`lg`/`md`/`sm`/`xs`) — served like any variant (media-4) | - / role | media-23.4 |
+
+> The avatar `guid` is stored on the user/profile record (auth service owns the user); `UserAvatar` (web) picks the size per surface.
 
 ### Video compression — EVT (media-10)
 | Method | URI | Purpose | Access | Req |

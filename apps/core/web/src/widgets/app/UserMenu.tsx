@@ -3,16 +3,17 @@ import React from 'react';
 import { JSX } from "react";
 
 import { Box, Button, Menu, MenuItem, ListItemIcon, ListItemText, Typography } from '@mui/material';
-import PersonOutlineOutlinedIcon       from '@mui/icons-material/PersonOutlineOutlined';
 import ArrowDropDownIcon               from '@mui/icons-material/ArrowDropDown';
 import LogoutOutlinedIcon              from '@mui/icons-material/LogoutOutlined';
 
 import { Access }      from '@repo/system';
+import { Media }       from '@repo/api';
 import AppModel        from '@model/AppModel';
 import AppRouter       from '@main/AppRouter';
 import PubSubService   from '@model/service/PubSubService';
 import AlertPrompt     from '@widgets/core/AlertPrompt';
 import Subscriber      from '@widgets/core/Subscriber';
+import UserAvatar      from '@widgets/app/UserAvatar';
 
 //
 // Human label for an account/app role (for the user menu's role line).
@@ -76,7 +77,7 @@ export function UserMenu( props : UserMenu.Props ) : JSX.Element
 
                 <Button color="inherit"
                         onClick={ openMenu }
-                        startIcon={ <PersonOutlineOutlinedIcon /> }
+                        startIcon={ <UserAvatar assetId={ appmodel.auth.user?.avatarAssetId } name={ appmodel.auth.displayName() } size={ Media.AvatarSize.XS } /> }
                         endIcon={ <ArrowDropDownIcon /> }
                         sx={{ textTransform: "none" }}>
                     {/* two rows: the user's name, then their current role */}

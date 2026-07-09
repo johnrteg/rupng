@@ -25,6 +25,7 @@
       "@repo/cloud-manifest" : ["../../../packages/cloud-manifest/src/index.ts"],
       "@repo/ai"         : ["../../../packages/ai/src/index.ts"],
       "@repo/oauth"      : ["../../../packages/oauth/src/index.ts"],
+      "@repo/studio-composition" : ["../../../packages/studio-composition/src/index.ts"],
       "@api/*"    : ["./src/api/*"],
       "@model/*"  : ["./src/model/*"],
       "@common/*" : ["./src/common/*"],

@@ -75,6 +75,8 @@ export namespace BrowseConfig
         providers: {
             pexels:   { enabled: true, enabledKinds: [ Media.Kind.IMAGE, Media.Kind.VIDEO ], priority: 50 },
             unsplash: { enabled: true, enabledKinds: [ Media.Kind.IMAGE ],                    priority: 40 },
+            svgl:     { enabled: true, enabledKinds: [ Media.Kind.IMAGE ],                    priority: 30 },   // keyless (public API)
+            iconify:  { enabled: true, enabledKinds: [ Media.Kind.IMAGE ],                    priority: 20 },   // keyless (public API)
         },
         limits: { maxResultsPerProvider: 30, perProviderTimeoutMs: 8000, resultCacheTtlSec: 300 },
     };

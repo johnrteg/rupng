@@ -42,6 +42,7 @@ export function DynamoPanel( { service } : { service : string } )
 
     const [ draft, setDraft ]     = useState<string>( "" );      // JSON of the selected/new item
     const [ original, setOriginal ] = useState<string>( "" );
+    const [ selectedIndex, setSelectedIndex ] = useState<number | null>( null );   // highlighted key row
     const [ isNew, setIsNew ]     = useState<boolean>( false );
     const [ saving, setSaving ]   = useState<boolean>( false );
     const [ msg, setMsg ]         = useState<{ kind : "ok" | "err"; text : string } | null>( null );
@@ -93,7 +94,7 @@ export function DynamoPanel( { service } : { service : string } )
     }
 
     /** Reset the editor pane to an empty, non-dirty state. */
-    function clearEditor() : void { setDraft( "" ); setOriginal( "" ); setIsNew( false ); setMsg( null ); }
+    function clearEditor() : void { setDraft( "" ); setOriginal( "" ); setIsNew( false ); setMsg( null ); setSelectedIndex( null ); }
 
     /** Load an existing item into the editor for viewing/editing. */
     function openItem( item : Record<string, unknown> ) : void
@@ -108,6 +109,7 @@ export function DynamoPanel( { service } : { service : string } )
         const template : Record<string, unknown> = {};
         if ( keySchema?.partitionKey ) template[ keySchema.partitionKey ] = "";
         if ( keySchema?.sortKey ) template[ keySchema.sortKey ] = "";
+        setSelectedIndex( null );   // a new item isn't one of the listed keys
         const templateJson : string = JSON.stringify( template, null, 2 );
         setDraft( templateJson ); setOriginal( "" ); setIsNew( true ); setMsg( null );
     }
@@ -192,10 +194,14 @@ export function DynamoPanel( { service } : { service : string } )
             {/* split: item list (left) + editor (right) */}
             <Box sx={{ display: "flex", flexGrow: 1, minHeight: 0 }}>
                 {/* list */}
-                <Box sx={{ width: 280, flexShrink: 0, borderRight: "1px solid", borderColor: "divider", overflow: "auto", bgcolor: "#0a0d12" }}>
+                <Box sx={{ width: 400, flexShrink: 0, borderRight: "1px solid", borderColor: "divider", overflow: "auto", bgcolor: "#0a0d12" }}>
                     {items.map( ( item, index ) => (
-                        <Box key={index} onClick={() => openItem( item )}
-                             sx={{ px: 1.25, py: 0.75, fontFamily: MONO, fontSize: 12, color: "#e6edf3", cursor: "pointer", borderBottom: "1px solid #161b22", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", "&:hover": { bgcolor: "#161b22" } }}>
+                        <Box key={index} onClick={() => { openItem( item ); setSelectedIndex( index ); }}
+                             sx={{ px: 1.25, py: 0.75, fontFamily: MONO, fontSize: 12, color: "#e6edf3", cursor: "pointer",
+                                   borderBottom: "1px solid #161b22", borderLeft: selectedIndex === index ? "2px solid #388bfd" : "2px solid transparent",
+                                   whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                                   bgcolor: selectedIndex === index ? "#193c5a" : "transparent",
+                                   "&:hover": { bgcolor: selectedIndex === index ? "#193c5a" : "#161b22" } }}>
                             {rowLabel( item )}
                         </Box>
                     ) )}

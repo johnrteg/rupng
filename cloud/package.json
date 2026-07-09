@@ -35,6 +35,9 @@
         "auth": "*",
         "media": "*",
         "web": "*",
+        "contact": "*",
+        "campaign": "*",
+        "email": "*",
         "aws-cdk-lib": "2.260.0",
         "constructs": "10.6.0"
     },

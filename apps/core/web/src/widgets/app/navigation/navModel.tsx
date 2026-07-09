@@ -55,15 +55,16 @@ export namespace navModel
                 { id: "campaigns",     label: "Campaigns",     icon: <CampaignOutlinedIcon />,   route: "/campaigns" },
                 { id: "schedule",      label: "Schedule",      icon: <CalendarMonthOutlinedIcon />, route: "/schedule" },
                 { id: "conversations", label: "Conversations", icon: <ForumOutlinedIcon />,      route: "/conversations", badge: 5 },
-                { id: "contacts",      label: "Contacts",      icon: <ContactsOutlinedIcon />,   children:
+                { id: "contacts",      label: "Audience",      icon: <ContactsOutlinedIcon />,   children:
                     [
                         { id: "contacts.segments", label: "Segments", route: "/contacts/segments" },
                         { id: "contacts.contacts", label: "Contacts", route: "/contacts/list" },
                     ] },
                 { id: "reports",       label: "Reports",       icon: <AssessmentOutlinedIcon />, children:
                     [
-                        { id: "reports.submit",   label: "Submit",   route: "/reports/submit" },
-                        { id: "reports.download", label: "Download", route: "/reports/download" },
+                        { id: "reports.submit",    label: "Submit",    route: "/reports/submit" },
+                        { id: "reports.scheduled", label: "Scheduled", route: "/reports/scheduled" },
+                        { id: "reports.download",  label: "Download",  route: "/reports/download" },
                     ] },
                 { id: "media",         label: "Media",         icon: <PermMediaOutlinedIcon />, children:
                     [
@@ -71,6 +72,7 @@ export namespace navModel
                         { id: "media.browse",    label: "Browse",    route: "/media/browse" },
                         { id: "media.aigen",     label: "AI Gen",    route: "/media/ai-gen" },
                         { id: "media.studio",    label: "Studio",    route: "/media/studio" },
+                        { id: "media.email-templates", label: "Email Templates", route: "/studio/email-templates" },
                         { id: "media.downloads", label: "Downloads", route: "/media/downloads" },
                     ] },
                 { id: "tools",         label: "Tools",         icon: <BuildOutlinedIcon />,      children:
@@ -108,6 +110,7 @@ export namespace navModel
         id: "account", label: "Account", icon: <ApartmentOutlinedIcon />, children:
         [
             { id: "account.details",      label: "Details",      route: "/account/details",      minRole: Access.AccountRole.USER },
+            { id: "account.branding",     label: "Branding",     route: "/account/branding",     minRole: Access.AccountRole.USER },
             { id: "account.billing",      label: "Billing",      route: "/account/billing",      minRole: Access.AccountRole.BILLING },
             { id: "account.users",        label: "Users",        route: "/account/users",        minRole: Access.AccountRole.ACCOUNT },
             { id: "account.sub-accounts", label: "Sub-Accounts", route: "/account/sub-accounts", minRole: Access.AccountRole.ACCOUNT },
@@ -133,10 +136,11 @@ export namespace navModel
     {
         id: "settings", label: "Settings", icon: <SettingsOutlinedIcon />, children:
         [
-            { id: "settings.billing",  label: "Billing",  route: "/settings/billing",  minRole: Access.AccountRole.BILLING },
-            { id: "settings.workflow", label: "Workflow", route: "/settings/workflow" },
-            { id: "settings.api",      label: "API",      route: "/settings/api",      minRole: Access.AccountRole.ACCOUNT },
-            { id: "settings.users",    label: "Users",    route: "/settings/users",    minRole: Access.AccountRole.ACCOUNT },
+            { id: "settings.contacts",     label: "Contacts",     route: "/settings/contacts" },
+            { id: "settings.registration", label: "Registration", route: "/settings/registration", minRole: Access.AccountRole.ACCOUNT },
+            { id: "settings.api",          label: "API",          route: "/settings/api",          minRole: Access.AccountRole.ACCOUNT },
+            { id: "settings.email",        label: "Email",        route: "/settings/email",        minRole: Access.AppRole.APPLICATION },   // platform email config — app/root staff
+            { id: "settings.actions",      label: "Actions",      route: "/settings/actions",      minRole: Access.AppRole.APPLICATION },   // pending-action queue (verify/reset/…) — app/root staff
         ]
     };
 

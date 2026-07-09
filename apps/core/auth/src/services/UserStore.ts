@@ -4,19 +4,22 @@ import { randomUUID } from "crypto";
 import {
     ListUserPoolClientsCommand,
     AdminInitiateAuthCommand,
-    SignUpCommand, ConfirmSignUpCommand, ResendConfirmationCodeCommand,
+    ConfirmSignUpCommand, ResendConfirmationCodeCommand,
+    AdminCreateUserCommand, AdminSetUserPasswordCommand,
     AdminGetUserCommand, ListUsersCommand,
     AdminUserGlobalSignOutCommand, AdminRespondToAuthChallengeCommand,
     ForgotPasswordCommand, ConfirmForgotPasswordCommand,
     AssociateSoftwareTokenCommand, VerifySoftwareTokenCommand, SetUserMFAPreferenceCommand,
     type AttributeType, type UserType,
     type AdminGetUserCommandOutput, type AdminInitiateAuthCommandOutput, type AdminRespondToAuthChallengeCommandOutput, type AuthenticationResultType,
-    type ListUserPoolClientsCommandOutput, type ListUsersCommandOutput, type SignUpCommandOutput,
+    type ListUserPoolClientsCommandOutput, type ListUsersCommandOutput,
+    type AdminCreateUserCommandOutput, type AdminSetUserPasswordCommandOutput,
     type AssociateSoftwareTokenCommandOutput, type VerifySoftwareTokenCommandOutput
 } from "@aws-sdk/client-cognito-identity-provider";
 
 import type { Cognito, Dynamo } from "@repo/services";
 import type { Type } from "@repo/common";
+import { Access } from "@repo/endpoint";
 import { User, ContactMethod } from "@repo/api";
 import type { UserMeta } from "@repo/api";
 
@@ -168,8 +171,12 @@ export class UserStore
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     /**
-     * Self-service sign-up: create the Cognito user (sends the verification code) + write the pending
-     * `users` row. Returns the new user's sub + which channel to verify.
+     * Self-service sign-up — APP-DRIVEN (Cognito is a credential store only; WE own the verification mail).
+     * Creates the Cognito user WITHOUT any Cognito-sent email (`MessageAction: SUPPRESS`) and sets the real
+     * password as PERMANENT, which moves the user straight to CONFIRMED so they can sign in immediately; the
+     * `users` row starts PENDING/`emailVerified:false` and is flipped by the branded verification link. Returns
+     * the new user's sub + which channel to verify. No Cognito code is sent — the caller mints + sends the
+     * branded EMAIL_VERIFICATION action.
      */
     public async register( input : UserStore.RegisterInput ) : Promise<UserStore.Registered>
     {
@@ -178,19 +185,29 @@ export class UserStore
             { Name: "given_name",  Value: input.firstName },
             { Name: "family_name", Value: input.lastName },
         ];
-        if( emailMethod ) attributes.push( { Name: "email", Value: input.account } );
-        else              attributes.push( { Name: "phone_number", Value: input.account } );
+        // seed the contact attribute as UNVERIFIED — the verification landing flips it (never trust it at creation)
+        if( emailMethod ) attributes.push( { Name: "email", Value: input.account }, { Name: "email_verified", Value: "false" } );
+        else              attributes.push( { Name: "phone_number", Value: input.account }, { Name: "phone_number_verified", Value: "false" } );
 
-        const signUp : SignUpCommandOutput = await this.cognito.client.send( new SignUpCommand( {
-            ClientId:       await this.clientId(),
+        // create the credential with NO Cognito mail (SUPPRESS); AdminCreateUser leaves a temp password, so …
+        const created : AdminCreateUserCommandOutput = await this.cognito.client.send( new AdminCreateUserCommand( {
+            UserPoolId:     this.poolId,
             Username:       input.account,
-            Password:       input.password,
+            MessageAction:  "SUPPRESS",
             UserAttributes: attributes,
         } ) );
+        // … immediately set the user's REAL password as permanent → the user is CONFIRMED and can sign in
+        const passwordSet : AdminSetUserPasswordCommandOutput = await this.cognito.client.send( new AdminSetUserPasswordCommand( {
+            UserPoolId: this.poolId,
+            Username:   input.account,
+            Password:   input.password,
+            Permanent:  true,
+        } ) );
+        void passwordSet;
 
-        const userId : string = signUp.UserSub ?? "";
+        const userId : string = attrsToRecord( created.User?.Attributes )[ "sub" ] ?? created.User?.Username ?? "";
         const now : string = new Date().toISOString();
-        await this.dynamo.put( UserStore.USERS, {
+        const wrote : Type.Result<void> = await this.dynamo.put( UserStore.USERS, {
             userId,
             email:         emailMethod ? input.account : undefined,
             phone:         emailMethod ? undefined : input.account,
@@ -203,8 +220,22 @@ export class UserStore
             createdAt:     now,
             modifiedAt:    now,
         } );
+        void wrote;
 
         return { userId, verify: emailMethod ? ContactMethod.EMAIL : ContactMethod.PHONE };
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** Flip a user's row to email-verified + ACTIVE — the app-driven verification landing calls this once Cognito
+     *  has marked the `email_verified` attribute. Idempotent; a missing row is a no-op (the Cognito attribute is
+     *  the source of truth and was already set by the caller). */
+    public async markVerified( userId : string ) : Promise<void>
+    {
+        const row : Type.Result<Record<string, unknown> | undefined> = await this.dynamo.get<Record<string, unknown>>( UserStore.USERS, { userId } );
+        if( !row.ok || !row.data ) return;
+        const updated : Record<string, unknown> = { ...row.data, emailVerified: true, status: User.Status.ACTIVE, modifiedAt: new Date().toISOString() };
+        const wrote : Type.Result<void> = await this.dynamo.put( UserStore.USERS, updated );
+        void wrote;
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -283,7 +314,30 @@ export class UserStore
         const got : Type.Result<AdminGetUserCommandOutput> = await this.cognito.getUser( UserStore.POOL, userId );
         if( !got.ok ) return undefined;
         const attrs : Record<string, string> = attrsToRecord( got.data.UserAttributes );
-        return this.entityFrom( attrs, got.data.Username ?? userId, got.data.Enabled ?? true, got.data.UserStatus );
+        const entity : User.Entity = await this.entityFrom( attrs, got.data.Username ?? userId, got.data.Enabled ?? true, got.data.UserStatus );
+        // resolve the staff/app role from Cognito group membership (best-effort — undefined if none / on error)
+        entity.appRole = await this.appRoleFor( got.data.Username ?? userId );
+        return entity;
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** The user's highest `Access.AppRole` from Cognito GROUP membership (a group named `support`/`application`/
+     *  `root` grants the matching staff role). Best-effort: undefined when the user is in no staff group. */
+    private async appRoleFor( username : string ) : Promise<Access.AppRole | undefined>
+    {
+        const groups : Type.Result<Array<string>> = await this.cognito.groupsForUser( UserStore.POOL, username );
+        if( !groups.ok ) return undefined;
+        const roles : Array<Access.AppRole> = Object.values( Access.AppRole ).filter( ( role : Access.AppRole ) : boolean => groups.data.includes( role ) );
+        return roles.length > 0 ? roles.reduce( ( best : Access.AppRole, role : Access.AppRole ) : Access.AppRole => ( Access.rank( role ) > Access.rank( best ) ? role : best ) ) : undefined;
+    }
+
+    /** Merge app-augmented fields (icon / avatarAssetId) into the user's DynamoDB row (creates it if absent). */
+    public async updateAugmented( userId : string, patch : Partial<Pick<User.Augmented, "icon" | "avatarAssetId" | "status">> ) : Promise<void>
+    {
+        const got : Type.Result<Record<string, unknown> | undefined> = await this.dynamo.get<Record<string, unknown>>( UserStore.USERS, { userId } );
+        const row : Record<string, unknown> = ( got.ok && got.data ) ? got.data : { userId, createdAt: new Date().toISOString() };
+        const now : string = new Date().toISOString();
+        await this.dynamo.put( UserStore.USERS, { ...row, userId, ...patch, modifiedAt: now } );
     }
 
     // ── user metadata (DynamoDB) ──────────────────────────────────────────────────────────────────
@@ -323,6 +377,15 @@ export class UserStore
     }
 
     // ── password reset (Cognito) ──────────────────────────────────────────────────────────────────
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** Resolve the canonical platform user id (Cognito `sub`) for an email/phone/username, or undefined when no
+     *  such user exists. Public wrapper over {@link subOf} — used by the app-driven reset flow to attach the
+     *  PASSWORD_RESET action to the right user without leaking existence to the caller. */
+    public async userIdFor( account : string ) : Promise<string | undefined>
+    {
+        return this.subOf( account );
+    }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////
     public async forgotPassword( account : string ) : Promise<void>
@@ -396,6 +459,7 @@ export class UserStore
             displayName:   attrs[ "name" ] || undefined,
             avatarUrl:     attrs[ "picture" ] || undefined,
             icon:          row.icon || undefined,
+            avatarAssetId: row.avatarAssetId || undefined,   // profile-photo media asset (media-23)
             locale:        attrs[ "locale" ] || undefined,
             timezone:      attrs[ "zoneinfo" ] || undefined,
             status,

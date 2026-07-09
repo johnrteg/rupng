@@ -1,0 +1,10 @@
+{
+  "//": "The shared Studio video composition (React + Remotion). Consumed as SOURCE by the web app (vite/tsc via @repo/* paths) for the <Player> preview, and bundled by the media render worker's Remotion server render.",
+  "extends": "@repo/tsconfig/base.json",
+  "compilerOptions": {
+    "types": [],
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src/**/*"]
+}

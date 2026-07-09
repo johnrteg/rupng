@@ -42,7 +42,8 @@ export class PostRegister extends RestfulEndpoint<{}, PostRegister.Body, PostReg
                 accountName:   { type: 'string', maxLength: 200 },                // optional — no longer prompted; personal account defaults to the user's name
                 password:      { type: 'string', minLength: 8, maxLength: 256 },
                 acceptedTerms: { type: 'boolean', const: true },                  // must accept the ToS
-                botToken:      { type: 'string' }                                 // anti-bot proof (optional until wired)
+                botToken:      { type: 'string' },                                // anti-bot proof (optional until wired)
+                origin:        { type: 'string' }                                 // caller origin → base URL for the branded verification link
             },
             required: ['method', 'account', 'firstName', 'lastName', 'password', 'acceptedTerms'],
             additionalProperties: false
@@ -71,6 +72,7 @@ export namespace PostRegister
         password      : string;
         acceptedTerms : boolean;
         botToken?     : string;    // CAPTCHA / Turnstile / hCaptcha token (when wired)
+        origin?       : string;    // caller origin (protocol+host) — resolves the verification link's base URL (white-label aware)
     }
 
     export interface Response

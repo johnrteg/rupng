@@ -11,12 +11,15 @@ import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import SmsOutlinedIcon      from '@mui/icons-material/SmsOutlined';
 import EmailOutlinedIcon    from '@mui/icons-material/EmailOutlined';
 import PrintOutlinedIcon    from '@mui/icons-material/PrintOutlined';
+import RecordVoiceOverOutlinedIcon from '@mui/icons-material/RecordVoiceOverOutlined';
 import ShareOutlinedIcon    from '@mui/icons-material/ShareOutlined';
 import { Tooltip } from "@mui/material";
 
 import { DayPilotCalendar, DayPilotMonth, DayPilot } from "@daypilot/daypilot-lite-react";
 
 import { Access }   from '@repo/system';
+import { DateUtils } from '@repo/common';
+import { Campaign as CampaignModel } from '@repo/api';   // single-source campaign Status + Channel enums
 import AuthPage     from '@widgets/app/AuthPage';
 import SelectInput  from '@widgets/core/SelectInput';
 import LocaleService from '@model/service/LocaleService';
@@ -32,7 +35,7 @@ export function Schedule( props : Schedule.Props ) : JSX.Element
     const appmodel : AppModel = AppModel.instance();
     const theme    : Theme = useTheme();
 
-    const [view,setView]     = React.useState< Schedule.View >( "month" );
+    const [view,setView]     = React.useState< Schedule.View >( Schedule.View.MONTH );
     const [anchor,setAnchor] = React.useState< Date >( () => new Date() );
     const [weeks,setWeeks]   = React.useState< number >( 2 );   // "launching soon" look-ahead window
 
@@ -53,33 +56,34 @@ export function Schedule( props : Schedule.Props ) : JSX.Element
         };
         const list : Array<Schedule.Campaign> =
         [
-            { id: "c1", name: "Summer Sale Blast",    launchAt: at( 1 ),  status: "scheduled", channels: randomChannels() },
-            { id: "c2", name: "Back-to-School SMS",   launchAt: at( 4 ),  status: "scheduled", channels: randomChannels() },
-            { id: "c3", name: "VIP Early Access",     launchAt: at( 8 ),  status: "review",    channels: randomChannels() },
-            { id: "c4", name: "Fall Launch Teaser",   launchAt: at( 15 ), status: "draft",     channels: randomChannels() },
-            { id: "c5", name: "Loyalty Rewards Drop", launchAt: at( 23 ), status: "scheduled", channels: randomChannels() },
+            { id: "c1", name: "Summer Sale Blast",    launchAt: at( 1 ),  status: CampaignModel.Status.SCHEDULED, channels: randomChannels() },
+            { id: "c2", name: "Back-to-School SMS",   launchAt: at( 4 ),  status: CampaignModel.Status.SCHEDULED, channels: randomChannels() },
+            { id: "c3", name: "VIP Early Access",     launchAt: at( 8 ),  status: CampaignModel.Status.IN_REVIEW, channels: randomChannels() },
+            { id: "c4", name: "Fall Launch Teaser",   launchAt: at( 15 ), status: CampaignModel.Status.DRAFT,     channels: randomChannels() },
+            { id: "c5", name: "Loyalty Rewards Drop", launchAt: at( 23 ), status: CampaignModel.Status.SCHEDULED, channels: randomChannels() },
         ];
         return list.sort( ( a : Schedule.Campaign, b : Schedule.Campaign ) => a.launchAt.getTime() - b.launchAt.getTime() );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // STUB: a random non-empty subset of channels for a campaign (placeholder until the API supplies them)
-    function randomChannels() : Array<Schedule.Channel>
+    function randomChannels() : Array<CampaignModel.Channel>
     {
-        const all : Array<Schedule.Channel> = [ "sms", "email", "print", "social" ];
-        const picked : Array<Schedule.Channel> = all.filter( () => Math.random() < 0.5 );
-        return picked.length > 0 ? picked : [ "sms" ];
+        const all : Array<CampaignModel.Channel> = [ CampaignModel.Channel.EMAIL, CampaignModel.Channel.TEXTING, CampaignModel.Channel.PRINT, CampaignModel.Channel.VOICE ];
+        const picked : Array<CampaignModel.Channel> = all.filter( () => Math.random() < 0.5 );
+        return picked.length > 0 ? picked : [ CampaignModel.Channel.EMAIL ];
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // the MUI icon representing a channel (with a tooltip label)
-    function channelIcon( channel : Schedule.Channel ) : JSX.Element
+    // the MUI icon representing a campaign channel (with a tooltip label)
+    function channelIcon( channel : CampaignModel.Channel ) : JSX.Element
     {
         const icon : JSX.Element =
-              channel === "sms"    ? <SmsOutlinedIcon fontSize="small" />
-            : channel === "email"  ? <EmailOutlinedIcon fontSize="small" />
-            : channel === "print"  ? <PrintOutlinedIcon fontSize="small" />
-            :                        <ShareOutlinedIcon fontSize="small" />;
+              channel === CampaignModel.Channel.EMAIL   ? <EmailOutlinedIcon fontSize="small" />
+            : channel === CampaignModel.Channel.TEXTING ? <SmsOutlinedIcon fontSize="small" />
+            : channel === CampaignModel.Channel.PRINT   ? <PrintOutlinedIcon fontSize="small" />
+            : channel === CampaignModel.Channel.SOCIAL  ? <ShareOutlinedIcon fontSize="small" />
+            :                                             <RecordVoiceOverOutlinedIcon fontSize="small" />;
         return  <Tooltip key={ channel } title={ channel }>
                     <Box sx={{ display: "inline-flex", color: "text.secondary" }}>{ icon }</Box>
                 </Tooltip>;
@@ -87,24 +91,30 @@ export function Schedule( props : Schedule.Props ) : JSX.Element
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // a theme color for a campaign status (DayPilot needs a real color string — pull it from the theme)
-    function statusColor( status : Schedule.Status ) : string
+    function statusColor( status : CampaignModel.Status ) : string
     {
         switch( status )
         {
-            case "scheduled": return theme.palette.primary.main;
-            case "review":    return theme.palette.warning.main;
-            case "draft":     return theme.palette.text.disabled;
+            case CampaignModel.Status.SCHEDULED: return theme.palette.primary.main;
+            case CampaignModel.Status.SENDING:   return theme.palette.info.main;
+            case CampaignModel.Status.SENT:      return theme.palette.success.main;
+            case CampaignModel.Status.IN_REVIEW:
+            case CampaignModel.Status.APPROVED:  return theme.palette.warning.main;
+            default:                             return theme.palette.text.disabled;   // draft / paused / canceled / failed / archived / partially_sent
         }
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    function statusChipColor( status : Schedule.Status ) : "primary" | "warning" | "default"
+    // a MUI Chip color for a campaign status
+    function statusChipColor( status : CampaignModel.Status ) : "primary" | "warning" | "success" | "default"
     {
         switch( status )
         {
-            case "scheduled": return "primary";
-            case "review":    return "warning";
-            case "draft":     return "default";
+            case CampaignModel.Status.SCHEDULED:
+            case CampaignModel.Status.APPROVED:  return "primary";
+            case CampaignModel.Status.IN_REVIEW: return "warning";
+            case CampaignModel.Status.SENT:      return "success";
+            default:                             return "default";
         }
     }
 
@@ -129,7 +139,7 @@ export function Schedule( props : Schedule.Props ) : JSX.Element
         setAnchor( ( prev : Date ) =>
         {
             const next : Date = new Date( prev );
-            if( view === "month" ) next.setMonth( next.getMonth() + direction );
+            if( view === Schedule.View.MONTH ) next.setMonth( next.getMonth() + direction );
             else                   next.setDate( next.getDate() + direction * 7 );
             return next;
         } );
@@ -152,15 +162,12 @@ export function Schedule( props : Schedule.Props ) : JSX.Element
 
     const startDate : string = toIso( anchor ).slice( 0, 10 );   // YYYY-MM-DD
 
-    // "launching soon" = campaigns whose launch falls within the chosen look-ahead window
-    const horizon : number = ( () : number =>
+    // "launching soon" cutoff — end-of-day, `weeks` weeks out (composed from the shared DateUtils helpers)
+    function horizon() : number
     {
-        const date : Date = new Date();
-        date.setDate( date.getDate() + weeks * 7 );
-        date.setHours( 23, 59, 59, 999 );
-        return date.getTime();
-    } )();
-    const upcoming : Array<Schedule.Campaign> = campaigns.filter( ( campaign : Schedule.Campaign ) => campaign.launchAt.getTime() <= horizon );
+        return DateUtils.endOfDay( DateUtils.addDays( new Date(), weeks * 7 ) ).getTime();
+    }
+    const upcoming : Array<Schedule.Campaign> = campaigns.filter( ( campaign : Schedule.Campaign ) => campaign.launchAt.getTime() <= horizon() );
 
     const windowChoices : Array<SelectInput.Choice> =
     [
@@ -171,7 +178,7 @@ export function Schedule( props : Schedule.Props ) : JSX.Element
     ];
 
     return  <AuthPage minAccess={ Access.AccountRole.USER } title={"Schedule"}>
-                <Box sx={{ p: 2, maxWidth: 1100, mx: "auto" }}>
+                <Box sx={{ p: 2, mx: "auto" }}>
                     <Stack spacing={ 2 }>
 
                         {/* ── Launching soon ───────────────────────────────────────────────────────── */}
@@ -196,7 +203,7 @@ export function Schedule( props : Schedule.Props ) : JSX.Element
                                                 </Stack>
                                                 <Stack direction="row" spacing={ 2 } sx={{ alignItems: "center", flexShrink: 0 }}>
                                                     <Stack direction="row" spacing={ 0.5 } sx={{ alignItems: "center" }}>
-                                                        { campaign.channels.map( ( channel : Schedule.Channel ) => channelIcon( channel ) ) }
+                                                        { campaign.channels.map( ( channel : CampaignModel.Channel ) => channelIcon( channel ) ) }
                                                     </Stack>
                                                     <Typography variant="caption" sx={{ color: "text.secondary" }}>{ displayDate( campaign.launchAt ) }</Typography>
                                                     <Chip size="small" variant="outlined" color={ statusChipColor( campaign.status ) } label={ campaign.status } />
@@ -218,16 +225,23 @@ export function Schedule( props : Schedule.Props ) : JSX.Element
                                         <Button size="small" onClick={ () => shift( 1 ) } endIcon={ <ChevronRightIcon /> }>{"Next"}</Button>
                                         <ToggleButtonGroup size="small" exclusive value={ view }
                                                            onChange={ ( _event, next : Schedule.View | null ) => { if( next ) setView( next ); } }>
-                                            <ToggleButton value="month">{"Month"}</ToggleButton>
-                                            <ToggleButton value="week">{"Week"}</ToggleButton>
+                                            <ToggleButton value={ Schedule.View.MONTH }>{"Month"}</ToggleButton>
+                                            <ToggleButton value={ Schedule.View.WEEK }>{"Week"}</ToggleButton>
                                         </ToggleButtonGroup>
                                     </Stack>
                                 } />
                             <Divider />
                             <CardContent>
-                                { view === "month"
-                                    ? <DayPilotMonth startDate={ startDate } events={ events } eventBarVisible={ false } />
-                                    : <DayPilotCalendar viewType="Week" startDate={ startDate } events={ events } headerHeight={ 30 } cellHeight={ 24 } /> }
+                                { view === Schedule.View.MONTH
+                                    ? <DayPilotMonth
+                                                    startDate={ startDate }
+                                                    events={ events }
+                                                    eventBarVisible={ false } />
+                                    : <DayPilotCalendar viewType="Week"
+                                                    startDate={ startDate }
+                                                    events={ events }
+                                                    headerHeight={ 30 }
+                                                    cellHeight={ 24 } /> }
                             </CardContent>
                         </Card>
 
@@ -238,17 +252,16 @@ export function Schedule( props : Schedule.Props ) : JSX.Element
 
 export namespace Schedule
 {
-    export type View    = "month" | "week";
-    export type Status  = "scheduled" | "review" | "draft";
-    export type Channel = "sms" | "email" | "print" | "social";
+    /** Calendar view mode — a pure UI toggle (not a model concept). */
+    export enum View { MONTH = "month", WEEK = "week" }
 
     export interface Campaign
     {
         id       : string;
         name     : string;
         launchAt : Date;
-        status   : Status;
-        channels : Array<Channel>;
+        status   : CampaignModel.Status;          // the campaign lifecycle enum (single source, @repo/api)
+        channels : Array<CampaignModel.Channel>;  // the campaign channel enum (single source, @repo/api)
     }
 
     export interface Props

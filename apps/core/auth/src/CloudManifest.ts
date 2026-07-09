@@ -170,6 +170,14 @@ export const manifest : ResourceManifest =
 
             // webauthn_challenges — short-lived WebAuthn ceremony challenges; PK ceremonyId; TTL expiry
             { key: "webauthn_challenges", partitionKey: { name: "ceremonyId", type: AttrType.STRING }, ttlAttribute: "expiresAt" },
+
+            // auth_actions — no-auth landing-action queue (verify/reset/mfa/invite/unsubscribe); PK actionId (=URL
+            // token); TTL expiresAt auto-expires the row; GSIs to list by status (Console) + look up by target
+            { key: "auth_actions", partitionKey: { name: "actionId", type: AttrType.STRING }, ttlAttribute: "expiresAt",
+              globalSecondaryIndexes: [
+                  { name: "status", partitionKey: { name: "status", type: AttrType.STRING }, projection: "ALL" },
+                  { name: "target", partitionKey: { name: "target", type: AttrType.STRING }, projection: "ALL" },
+              ] },
         ],
     },
 

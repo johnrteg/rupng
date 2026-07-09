@@ -131,7 +131,7 @@ export function AccountSubAccounts( props : AccountSubAccounts.Props ) : JSX.Ele
     }
 
     return  <AuthPage minAccess={ Access.AccountRole.ACCOUNT } title={"Account : Sub-Accounts"}>
-                <Box sx={{ p: 2, maxWidth: 1000, mx: "auto" }}>
+                <Box sx={{ p: 2, mx: "auto" }}>
 
                     { loading &&
                         <Stack direction="row" spacing={ 1 } sx={{ alignItems: "center", p: 2 }}><CircularProgress size={ 18 } /><Typography variant="body2" sx={{ color: "text.secondary" }}>{"Loading…"}</Typography></Stack> }

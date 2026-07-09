@@ -3,7 +3,7 @@ import AppModel from "@model/AppModel";
 import React from 'react';
 import { JSX } from "react";
 
-import { Box, Card, CardContent, CardHeader, Chip, CircularProgress, Divider, Stack, Typography } from "@mui/material";
+import { Box, Card, CardContent, CardHeader, CircularProgress, Divider, Stack, Typography } from "@mui/material";
 import DownloadOutlinedIcon from '@mui/icons-material/DownloadOutlined';
 import DeleteOutlineOutlinedIcon from '@mui/icons-material/DeleteOutlineOutlined';
 import RefreshOutlinedIcon from '@mui/icons-material/RefreshOutlined';
@@ -15,17 +15,23 @@ import { RestfulService } from '@repo/endpoint';
 import AuthPage   from '@widgets/app/AuthPage';
 import SnackAlert from '@widgets/core/SnackAlert';
 import ButtonIcon from '@widgets/core/ButtonIcon';
+import ChipStatus from '@widgets/core/ChipStatus';
 import ErrorChip  from '@widgets/core/ErrorChip';
+import TableInput from '@widgets/core/TableInput';
+import Colors     from '@utils/Colors';
 import AccountChange from '@widgets/app/AccountChange';
-import LocaleService from '@model/service/LocaleService';
 import BrowserUtils from '@utils/BrowserUtils';
+import HelpButton from "../../widgets/core/HelpButton";
+
+// TableInput row-action ids
+enum DownloadAction { DOWNLOAD = "download", DELETE = "delete" }
 
 //
-// Media : Downloads — the "Downloads" view (media-20): zip archives prepared by the media-archive Job. Each
+// Media : Downloads — the "Downloads" view (media-20): zip archives prepared by the media-archive Job. Each row
 // shows its status (pending / processing / complete / error, with the error reason) and, when complete, a
-// download link; expired archives are swept server-side (TTL). Poll while any archive is still working.
+// download action; expired archives are swept server-side (TTL). Polls while any archive is still working.
 //
-export function MediaDownloads( props : MediaDownloads.Props ) : JSX.Element
+export function MediaDownloads( _props : MediaDownloads.Props ) : JSX.Element
 {
     const appmodel : AppModel = AppModel.instance();
 
@@ -73,51 +79,80 @@ export function MediaDownloads( props : MediaDownloads.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // status chip (spinner while working, error reason in a tooltip on failure)
-    function statusChip( archive : Media.Archive ) : JSX.Element
+    // a row action → download (complete only) or delete
+    function onAction( action : string, row : TableInput.Row ) : void
     {
-        if( archive.status === Media.ArchiveStatus.COMPLETE )
-            return <Chip size="small" color="success" variant="outlined" label={"Complete"} />;
-
-        if( archive.status === Media.ArchiveStatus.ERROR )
-            return <ErrorChip message={ archive.error ?? "failed" } />;
-
-        return <Stack direction="row" spacing={ 1 } sx={{ alignItems: "center" }}><CircularProgress size={ 14 } /><Typography variant="caption" sx={{ color: "text.secondary" }}>{ archive.status === Media.ArchiveStatus.PENDING ? "Pending" : "Processing" }</Typography></Stack>;
+        const archive : Media.Archive | undefined = archives.find( ( entry : Media.Archive ) : boolean => entry.archiveId === row.id );
+        if( !archive ) return;
+        if( action === DownloadAction.DOWNLOAD ) void download( archive );
+        if( action === DownloadAction.DELETE )   void remove( archive );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    function row( archive : Media.Archive ) : JSX.Element
+    // map an archive status to a central color status (error is rendered separately, with its reason)
+    function statusColor( status : Media.ArchiveStatus ) : Colors.Status
     {
-        const complete : boolean = archive.status === Media.ArchiveStatus.COMPLETE;
-        return  <Stack key={ archive.archiveId } direction="row" spacing={ 2 } sx={{ alignItems: "center", py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
-                    <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                        <Typography variant="body2" noWrap>{ archive.name }</Typography>
-                        <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                            { appmodel.ui.locale.dateTime( new Date( archive.createdAt ), LocaleService.Format.SHORT ) }{ archive.size ? ` · ${ appmodel.ui.locale.bytes( archive.size ) }` : "" }{ archive.expiresAt ? ` · expires ${ appmodel.ui.locale.date( new Date( archive.expiresAt ), LocaleService.Format.SHORT ) }` : "" }
-                        </Typography>
-                    </Box>
-                    { statusChip( archive ) }
-                    <ButtonIcon id={ `dl-${ archive.archiveId }` } icon={ <DownloadOutlinedIcon fontSize="small" /> } label={"Download"} size="small" disabled={ !complete } onClick={ () => void download( archive ) } />
-                    <ButtonIcon id={ `rm-${ archive.archiveId }` } icon={ <DeleteOutlineOutlinedIcon fontSize="small" /> } label={"Delete"} size="small" onClick={ () => void remove( archive ) } />
-                </Stack>;
+        if( status === Media.ArchiveStatus.COMPLETE )   return Colors.Status.ACTIVE;
+        if( status === Media.ArchiveStatus.PROCESSING ) return Colors.Status.INWORK;
+        return Colors.Status.PENDING;
     }
+
+    // status cell — a status chip; on failure an ErrorChip carrying the reason
+    function statusRenderer( _col : TableInput.Column, row : TableInput.Row ) : JSX.Element
+    {
+        const status : Media.ArchiveStatus = row.status as Media.ArchiveStatus;
+        if( status === Media.ArchiveStatus.ERROR ) return <ErrorChip message={ ( row.error as string ) ?? "failed" } />;
+        return <ChipStatus size="small" label={ String( status ) } status={ statusColor( status ) } />;
+    }
+
+    // ── TableInput config ──────────────────────────────────────────────────────────────────────
+    const columns : Array<TableInput.Column> =
+    [
+        { field: "name",    label: "Name",    type: TableInput.ColumnType.STRING },
+        { field: "size",    label: "Size",    type: TableInput.ColumnType.STRING },
+        { field: "created", label: "Created", type: TableInput.ColumnType.DATETIME, options: { style: "short" } },
+        { field: "expires", label: "Expires", type: TableInput.ColumnType.DATETIME, options: { style: "short" } },
+        { field: "status",  label: "Status",  type: TableInput.ColumnType.CUSTOM, renderer: statusRenderer },
+        { field: "actions", label: "",        type: TableInput.ColumnType.ACTION },
+    ];
+
+    const actions : Array<TableInput.Action> =
+    [
+        { id: DownloadAction.DOWNLOAD, label: "Download", icon: <DownloadOutlinedIcon fontSize="small" /> },
+        { id: DownloadAction.DELETE,   label: "Delete",   icon: <DeleteOutlineOutlinedIcon fontSize="small" /> },
+    ];
+
+    const rows : Array<TableInput.Row> = archives.map( ( archive : Media.Archive ) => ( {
+        id:      archive.archiveId,
+        name:    archive.name,
+        size:    archive.size !== undefined ? appmodel.ui.locale.bytes( archive.size ) : "—",
+        created: archive.createdAt ? new Date( archive.createdAt ) : undefined,
+        expires: archive.expiresAt ? new Date( archive.expiresAt ) : undefined,
+        status:  archive.status,
+        error:   archive.error,
+        // download only when the zip is COMPLETE; delete always available
+        actions: archive.status === Media.ArchiveStatus.COMPLETE ? [ DownloadAction.DOWNLOAD, DownloadAction.DELETE ] : [ DownloadAction.DELETE ],
+    } ) );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     return  <AuthPage minAccess={ Access.AccountRole.USER } title={ "Media : Downloads" }>
                 <Box sx={{ p: 2, mx: "auto" }}>
                     <Card variant="outlined">
                         <CardHeader title={"Downloads"}
-                                    subheader={"Prepared zip archives of your media — ready to download."}
-                                    action={ <ButtonIcon id="dl-refresh"
-                                    icon={ <RefreshOutlinedIcon /> }
-                                    label={"Reload"}
-                                    onClick={ () => void load() } /> } />
+                                    subheader={"Prepared zip archives of your media"}
+                                    action={ <Stack direction="row">
+                                        <ButtonIcon id="dl-refresh" icon={ <RefreshOutlinedIcon /> }
+                                                    label={"Reload"} disabled={ loading } onClick={ () => void load() } />
+                                        <HelpButton value={"5454594759475"} />
+                                    </Stack> } />
                         <Divider />
                         <CardContent>
-                            { loading && <Stack direction="row" spacing={ 1 } sx={{ alignItems: "center", p: 2 }}><CircularProgress size={ 18 } /></Stack> }
+                            { loading &&
+                                <Stack direction="row" spacing={ 1 } sx={{ alignItems: "center", p: 2 }}><CircularProgress size={ 18 } /><Typography variant="body2" sx={{ color: "text.secondary" }}>{"Loading…"}</Typography></Stack> }
                             { !loading && archives.length === 0 &&
                                 <Typography variant="body2" sx={{ color: "text.secondary", p: 2 }}>{"No downloads yet. Use “Download all (zip)” on a library item to prepare one."}</Typography> }
-                            { !loading && archives.map( row ) }
+                            { !loading && archives.length > 0 &&
+                                <TableInput id="media-downloads" columns={ columns } data={ rows } actions={ actions } onAction={ onAction } selectable={ TableInput.Selectable.NONE } /> }
                         </CardContent>
                     </Card>
                 </Box>

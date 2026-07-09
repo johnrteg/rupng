@@ -3,17 +3,18 @@ import AppModel from "@model/AppModel";
 import React from 'react';
 import { JSX } from "react";
 
-import { Box, Card, CardContent, CardHeader, Chip, CircularProgress, Divider, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Card, CardContent, CardHeader, Chip, CircularProgress, Divider, Stack, Typography } from "@mui/material";
 import ContentCopyOutlinedIcon from '@mui/icons-material/ContentCopyOutlined';
 
 import { Access }   from '@repo/system';
-import { Account, GetAccount, PutAccount } from '@repo/api';
+import { Account, GetAccount, PutAccount, Contact } from '@repo/api';
 import { RestfulService } from '@repo/endpoint';
 import { Type } from '@repo/common';
 
 import BrowserUtils    from '@utils/BrowserUtils';
 import LocaleService   from '@model/service/LocaleService';
 import AuthPage        from '@widgets/app/AuthPage';
+import ButtonIcon      from '@widgets/core/ButtonIcon';
 import TextInput       from '@widgets/core/TextInput';
 import EmailInput      from '@widgets/core/EmailInput';
 import UrlInput        from '@widgets/core/UrlInput';
@@ -21,6 +22,7 @@ import TimezoneInput   from '@widgets/core/TimezoneInput';
 import SnackAlert      from '@widgets/core/SnackAlert';
 import OrganizationInput from '@widgets/app/OrganizationInput';
 import AddressInput    from '@widgets/app/AddressInput';
+import SelectMultInput from '@widgets/core/SelectMultInput';
 import SaveBar         from '@widgets/app/SaveBar';
 import SubAccountNotice from '@widgets/app/SubAccountNotice';
 import AccountChange   from '@widgets/app/AccountChange';
@@ -82,6 +84,7 @@ export function AccountDetails( props : AccountDetails.Props ) : JSX.Element
                     timezone:   entity.timezone ?? "",
                     // seed the address; default the country to US when unset
                     address:    { ...AddressInput.EMPTY, ...( entity.address ?? {} ), country: entity.address?.country || "US" },
+                    channels:   entity.channels ?? Object.values( Contact.Channel ),
                 };
     }
 
@@ -113,6 +116,7 @@ export function AccountDetails( props : AccountDetails.Props ) : JSX.Element
             website:      form.website || undefined,
             timezone:     form.timezone || undefined,
             address:      form.address,
+            channels:     form.channels,
         };
         const reply : RestfulService.Reply<PutAccount.Response> = await appmodel.server.fetch( new PutAccount( update ) );
         if( reply.ok && reply.data )
@@ -179,7 +183,7 @@ export function AccountDetails( props : AccountDetails.Props ) : JSX.Element
     const owned : boolean = !!account?.ownerId && account.ownerId === appmodel.auth.user?.id;
 
     return  <AuthPage minAccess={ Access.AccountRole.USER } title={"Account : Details"}>
-                <Box sx={{ p: 2, pb: editable ? 12 : 2, maxWidth: 880, mx: "auto" }}>
+                <Box sx={{ p: 2, pb: editable ? 12 : 2, mx: "auto" }}>
 
                     { loading && <Stack direction="row" spacing={ 1 } sx={{ alignItems: "center", p: 2 }}><CircularProgress size={ 18 } /><Typography variant="body2" sx={{ color: "text.secondary" }}>{"Loading…"}</Typography></Stack> }
                     { !loading && error !== "" && <Typography variant="body2" sx={{ color: "error.main", p: 2 }}>{ error }</Typography> }
@@ -262,6 +266,21 @@ export function AccountDetails( props : AccountDetails.Props ) : JSX.Element
                                 </CardContent>
                             </Card>
 
+                            {/* ── Outreach channels ────────────────────────────────────────────────── */}
+                            <Card variant="outlined">
+                                <CardHeader title={"Outreach"} subheader={"The channels this account is allowed to use."} />
+                                <Divider />
+                                <CardContent>
+                                    { editable
+                                        ? <SelectMultInput id="acct-channels" label={"Allowed channels"}
+                                                           value={ form.channels }
+                                                           choices={ Object.values( Contact.Channel ).map( ( channel : Contact.Channel ) : SelectMultInput.Choice => ( { value: channel, label: channel.toUpperCase() } ) ) }
+                                                           onChange={ ( values : Array<string> ) : void => set( { channels: values as Array<Contact.Channel> } ) } />
+                                        : <ReadRow label={"Allowed channels"} value={ ( account.channels ?? Object.values( Contact.Channel ) ).map( ( channel : Contact.Channel ) : string => channel.toUpperCase() ).join( ", " ) } />
+                                    }
+                                </CardContent>
+                            </Card>
+
                             {/* ── Sharing (read-only) ──────────────────────────────────────────────── */}
                             <Card variant="outlined">
                                 <CardHeader title={"Sharing"} subheader={"How others join or act in this account."} />
@@ -302,11 +321,9 @@ function ReadRow( { label, value, mono, copy, onCopy } : { label : string; value
                 <Stack direction="row" spacing={ 0.5 } sx={{ alignItems: "center", minWidth: 0 }}>
                     <Typography variant="body2" sx={{ textAlign: "right", fontFamily: mono ? "monospace" : undefined, wordBreak: "break-all" }}>{ value }</Typography>
                     { canCopy &&
-                        <Tooltip title={"Copy"}>
-                            <IconButton size="small" onClick={ () => onCopy?.( value ) } sx={{ p: 0.25 }}>
-                                <ContentCopyOutlinedIcon sx={{ fontSize: 15 }} />
-                            </IconButton>
-                        </Tooltip>
+                        <ButtonIcon id="readrow-copy" label={"Copy"} size="small" sx={{ p: 0.25 }}
+                                    icon={ <ContentCopyOutlinedIcon sx={{ fontSize: 15 }} /> }
+                                    onClick={ () => onCopy?.( value ) } />
                     }
                 </Stack>
             </Stack>;
@@ -324,6 +341,7 @@ export namespace AccountDetails
         website    : string;
         timezone   : string;
         address    : Type.Address;
+        channels   : Array<Contact.Channel>;   // allowed outreach channels
     }
 
     export interface Props

@@ -39,6 +39,7 @@ const unsplash = env.UNSPLASH_ACCESS_KEY
 const secrets = {
     "local-platform-secret-ai-openai":    env.OPENAI_API_KEY,
     "local-platform-secret-ai-fish":      env.FISH_AUDIO_KEY,
+    "local-platform-secret-ai-gemini":    env.GEMINI_KEY,
     "local-media-secret-browse-pexels":   env.PEXELS_API_KEY,
     "local-media-secret-browse-unsplash": unsplash,
     // ai-anthropic / ai-elevenlabs / magnific: no key in .env.local yet — set later.

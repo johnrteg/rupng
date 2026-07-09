@@ -1,5 +1,7 @@
 {
+	"common.button.no": "No",
 	"common.button.ok": "OK",
+	"common.button.yes": "Yes",
 	"language.en-US": "English",
 	"language.es-ES": "Spanish",
 	"language.fr-FR": "French",

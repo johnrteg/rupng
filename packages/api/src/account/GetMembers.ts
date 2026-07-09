@@ -2,12 +2,13 @@
 import { RestfulEndpoint, Access, apiPath } from "@repo/endpoint";
 import { NetworkUtils } from "@repo/common";
 import { Account } from "./model/Account";
+import { Paging } from "../model/Paging";
 
 //
 // List the users with access to the caller's ACTING account (the X-Account header) — role, status,
-// created, best-effort last-login. Admin-only. See PatchMember / DeleteMember to manage them.
+// created, best-effort last-login. Admin-only. Paged ({ records, page }). See PatchMember / DeleteMember.
 //
-export class GetMembers extends RestfulEndpoint<{}, undefined, GetMembers.Response>
+export class GetMembers extends RestfulEndpoint<GetMembers.Query, undefined, GetMembers.Response>
 {
     public readonly uri      : string = GetMembers.URI;
     public readonly method   : NetworkUtils.Method = NetworkUtils.Method.GET;
@@ -15,7 +16,7 @@ export class GetMembers extends RestfulEndpoint<{}, undefined, GetMembers.Respon
     public readonly timeout  : number | undefined = undefined;
     public readonly audience : RestfulEndpoint.Audience = RestfulEndpoint.Audience.APP;
 
-    constructor() { super( {} ); }
+    constructor( query? : GetMembers.Query ) { super( query ?? {} ); }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     public getMappings(): Array<RestfulEndpoint.FieldMap> { return []; }
@@ -27,7 +28,8 @@ export namespace GetMembers
 {
     export const URI : string = apiPath( "acct", 1, "/members" );   // /api/acct/v1/members
 
-    export interface Response { members : Array<Account.Member>; }
+    export interface Query extends Paging.Request {}
+    export interface Response extends Paging.Result<Account.Member> {}
 
     export enum Error { UNAUTHORIZED = NetworkUtils.Status.UNAUTHORIZED, FORBIDDEN = NetworkUtils.Status.FORBIDDEN, INTERNAL_SERVER_ERROR = NetworkUtils.Status.INTERNAL_SERVER_ERROR }
 }

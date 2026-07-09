@@ -1,7 +1,7 @@
 //
 // Cognito facade — user-pool admin/auth ops, keyed by cloud-manifest LOGICAL user-pool keys.
 //
-import { CognitoIdentityProviderClient, AdminGetUserCommand } from "@aws-sdk/client-cognito-identity-provider";
+import { CognitoIdentityProviderClient, AdminGetUserCommand, AdminListGroupsForUserCommand, AdminSetUserPasswordCommand, AdminUpdateUserAttributesCommand } from "@aws-sdk/client-cognito-identity-provider";
 import type { AdminGetUserCommandOutput } from "@aws-sdk/client-cognito-identity-provider";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
@@ -38,5 +38,38 @@ export class Cognito
     getUser( poolKey : ResourceKey, username : string ) : Promise<Type.Result<AdminGetUserCommandOutput>>
     {
         return ResultUtils.from( () => this.client.send( new AdminGetUserCommand( { UserPoolId: this.poolId( poolKey ), Username: username } ) ) );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    /** The Cognito GROUP names a user belongs to — the authoritative staff/app-role membership ("edge ceiling").
+     *  Used to resolve a user's `Access.AppRole`. Empty when the user is in no groups. */
+    groupsForUser( poolKey : ResourceKey, username : string ) : Promise<Type.Result<Array<string>>>
+    {
+        return ResultUtils.from( async () : Promise<Array<string>> =>
+        {
+            const output = await this.client.send( new AdminListGroupsForUserCommand( { UserPoolId: this.poolId( poolKey ), Username: username } ) );
+            return ( output.Groups ?? [] ).map( ( group ) => group.GroupName ?? "" ).filter( Boolean );
+        } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    /** Set a user's password (admin). `permanent` (default) sets it directly; false forces a reset on next login.
+     *  Used to complete a password-reset ACTION from a landing page. */
+    setPassword( poolKey : ResourceKey, username : string, password : string, permanent : boolean = true ) : Promise<Type.Result<void>>
+    {
+        return ResultUtils.from( async () : Promise<void> =>
+        {
+            await this.client.send( new AdminSetUserPasswordCommand( { UserPoolId: this.poolId( poolKey ), Username: username, Password: password, Permanent: permanent } ) );
+        } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    /** Mark a user's email as verified (admin) — completes an email-verification ACTION from a landing page. */
+    verifyEmail( poolKey : ResourceKey, username : string ) : Promise<Type.Result<void>>
+    {
+        return ResultUtils.from( async () : Promise<void> =>
+        {
+            await this.client.send( new AdminUpdateUserAttributesCommand( { UserPoolId: this.poolId( poolKey ), Username: username, UserAttributes: [ { Name: "email_verified", Value: "true" } ] } ) );
+        } );
     }
 }

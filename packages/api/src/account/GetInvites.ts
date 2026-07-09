@@ -2,11 +2,12 @@
 import { RestfulEndpoint, Access, apiPath } from "@repo/endpoint";
 import { NetworkUtils } from "@repo/common";
 import { Account } from "./model/Account";
+import { Paging } from "../model/Paging";
 
 //
-// List the acting account's **pending** invitations (email, role, how old). Admin-only.
+// List the acting account's **pending** invitations (email, role, how old). Admin-only. Paged ({ records, page }).
 //
-export class GetInvites extends RestfulEndpoint<{}, undefined, GetInvites.Response>
+export class GetInvites extends RestfulEndpoint<GetInvites.Query, undefined, GetInvites.Response>
 {
     public readonly uri      : string = GetInvites.URI;
     public readonly method   : NetworkUtils.Method = NetworkUtils.Method.GET;
@@ -14,7 +15,7 @@ export class GetInvites extends RestfulEndpoint<{}, undefined, GetInvites.Respon
     public readonly timeout  : number | undefined = undefined;
     public readonly audience : RestfulEndpoint.Audience = RestfulEndpoint.Audience.APP;
 
-    constructor() { super( {} ); }
+    constructor( query? : GetInvites.Query ) { super( query ?? {} ); }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     public getMappings(): Array<RestfulEndpoint.FieldMap> { return []; }
@@ -26,7 +27,8 @@ export namespace GetInvites
 {
     export const URI : string = apiPath( "acct", 1, "/invites" );   // /api/acct/v1/invites
 
-    export interface Response { invites : Array<Account.Invite>; }
+    export interface Query extends Paging.Request {}
+    export interface Response extends Paging.Result<Account.Invite> {}
 
     export enum Error { UNAUTHORIZED = NetworkUtils.Status.UNAUTHORIZED, FORBIDDEN = NetworkUtils.Status.FORBIDDEN, INTERNAL_SERVER_ERROR = NetworkUtils.Status.INTERNAL_SERVER_ERROR }
 }

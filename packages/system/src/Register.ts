@@ -37,6 +37,7 @@ export namespace Register
         AUDIT        = "audit",
         ANALYTICS    = "analytics",
         PLATFORM     = "platform",   // cross-cutting actions any service emits (config / feature-flag)
+        FAKE_EMAIL   = "fake-email", // DEV-ONLY simulated ESP (a "fake provider" leaf; non-emitting) — see FakeService
     }
 }
 

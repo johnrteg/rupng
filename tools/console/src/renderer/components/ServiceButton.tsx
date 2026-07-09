@@ -2,6 +2,7 @@ import ButtonBase from "@mui/material/ButtonBase";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import Tooltip from "@mui/material/Tooltip";
+import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 
 import type { ServiceInfo } from "../../shared/types";
 import { serviceIcon } from "../icons";
@@ -16,19 +17,20 @@ export interface ServiceDot { key : string; label : string; state : DotState; }
 // a pipeline step — green done/running · yellow in process · red failed · grey idle · faint planned.
 //
 export function ServiceButton(
-    { service, selected, dots, onSelect } :
-    { service : ServiceInfo; selected : boolean; dots : Array<ServiceDot>; onSelect : () => void }
+    { service, selected, dots, needsRedeploy, onSelect } :
+    { service : ServiceInfo; selected : boolean; dots : Array<ServiceDot>; needsRedeploy : boolean; onSelect : () => void }
 )
 {
     const Icon    : ReturnType<typeof serviceIcon> = serviceIcon( service.icon );
     const planned : boolean = !service.capabilities.scaffolded;
 
     return (
-        <Tooltip title={`${service.blurb}${planned ? " — planned (not scaffolded yet)" : ""}`} enterDelay={400}>
+        <Tooltip title={`${service.blurb}${planned ? " — planned (not scaffolded yet)" : ""}${needsRedeploy ? " — manifest changed since last deploy; redeploy to LocalStack" : ""}`} enterDelay={400}>
             <ButtonBase
                 onClick={onSelect}
                 focusRipple
                 sx={{
+                    position      : "relative",    // anchor the redeploy warning badge
                     flexDirection : "column",
                     alignItems    : "center",
                     justifyContent: "center",
@@ -46,6 +48,13 @@ export function ServiceButton(
                     "&:hover"     : { borderColor: selected ? "primary.main" : "text.disabled" }
                 }}
             >
+                {/* redeploy warning — the manifest (AWS footprint) changed since the last LocalStack deploy */}
+                {needsRedeploy && (
+                    <Box sx={{ position: "absolute", top: 2, right: 2, display: "flex", lineHeight: 0 }}>
+                        <WarningAmberRoundedIcon sx={{ fontSize: 14, color: "warning.main" }} />
+                    </Box>
+                )}
+
                 {/* one dot per pipeline step, centered above the icon (in flow → never crowds the label) */}
                 <Box sx={{ display: "flex", justifyContent: "center", gap: 0.75, mb: 0.5 }}>
                     {dots.map( ( dot : ServiceDot ) => <StatusDot key={dot.key} state={dot.state} title={dot.label} size={8} /> )}

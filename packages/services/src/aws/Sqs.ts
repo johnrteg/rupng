@@ -67,6 +67,34 @@ export class Sqs
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     /**
+     * Send to a queue by its EXPLICIT URL rather than a logical key — for a CROSS-SERVICE queue this service
+     * doesn't own (e.g. auth dropping a send request on the email service's send queue). Carries the ambient
+     * transaction id as a message attribute, same as {@link send}.
+     * @param queueUrl the fully-qualified SQS queue URL.
+     * @param body     message payload (object → JSON).
+     */
+    sendToUrl( queueUrl : string, body : string | object, opts : { delaySeconds? : number; groupId? : string; dedupeId? : string; transactionId? : string } = {} ) : Promise<Type.Result<void>>
+    {
+        return ResultUtils.from( async () : Promise<void> =>
+        {
+            // carry the transaction id out-of-band so the consuming service re-links to the enqueuing request
+            const transactionId : string | undefined = opts.transactionId ?? RequestContext.transactionId();
+
+            await this.client.send( new SendMessageCommand( {
+                QueueUrl               : queueUrl,
+                MessageBody            : typeof body === "string" ? body : JSON.stringify( body ),
+                DelaySeconds           : opts.delaySeconds,
+                MessageGroupId         : opts.groupId,
+                MessageDeduplicationId : opts.dedupeId,
+                MessageAttributes      : transactionId
+                    ? { transactionId: { DataType: "String", StringValue: transactionId } }
+                    : undefined,
+            } ) );
+        } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    /**
      * Long-poll for up to `max` messages. Each returned message MUST be {@link delete}d after
      * successful processing, or it reappears after the visibility timeout (the retry mechanism).
      * @param max         max messages to fetch (1–10, default 10).

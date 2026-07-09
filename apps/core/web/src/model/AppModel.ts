@@ -76,7 +76,7 @@ export class AppModel
 
         // init
         this.log        = new LogService();
-        this.cache      = new CacheService();
+        this.cache      = new CacheService( this );
         this.storage    = new StorageService();
         this.ws         = new WebSocketService( this );
         this.pubsub     = new PubSubService();

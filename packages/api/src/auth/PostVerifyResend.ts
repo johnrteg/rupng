@@ -30,7 +30,10 @@ export class PostVerifyResend extends RestfulEndpoint<{}, PostVerifyResend.Body,
     {
         return {
             type: 'object',
-            properties: { registrationToken: { type: 'string' } },
+            properties: {
+                registrationToken: { type: 'string' },
+                origin:            { type: 'string' },   // caller origin → base URL for the re-sent verification link
+            },
             required: ['registrationToken'],
             additionalProperties: false
         };
@@ -44,6 +47,7 @@ export namespace PostVerifyResend
     export interface Body extends RestfulEndpoint.NonAuthRequest
     {
         registrationToken : string;
+        origin?           : string;   // caller origin (protocol+host) — resolves the verification link's base URL
     }
 
     export interface Response

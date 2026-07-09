@@ -99,14 +99,20 @@ export class Kafka
      */
     constructor(
         private readonly cloud : CloudResolver,
-        brokers  : Array<string> = ( process.env.KAFKA_BROKERS ?? "" ).split( "," ).map( ( s ) => s.trim() ).filter( Boolean ),
+        private readonly brokers : Array<string> = ( process.env.KAFKA_BROKERS ?? "" ).split( "," ).map( ( s ) => s.trim() ).filter( Boolean ),
         clientId : string = process.env.SERVICE_NAME ?? "rup-service",
     )
     {
         suppressKafkaTimeoutWarning();
         // MSK in AWS uses IAM/TLS/SASL; locally (Redpanda) it's PLAINTEXT. Auth config goes here.
-        this.kafka = new KafkaJS( { clientId, brokers } );
+        this.kafka = new KafkaJS( { clientId, brokers: this.brokers } );
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** Whether any brokers are configured (`KAFKA_BROKERS`). When false, publish/subscribe would throw
+     *  "brokers array is empty" — a service should SKIP its bus wiring rather than attempt + warn (the common
+     *  local-dev case where no Kafka/Redpanda is running). Distinguishes "not configured" from "unreachable". */
+    configured() : boolean { return this.brokers.length > 0; }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
     /** The raw `kafkajs` instance — escape hatch (admin API, transactions, custom consumers). */

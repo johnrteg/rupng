@@ -8,11 +8,12 @@ import Typography from "@mui/material/Typography";
 import Chip from "@mui/material/Chip";
 import Tooltip from "@mui/material/Tooltip";
 import CircularProgress from "@mui/material/CircularProgress";
+import { alpha } from "@mui/material/styles";
 import SaveIcon from "@mui/icons-material/Save";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import DataObjectIcon from "@mui/icons-material/DataObject";
 
-import { ConfigSchema } from "@repo/api";
+import { ConfigSchema, MediaConfig } from "@repo/api";
 
 import type { ConfigContent, ConfigSaveResult, ServiceConfigTree, TargetInfo } from "../../shared/types";
 import { TargetKind } from "../../shared/types";
@@ -149,6 +150,34 @@ export function ConfigPanel( { service } : { service : string } )
         catch { return []; }
     }, [ schema, service, content, jsonError ] );
 
+    // ── Malware-scan engine picker (media `settings` only) ─────────────────────────────────────────
+    // A typed dropdown over the settings profile's `scan.provider`, so an operator doesn't have to hand-edit
+    // the JSON to switch engines. It reads from + writes to the SAME JSON content (single source of truth) —
+    // shown only for the media service's `settings` profile.
+    const isScanConfig : boolean = service === "media" && profileName === "settings" && contentType.includes( "json" );
+
+    // the current scan.provider parsed out of the editor content (empty when the JSON doesn't parse)
+    const scanProvider : string = useMemo<string>( () =>
+    {
+        if ( !isScanConfig || jsonError ) return "";
+        try { return String( ( JSON.parse( content ) as { scan? : { provider? : string } } ).scan?.provider ?? "" ); }
+        catch { return ""; }
+    }, [ isScanConfig, content, jsonError ] );
+
+    /** Set `scan.provider` (and toggle `scan.enabled` accordingly) in the editor JSON from the dropdown. */
+    function onScanProviderChange( provider : string ) : void
+    {
+        try
+        {
+            const parsed : Record<string, unknown> = JSON.parse( content ) as Record<string, unknown>;
+            const currentScan : Record<string, unknown> = ( parsed.scan as Record<string, unknown> ) ?? {};
+            // picking a real engine enables scanning; picking "none" disables it (the pass-through stub)
+            parsed.scan = { ...currentScan, provider, enabled: provider !== MediaConfig.ScanProvider.NONE };
+            setContent( JSON.stringify( parsed, null, JSON_INDENT ) );
+        }
+        catch { /* invalid JSON — the dropdown is disabled in that state, so this shouldn't run */ }
+    }
+
     /** Pretty-print the current editor content (Format button); surfaces a message on parse failure. */
     function onFormat() : void
     {
@@ -235,23 +264,44 @@ export function ConfigPanel( { service } : { service : string } )
                 </Button>
             </Box>
 
+            {/* malware-scan engine picker — media `settings` only; reads/writes scan.provider in the JSON */}
+            {isScanConfig && (
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.5, py: 0.75, borderBottom: "1px solid", borderColor: "divider", flexWrap: "wrap" }}>
+                    <Typography variant="caption" sx={{ color: "text.disabled" }}>malware scan engine</Typography>
+                    <Select
+                        size="small"
+                        value={scanProvider}
+                        disabled={readOnly || !!jsonError}
+                        onChange={( event ) => onScanProviderChange( String( event.target.value ) )}
+                        sx={{ minWidth: 160, fontFamily: MONO, fontSize: 13 }}
+                    >
+                        {Object.values( MediaConfig.ScanProvider ).map( ( provider ) => (
+                            <MenuItem key={provider} value={provider} sx={{ fontFamily: MONO, fontSize: 13 }}>{provider}</MenuItem>
+                        ) )}
+                    </Select>
+                    <Typography variant="caption" sx={{ color: "text.disabled" }}>
+                        sets <code>scan.provider</code> + <code>scan.enabled</code> — Save &amp; Deploy to apply
+                    </Typography>
+                </Box>
+            )}
+
             {/* status / validation line — parse error → schema errors → save message */}
             {( msg || jsonError || schemaIssues.length > 0 ) && (
                 <Box sx={{ px: 1.5, py: 0.5, borderBottom: "1px solid", borderColor: "divider", bgcolor: "background.paper" }}>
                     {jsonError
-                        ? <Typography variant="caption" sx={{ color: "#f85149", fontFamily: MONO }}>invalid JSON — {jsonError}</Typography>
+                        ? <Typography variant="caption" sx={{ color: "error.main", fontFamily: MONO }}>invalid JSON — {jsonError}</Typography>
                         : schemaIssues.length > 0
-                            ? <Typography variant="caption" sx={{ color: "#f85149", fontFamily: MONO }}>
+                            ? <Typography variant="caption" sx={{ color: "error.main", fontFamily: MONO }}>
                                   schema — {schemaIssues.slice( 0, 3 ).join( " · " )}{schemaIssues.length > 3 ? ` (+${schemaIssues.length - 3} more)` : ""}
                               </Typography>
-                            : <Typography variant="caption" sx={{ color: msg!.kind === "ok" ? "#3fb950" : "#f85149", fontFamily: MONO }}>{msg!.text}</Typography>}
+                            : <Typography variant="caption" sx={{ color: msg!.kind === "ok" ? "success.main" : "error.main", fontFamily: MONO }}>{msg!.text}</Typography>}
                 </Box>
             )}
 
             {/* editor */}
             <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
                 {loadingDoc && (
-                    <Box sx={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", bgcolor: "rgba(0,0,0,0.3)", zIndex: 1 }}>
+                    <Box sx={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", bgcolor: ( theme ) => alpha( theme.palette.common.black, 0.3 ), zIndex: 1 }}>
                         <CircularProgress size={18} />
                     </Box>
                 )}

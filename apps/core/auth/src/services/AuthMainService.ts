@@ -1,4 +1,9 @@
 //
+import type { FastifyRequest } from "fastify";
+import { Media, AuthAction } from "@repo/api";
+import { NetworkUtils, type Type } from "@repo/common";
+import { RestfulEndpoint } from "@repo/endpoint";
+import { Events } from "@repo/system";
 import AuthService from './AuthService';
 
 // read-side impls
@@ -19,6 +24,7 @@ import PostRegisterVerifyImpl       from '../endpoints/PostRegisterVerifyImpl';
 import PostVerifyResendImpl         from '../endpoints/PostVerifyResendImpl';
 import PostVerifyPhoneImpl          from '../endpoints/PostVerifyPhoneImpl';
 import PostUserMetaImpl             from '../endpoints/PostUserMetaImpl';
+import PostUserImpl                 from '../endpoints/PostUserImpl';
 import DeleteUserMetaImpl           from '../endpoints/DeleteUserMetaImpl';
 import PostLoginImpl                from '../endpoints/PostLoginImpl';
 import DeleteSessionImpl            from '../endpoints/DeleteSessionImpl';
@@ -38,6 +44,11 @@ import PostMfaTotpVerifyImpl          from '../endpoints/PostMfaTotpVerifyImpl';
 import DeleteMfaTotpImpl              from '../endpoints/DeleteMfaTotpImpl';
 import PostApiKeyImpl                 from '../endpoints/PostApiKeyImpl';
 import DeleteApiKeyImpl               from '../endpoints/DeleteApiKeyImpl';
+import GetAuthActionImpl              from '../endpoints/GetAuthActionImpl';
+import PostAuthActionImpl             from '../endpoints/PostAuthActionImpl';
+import PostAuthActionConsumeImpl      from '../endpoints/PostAuthActionConsumeImpl';
+import GetAuthActionsImpl             from '../endpoints/GetAuthActionsImpl';
+import PostAuthActionCancelImpl       from '../endpoints/PostAuthActionCancelImpl';
 
 //
 // MAIN role — the COMBINED auth service: registers BOTH read + write endpoints in one process. This is
@@ -118,7 +129,73 @@ export class AuthMainService extends AuthService
 
         // user metadata (writes)
         this.register( new PostUserMetaImpl( this ) );
+        this.register( new PostUserImpl( this ) );
         this.register( new DeleteUserMetaImpl( this ) );
+
+        // no-auth landing-action queue (verify/reset/mfa/invite/unsubscribe) — create (S2S) + token verify/consume + staff list/cancel
+        this.register( new PostAuthActionImpl( this ) );
+        this.register( new GetAuthActionImpl( this ) );
+        this.register( new PostAuthActionConsumeImpl( this ) );
+        this.register( new GetAuthActionsImpl( this ) );
+        this.register( new PostAuthActionCancelImpl( this ) );
+
+        // dev Console control routes for the Actions tab — RAW routes (bypass the platform authorizer) so the
+        // session-less Console can read/cancel the action queue directly on this service's port
+        this.get( "/_control/actions", ( request : FastifyRequest ) : Promise<RestfulEndpoint.Response> => this.controlListActions( request ) );
+        this.post( "/_control/actions/:actionId/cancel", ( request : FastifyRequest ) : Promise<RestfulEndpoint.Response> => this.controlCancelAction( request ) );
+
+        // consume media events → link a processed USER-scope avatar to its user (media-23, event-driven)
+        void this.startAvatarConsumer();
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // dev Console — list the action queue by status (default PENDING), surfacing expired-but-unswept rows.
+    private async controlListActions( request : FastifyRequest ) : Promise<RestfulEndpoint.Response>
+    {
+        const query : { status? : string } = ( request.query ?? {} ) as { status? : string };
+        const status : AuthAction.Status = ( query.status as AuthAction.Status ) ?? AuthAction.Status.PENDING;
+        const listed : Type.Result<Array<AuthAction.Entity>> = await this.actions.list( status );
+        if( !listed.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "could not list actions" } };
+        const nowSec : number = Math.floor( Date.now() / 1000 );
+        const records : Array<AuthAction.Entity> = listed.data.map( ( row : AuthAction.Entity ) : AuthAction.Entity => ( row.status === AuthAction.Status.PENDING && row.expiresAt < nowSec ? { ...row, status: AuthAction.Status.EXPIRED } : row ) );
+        return { status: NetworkUtils.Status.OK, data: { records } };
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // dev Console — cancel a pending action by id.
+    private async controlCancelAction( request : FastifyRequest ) : Promise<RestfulEndpoint.Response>
+    {
+        const params : { actionId? : string } = ( request.params ?? {} ) as { actionId? : string };
+        const cancelled : Type.Result<boolean> = await this.actions.cancel( params.actionId ?? "" );
+        if( !cancelled.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "could not cancel the action" } };
+        return { status: NetworkUtils.Status.OK, data: { ok: cancelled.data } };
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // When the media service processes a USER-scope avatar (media.asset), stamp its guid onto the user's row so
+    // every surface resolves the photo. Best-effort: a Kafka outage must not stop the service from booting.
+    private async startAvatarConsumer() : Promise<void>
+    {
+        // no Kafka brokers configured (local dev) → skip quietly; only WARN on a real outage
+        if( !this.kafka.configured() ) { this.log.info( "auth-avatar consumer skipped — no Kafka brokers configured (dev)" ); return; }
+
+        try
+        {
+            await this.kafka.subscribeEvents( "auth-avatar", Events.Object.MEDIA_ASSET, async ( event ) : Promise<void> =>
+            {
+                if( event.verb === Events.Verb.DELETED ) return;
+                const asset : Media.Asset = event.data as unknown as Media.Asset;   // publishAsset sends the full envelope asset
+                // only a user's OWN avatar envelope (USER scope + the userId) sets the profile photo reference
+                if( asset?.scope !== Media.Scope.USER || !asset.scopeId || !asset.guid ) return;
+                await this.users.updateAugmented( asset.scopeId, { avatarAssetId: asset.guid } );
+                // returning normally COMMITS the offset; updateAugmented is idempotent, so a redelivery re-runs cleanly
+            } );
+            this.log.info( "auth-avatar consumer subscribed", { topic: Events.Object.MEDIA_ASSET } );
+        }
+        catch( error )
+        {
+            this.log.warn( "auth-avatar consumer failed to start (bus unreachable?) — avatars won't link until restart", { error: String( error ) } );
+        }
     }
 }
 

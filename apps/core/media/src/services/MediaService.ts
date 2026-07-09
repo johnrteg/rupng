@@ -1,18 +1,16 @@
 //
 import { randomUUID } from "node:crypto";
 
-import { Application, Service, Ports, Register, Dynamo, S3, Sqs, Kafka, Secrets } from "@repo/services";
+import { Application, Service, Ports, Register, Dynamo, S3, Sqs, Kafka, Secrets, Scanner, ScanFactory } from "@repo/services";
 import { Ai, AiFactory } from "@repo/ai";
 import { RestfulEndpoint, Access } from "@repo/endpoint";
 import { Events } from "@repo/system";
-import { Media, MediaConfig, AiRouting, AiGen } from "@repo/api";
-import { FileUtils, ObjectUtils } from "@repo/common";
+import { Media, MediaConfig, AiRouting, AiGen, StudioProject } from "@repo/api";
+import { FileUtils, ObjectUtils, ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 
 import { MediaPipeline } from "../pipeline/MediaPipeline";
 import { MediaAnalyzer } from "../pipeline/MediaAnalyzer";
-import { MalwareScanFactory } from "../scan/MalwareScanFactory";
-import type { MalwareScanner } from "../scan/MalwareScanner";
 
 //
 // common media server base — the object index (DynamoDB), the bytes (S3 + presign), and the ingest pipeline
@@ -147,101 +145,93 @@ export class MediaService extends Service
         const shape : { kind : Media.Kind; mime : string; extension : string } | null = MediaService.mediaShape( request.modality, params );
         if( shape === null || !MediaService.supportsModality( client, request.modality ) ) return { status: 501 };
 
+        // resolve the MODEL for this modality on the backend: an explicit request model (account/marketplace
+        // override, later) → the per-(provider,modality) default → undefined (adapter's own modality default).
+        // NB: never `client.model` — that's the CHAT default and would leak into image/video/tts (e.g. sending
+        // gemini-2.5-flash to Imagen's :predict). This is the single backend model-selection point.
+        const model : string | undefined = request.model ?? AiRouting.modelFor( client.provider as unknown as AiRouting.Provider, request.modality );
+
         // how many candidate solutions to produce — clamped to the provider's range for this media type
         const range : AiRouting.CandidateRange = AiRouting.candidatesFor( client.provider as unknown as AiRouting.Provider, request.modality );
         const count : number = Math.max( range.min, Math.min( range.max, request.count ?? range.default ) );
 
-        // create the placeholder assets (bytes filled by the Job) + a batch to group them
+        // build the STAGING batch — N pending candidates (bytes filled by the Job into the staging bucket).
+        // Nothing goes to the library; the batch row tracks each candidate until the user promotes.
         const batchId : string = randomUUID();
         const now : string = new Date().toISOString();
-        const pending : Array<AiGen.Pending> = [];
-        const guids : Array<string> = [];
+        const staged : Array<MediaService.StagingCandidate> = [];
         for( let index : number = 0; index < count; index++ )
-        {
-            const guid : string = randomUUID();
-            // placeholder ORIGINAL item — bytes filled by the Job; the envelope carries the generation provenance
-            const original : Media.Item = {
-                id: randomUUID(), usage: Media.Usage.ORIGINAL, kind: shape.kind, mime: shape.mime, extension: shape.extension,
-                size: 0, version: 1, status: Media.Status.UPLOADING, createdAt: now, modifiedAt: now,
-            };
-            const asset : Media.Asset = {
-                accountId, guid,
-                name:       `${ request.modality } — ${ request.prompt.slice( 0, 40 ) }`,
-                kind:       shape.kind,
-                tier:       Media.Tier.PROTECTED, accessRole: Access.AccountRole.USER, status: Media.Status.UPLOADING,
-                scope:      Media.Scope.ACCOUNT, campaignIds: [], tags: [],
-                source:     {
-                    origin: Media.SourceOrigin.GENERATED, provider: client.provider, model: client.model,
-                    prompt: request.prompt, params, batchId, acquiredAt: now, acquiredBy: auth.userId,
-                },
-                items:      [ original ], createdBy: auth.userId, createdAt: now, modifiedAt: now,
-            };
-            const wrote : Type.Result<void> = await this.dynamo.put( "media", { ...asset } );
-            if( !wrote.ok ) continue;
-            void this.assetCreated( asset, auth.userId );
-            void this.emitJobStage( accountId, guid, "generate", Events.JobStage.QUEUED, { userId: auth.userId } );
-            pending.push( { guid, kind: shape.kind } );
-            guids.push( guid );
-        }
-        if( guids.length === 0 ) return { status: 500 };
+            staged.push( { id: randomUUID(), kind: shape.kind, mime: shape.mime, extension: shape.extension, status: AiGen.CandidateStatus.PENDING } );
+
+        const batch : MediaService.StagingBatch = {
+            accountId, batchId, userId: auth.userId,
+            provider: client.provider, model, prompt: request.prompt, modality: request.modality, params,
+            candidates: staged, createdAt: now, ttl: Math.floor( Date.now() / 1000 ) + MediaService.STAGING_TTL_SEC,
+        };
+        const wrote : Type.Result<void> = await this.dynamo.put( "media_staging", { ...batch } );
+        if( !wrote.ok ) { this.log.warn( "generate enqueue failed — staging batch write", { batchId, error: wrote.error } ); return { status: 500 }; }
+        void this.emitJobStage( accountId, batchId, "generate", Events.JobStage.QUEUED, { userId: auth.userId } );
 
         const job : MediaService.GenerateJob = {
-            accountId, userId: auth.userId, batchId, guids,
-            modality: request.modality, prompt: request.prompt, provider: client.provider as unknown as AiRouting.Provider, model: client.model, params,
+            accountId, userId: auth.userId, batchId,
+            candidates: staged.map( ( candidate : MediaService.StagingCandidate ) => ( { id: candidate.id, kind: candidate.kind, mime: candidate.mime, extension: candidate.extension } ) ),
+            modality: request.modality, prompt: request.prompt, provider: client.provider as unknown as AiRouting.Provider, model, params,
         };
-        await this.sqs.send( "media-generate", job );
+        const queued : Type.Result<void> = await this.sqs.send( "media-generate", job );
+        if( !queued.ok ) { this.log.warn( "generate enqueue failed — media-generate queue send", { batchId, error: queued.error } ); return { status: 500 }; }
 
+        const pending : Array<AiGen.Pending> = staged.map( ( candidate : MediaService.StagingCandidate ) : AiGen.Pending => ( { id: candidate.id, kind: candidate.kind } ) );
         return { status: 202, response: { batchId, candidates: pending, provider: client.provider, model: client.model } };
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
-    /** WORKER (media-generate, media-19): produce the bytes for each placeholder guid in a generate job, store
-     *  them, run the standard scan → process pipeline, and emit `media.job` stage events (started → completed |
-     *  failed) so the UI/workflows track progress. Drained by MAIN locally; a Lambda in prod. */
+    // the staging-bucket object key for a batch candidate: acct/<accountId>/staging/<batchId>/<id>.<ext>
+    private static stagingKey( accountId : string, batchId : string, candidate : { id : string; extension : string } ) : string
+    {
+        return `acct/${ accountId }/staging/${ batchId }/${ candidate.id }.${ candidate.extension }`;
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** WORKER (media-generate, media-18): produce the bytes for each candidate in a generate job, store them in
+     *  the STAGING bucket, and update the staging batch row (per-candidate READY/FAILED) so the UI can poll.
+     *  Nothing is written to the library — the user promotes chosen candidates later. Emits `media.job` stage
+     *  events keyed by the batchId. Drained by MAIN locally; a Lambda in prod. */
     public async runGenerate( job : MediaService.GenerateJob ) : Promise<void>
     {
-        // VIDEO uses an async provider job that outputs to S3 (Nova Reel) — hand the adapter the media bucket
+        // VIDEO uses an async provider job that outputs to S3 (Nova Reel) — hand the adapter the staging bucket
         // as its scratch output location; harmless/undefined for other modalities.
-        const videoBucket : string | undefined = job.modality === AiRouting.Modality.VIDEO ? this.mediaBucketName() : undefined;
-        this.log.info( "media.generate job start", { batchId: job.batchId, provider: job.provider, model: job.model, modality: job.modality, guids: job.guids.length } );
+        const videoBucket : string | undefined = job.modality === AiRouting.Modality.VIDEO ? this.stagingBucketName() : undefined;
+        this.log.info( "media.generate job start", { batchId: job.batchId, provider: job.provider, model: job.model, modality: job.modality, candidates: job.candidates.length } );
+        void this.emitJobStage( job.accountId, job.batchId, "generate", Events.JobStage.STARTED, { userId: job.userId } );
         const client : Ai = AiFactory.create( { provider: job.provider as unknown as Ai.Provider, model: job.model, videoBucket } );
-        for( const guid of job.guids )
+
+        for( const candidate of job.candidates )
         {
-            void this.emitJobStage( job.accountId, guid, "generate", Events.JobStage.STARTED, { userId: job.userId } );
-            const got : Type.Result<Media.Asset | undefined> = await this.dynamo.get<Media.Asset>( "media", { accountId: job.accountId, guid } );
-            if( !got.ok || !got.data ) { void this.emitJobStage( job.accountId, guid, "generate", Events.JobStage.FAILED, { message: "asset missing" } ); continue; }
-            const asset : Media.Asset = got.data;
-
-            const original : Media.Item | undefined = Media.originalItem( asset );
-            if( !original ) { void this.emitJobStage( job.accountId, guid, "generate", Events.JobStage.FAILED, { message: "no original item" } ); continue; }
-
-            // capture a thrown provider error too (network / unexpected) — a deterministic failure must land
-            // as FAILED with detail, not bubble up and redeliver the job forever
+            // capture a thrown provider error too (network / unexpected) — a deterministic failure must land as
+            // FAILED with detail, not bubble up and redeliver the job forever
             let produced : MediaService.Produced;
             try { produced = await this.produceBytes( client, job.modality, job.prompt, job.params ); }
             catch( error : unknown ) { produced = { bytes: null, error: `provider threw: ${ String( error ) }` }; }
+
             if( !produced.bytes || produced.bytes.length === 0 )
             {
                 const message : string = produced.error ?? "provider returned no content";
-                // surface the REAL provider error (status + message) in the log + stage event — not just "no content"
-                this.log.warn( "media.generate failed", { guid, provider: job.provider, model: job.model, modality: job.modality, error: message } );
-                await this.dynamo.put( "media", { ...asset, status: Media.Status.FAILED, modifiedAt: new Date().toISOString() } );
-                void this.emitJobStage( job.accountId, guid, "generate", Events.JobStage.FAILED, { message, userId: job.userId } );
+                this.log.warn( "media.generate failed", { batchId: job.batchId, candidateId: candidate.id, provider: job.provider, model: job.model, error: message } );
+                await this.updateStagingCandidate( job.accountId, job.batchId, candidate.id, { status: AiGen.CandidateStatus.FAILED, error: message } );
                 continue;
             }
-            const bytes : Uint8Array = produced.bytes;
 
-            // store the produced bytes as the ORIGINAL item + advance to scan → process (variants + probe)
-            const now : string = new Date().toISOString();
-            const put : Type.Result<void> = await this.s3.put( "media", MediaPipeline.itemKey( asset, original ), Buffer.from( bytes ), original.mime );
-            const updatedOriginal : Media.Item = { ...original, size: bytes.length, status: put.ok ? Media.Status.SCANNING : Media.Status.FAILED, modifiedAt: now };
-            const updated : Media.Asset = { ...asset, status: put.ok ? Media.Status.SCANNING : Media.Status.FAILED, items: Media.upsertItems( asset.items, updatedOriginal ), modifiedAt: now };
-            await this.dynamo.put( "media", { ...updated } );
-            if( !put.ok ) { void this.emitJobStage( job.accountId, guid, "generate", Events.JobStage.FAILED, { message: "store failed" } ); continue; }
-            await this.sqs.send( "media-scan", { accountId: job.accountId, guid } );
-            void this.assetUpdated( updated, job.userId );
-            void this.emitJobStage( job.accountId, guid, "generate", Events.JobStage.COMPLETED, { userId: job.userId } );
+            // store the produced bytes in the STAGING bucket + mark the candidate READY
+            const key : string = MediaService.stagingKey( job.accountId, job.batchId, candidate );
+            const put : Type.Result<void> = await this.s3.put( "media-staging", key, Buffer.from( produced.bytes ), candidate.mime );
+            if( !put.ok )
+            {
+                await this.updateStagingCandidate( job.accountId, job.batchId, candidate.id, { status: AiGen.CandidateStatus.FAILED, error: "store failed" } );
+                continue;
+            }
+            await this.updateStagingCandidate( job.accountId, job.batchId, candidate.id, { status: AiGen.CandidateStatus.READY, size: produced.bytes.length, key } );
         }
+        void this.emitJobStage( job.accountId, job.batchId, "generate", Events.JobStage.COMPLETED, { userId: job.userId } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
@@ -279,7 +269,7 @@ export class MediaService extends Service
         if( modality === AiRouting.Modality.IMAGE )
         {
             if( !client.capabilities.has( Ai.Capability.IMAGE ) ) return { bytes: null, error: "provider has no IMAGE capability" };
-            const reply : Ai.ImageResponse = await client.image( { prompt, n: 1, size: MediaService.imageSize( params.aspect ) } );
+            const reply : Ai.ImageResponse = await client.image( { prompt, n: 1, size: MediaService.imageSize( params.aspect ), quality: typeof params.quality === "string" ? params.quality : undefined } );
             if( !reply.ok ) return { bytes: null, error: MediaService.replyError( reply.error, "image generation failed" ) };
             const first : Ai.ImageOut | undefined = reply.images[ 0 ];
             // base64 (OpenAI/Bedrock) → decode; a URL (Magnific/Freepik) → fetch the bytes server-side
@@ -394,9 +384,29 @@ export class MediaService extends Service
         if( got.data.kind !== Media.Kind.AUDIO && got.data.kind !== Media.Kind.VIDEO ) return { status: 409 };   // only a/v have speech
 
         void this.emitJobStage( accountId, guid, "transcribe", Events.JobStage.QUEUED, { userId: auth.userId } );
-        const queued : Type.Result<void> = await this.sqs.send( "media-transcribe", { accountId, guid, userId: auth.userId } );
+        const queued : Type.Result<void> = await this.sqs.send( "media-transcribe", { accountId, guid, userId: auth.userId, op: "transcribe" } );
         if( !queued.ok ) { this.log.warn( "transcribe enqueue failed — media-transcribe queue send", { guid, error: queued.error } ); return { status: 500 }; }
         this.log.info( "transcribe queued", { guid } );
+        return { status: 202 };
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** ENQUEUE an audio-track extraction (a VIDEO → an `audio` variant on the asset). Shares the
+     *  `media-transcribe` queue (an `op:"extract"` discriminator) so it reuses the ffmpeg-capable consumer.
+     *  409 when the asset isn't a video. */
+    public async enqueueExtractAudio( auth : RestfulEndpoint.Authentication, guid : string ) : Promise<{ status : number }>
+    {
+        const accountId : string | undefined = auth.accountId;
+        if( !accountId ) return { status: 400 };
+        const got : Type.Result<Media.Asset | undefined> = await this.dynamo.get<Media.Asset>( "media", { accountId, guid } );
+        if( !got.ok ) { this.log.warn( "extract-audio enqueue failed — media read", { guid, error: got.error } ); return { status: 500 }; }
+        if( !got.data ) return { status: 404 };
+        if( got.data.kind !== Media.Kind.VIDEO ) return { status: 409 };   // only a video HAS a separable audio track
+
+        void this.emitJobStage( accountId, guid, "extract-audio", Events.JobStage.QUEUED, { userId: auth.userId } );
+        const queued : Type.Result<void> = await this.sqs.send( "media-transcribe", { accountId, guid, userId: auth.userId, op: "extract" } );
+        if( !queued.ok ) { this.log.warn( "extract-audio enqueue failed — media-transcribe queue send", { guid, error: queued.error } ); return { status: 500 }; }
+        this.log.info( "extract-audio queued", { guid } );
         return { status: 202 };
     }
 
@@ -406,8 +416,14 @@ export class MediaService extends Service
      *  (Whisper), and save `asset.transcript` (text + timed segments). Emits `media.job` stage events. */
     public async runTranscribe( accountId : string, guid : string, userId? : string ) : Promise<void>
     {
+        this.log.info( "transcribe started", { guid } );
         void this.emitJobStage( accountId, guid, "transcribe", Events.JobStage.STARTED, { userId } );
-        const fail = ( message : string ) : void => void this.emitJobStage( accountId, guid, "transcribe", Events.JobStage.FAILED, { message, userId } );
+        // FAIL both surfaces the reason in the media log (so a job trace is visible) AND emits the Kafka stage
+        const fail = ( message : string ) : void =>
+        {
+            this.log.warn( "transcribe failed", { guid, message } );
+            void this.emitJobStage( accountId, guid, "transcribe", Events.JobStage.FAILED, { message, userId } );
+        };
 
         const got : Type.Result<Media.Asset | undefined> = await this.dynamo.get<Media.Asset>( "media", { accountId, guid } );
         if( !got.ok || !got.data ) { fail( "asset missing" ); return; }
@@ -415,8 +431,9 @@ export class MediaService extends Service
         const original : Media.Item | undefined = Media.originalItem( asset );
         if( !original || ( original.kind !== Media.Kind.AUDIO && original.kind !== Media.Kind.VIDEO ) ) { fail( "not audio/video" ); return; }
 
-        // the STT client from config/ai routing (SPEECH_TO_TEXT); capability-gated
-        const stt : Ai | undefined = await this.aiFor( AiRouting.Modality.SPEECH_TO_TEXT );
+        // the STT client from config/ai routing (SPEECH_TO_TEXT); capability-gated. Pass the staging bucket so
+        // an async, S3-backed provider (Amazon Transcribe) has a scratch location for the audio input.
+        const stt : Ai | undefined = await this.aiFor( AiRouting.Modality.SPEECH_TO_TEXT, { transcribeBucket: this.stagingBucketName() } );
         if( stt === undefined || !stt.capabilities.has( Ai.Capability.TRANSCRIBE ) ) { fail( "no speech-to-text provider configured" ); return; }
 
         // read the ORIGINAL bytes
@@ -432,20 +449,12 @@ export class MediaService extends Service
         if( original.kind === Media.Kind.VIDEO )
         {
             void this.emitJobStage( accountId, guid, "transcribe", Events.JobStage.RUNNING, { progress: 33, message: "extracting audio", userId } );
-            const extracted : { bytes : Uint8Array; format : string; mime : string } | null = await MediaAnalyzer.extractAudio( originalBytes, original.extension );
+            const extracted : { items : Array<Media.Item>; audioItem : Media.Item; bytes : Uint8Array; mime : string } | null = await this.saveExtractedAudio( asset, original, originalBytes );
             if( !extracted ) { fail( "audio extraction failed" ); return; }
-            audioBytes = extracted.bytes;
-            audioMime  = extracted.mime;
-            const now : string = new Date().toISOString();
-            const audioItem : Media.Item = {
-                id: randomUUID(), usage: Media.Usage.AUDIO, kind: Media.Kind.AUDIO, mime: extracted.mime, extension: extracted.format,
-                size: extracted.bytes.length, version: 1, status: Media.Status.OK, createdAt: now, modifiedAt: now,
-                derivation: { job: "extract-audio", sourceItemId: original.id },
-            };
-            const put : Type.Result<void> = await this.s3.put( "media", MediaPipeline.itemKey( asset, audioItem ), Buffer.from( extracted.bytes ), extracted.mime );
-            audioItem.status = put.ok ? Media.Status.OK : Media.Status.FAILED;
-            items = Media.upsertItems( items, audioItem );
-            sourceItemId = audioItem.id;
+            items        = extracted.items;
+            audioBytes   = extracted.bytes;
+            audioMime    = extracted.mime;
+            sourceItemId = extracted.audioItem.id;
         }
 
         // run speech-to-text → a TRANSCRIPT item (a .json file + the text/segments in its meta)
@@ -498,16 +507,187 @@ export class MediaService extends Service
         const updated : Media.Asset = { ...asset, items, modifiedAt: now };
         await this.dynamo.put( "media", { ...updated } );
         void this.assetUpdated( updated, userId );
+        this.log.info( "transcribe complete", { guid, segments: reply.segments.length, captions: reply.segments.length > 0 } );
         void this.emitJobStage( accountId, guid, "transcribe", Events.JobStage.COMPLETED, { userId } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
-    // The physical `media` S3 bucket name (for handing to the Nova Reel async video output), or undefined when
-    // it can't be resolved (not deployed) — video then reports "no output bucket".
-    private mediaBucketName() : string | undefined
+    /** Extract a video's audio track (ffmpeg) → a stored AUDIO item on the asset (`usage: audio`,
+     *  `derivation.job: extract-audio`). Shared by transcribe (which then runs STT on it) and the standalone
+     *  Extract-audio action. Returns the updated items + the new item + the raw bytes/mime, or null on failure. */
+    private async saveExtractedAudio( asset : Media.Asset, original : Media.Item, originalBytes : Uint8Array ) : Promise<{ items : Array<Media.Item>; audioItem : Media.Item; bytes : Uint8Array; mime : string } | null>
     {
-        try { return this.cloud.bucketName( "media" ); }
+        const extracted : { bytes : Uint8Array; format : string; mime : string } | null = await MediaAnalyzer.extractAudio( originalBytes, original.extension );
+        if( !extracted ) return null;
+        const now : string = new Date().toISOString();
+        const audioItem : Media.Item = {
+            id: randomUUID(), usage: Media.Usage.AUDIO, kind: Media.Kind.AUDIO, mime: extracted.mime, extension: extracted.format,
+            size: extracted.bytes.length, version: 1, status: Media.Status.OK, createdAt: now, modifiedAt: now,
+            derivation: { job: "extract-audio", sourceItemId: original.id },
+        };
+        const put : Type.Result<void> = await this.s3.put( "media", MediaPipeline.itemKey( asset, audioItem ), Buffer.from( extracted.bytes ), extracted.mime );
+        audioItem.status = put.ok ? Media.Status.OK : Media.Status.FAILED;
+        const items : Array<Media.Item> = Media.upsertItems( asset.items, audioItem );
+        return { items, audioItem, bytes: extracted.bytes, mime: extracted.mime };
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** WORKER (media-transcribe, op:"extract"): extract a VIDEO's audio track into an AUDIO variant on the
+     *  asset (no transcription). Emits `extract-audio` stage events + logs its outcome. */
+    public async runExtractAudio( accountId : string, guid : string, userId? : string ) : Promise<void>
+    {
+        this.log.info( "extract-audio started", { guid } );
+        void this.emitJobStage( accountId, guid, "extract-audio", Events.JobStage.STARTED, { userId } );
+        const fail = ( message : string ) : void =>
+        {
+            this.log.warn( "extract-audio failed", { guid, message } );
+            void this.emitJobStage( accountId, guid, "extract-audio", Events.JobStage.FAILED, { message, userId } );
+        };
+
+        const got : Type.Result<Media.Asset | undefined> = await this.dynamo.get<Media.Asset>( "media", { accountId, guid } );
+        if( !got.ok || !got.data ) { fail( "asset missing" ); return; }
+        const asset : Media.Asset = got.data;
+        const original : Media.Item | undefined = Media.originalItem( asset );
+        if( !original || original.kind !== Media.Kind.VIDEO ) { fail( "not a video" ); return; }
+
+        const object : Type.Result<{ Body? : { transformToByteArray() : Promise<Uint8Array> } }> = await this.s3.get( "media", MediaPipeline.itemKey( asset, original ) );
+        if( !object.ok || !object.data.Body ) { fail( "original bytes unavailable" ); return; }
+        const originalBytes : Uint8Array = await object.data.Body.transformToByteArray();
+
+        const extracted : { items : Array<Media.Item>; audioItem : Media.Item; bytes : Uint8Array; mime : string } | null = await this.saveExtractedAudio( asset, original, originalBytes );
+        if( !extracted ) { fail( "audio extraction failed" ); return; }
+
+        const updated : Media.Asset = { ...asset, items: extracted.items, modifiedAt: new Date().toISOString() };
+        const wrote : Type.Result<void> = await this.dynamo.put( "media", { ...updated } );
+        if( !wrote.ok ) { fail( "asset write failed" ); return; }
+        void this.assetUpdated( updated, userId );
+        this.log.info( "extract-audio complete", { guid, item: extracted.audioItem.id } );
+        void this.emitJobStage( accountId, guid, "extract-audio", Events.JobStage.COMPLETED, { userId } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // The physical `media-staging` S3 bucket name (for handing to the Nova Reel async video output), or
+    // undefined when it can't be resolved (not deployed) — video then reports "no output bucket".
+    private stagingBucketName() : string | undefined
+    {
+        try { return this.cloud.bucketName( "media-staging" ); }
         catch { return undefined; }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // Read-modify-write ONE candidate in a staging batch row (per-candidate status updates from the Job). The
+    // batch loop is sequential, so a read-modify-write per candidate is safe + keeps polling live.
+    private async updateStagingCandidate( accountId : string, batchId : string, candidateId : string, patch : Partial<MediaService.StagingCandidate> ) : Promise<void>
+    {
+        const got : Type.Result<MediaService.StagingBatch | undefined> = await this.dynamo.get<MediaService.StagingBatch>( "media_staging", { accountId, batchId } );
+        if( !got.ok || !got.data ) return;
+        const candidates : Array<MediaService.StagingCandidate> = got.data.candidates.map(
+            ( candidate : MediaService.StagingCandidate ) : MediaService.StagingCandidate => candidate.id === candidateId ? { ...candidate, ...patch } : candidate );
+        const wrote : Type.Result<void> = await this.dynamo.put( "media_staging", { ...got.data, candidates } );
+        if( !wrote.ok ) this.log.warn( "staging candidate update failed", { batchId, candidateId, error: wrote.error } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** Read a staging batch's live state (media-18) — each candidate with its status + a signed staging preview
+     *  URL when READY. `undefined` when the batch doesn't exist / isn't this account's. */
+    public async batchStatus( accountId : string, batchId : string ) : Promise<AiGen.Batch | undefined>
+    {
+        const got : Type.Result<MediaService.StagingBatch | undefined> = await this.dynamo.get<MediaService.StagingBatch>( "media_staging", { accountId, batchId } );
+        if( !got.ok || !got.data ) return undefined;
+        const batch : MediaService.StagingBatch = got.data;
+
+        const candidates : Array<AiGen.Candidate> = [];
+        for( const candidate of batch.candidates )
+        {
+            // resolve a signed preview URL from the staging bucket for READY candidates only
+            let previewUrl : string | undefined = undefined;
+            if( candidate.status === AiGen.CandidateStatus.READY && candidate.key )
+            {
+                const signed : Type.Result<string> = await this.s3.presignGet( "media-staging", candidate.key );
+                if( signed.ok ) previewUrl = signed.data;
+            }
+            candidates.push( { id: candidate.id, kind: candidate.kind, mime: candidate.mime, status: candidate.status as AiGen.CandidateStatus, previewUrl, error: candidate.error } );
+        }
+        return { batchId: batch.batchId, provider: batch.provider, model: batch.model, prompt: batch.prompt, modality: batch.modality, candidates };
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** Promote selected staged candidates (media-18) into the library — copy each READY candidate's bytes from
+     *  staging into the media bucket as a new generated `Media.Asset` (→ scan → process), then discard the whole
+     *  batch. Returns the created assets. 404 when the batch is missing. */
+    public async promoteBatch( auth : RestfulEndpoint.Authentication, batchId : string, candidateIds : Array<string>, name? : string, tags? : Array<string>, campaignIds? : Array<string> ) : Promise<{ status : number; assets? : Array<{ guid : string; name : string }> }>
+    {
+        const accountId : string | undefined = auth.accountId;
+        if( !accountId ) return { status: 400 };
+        const got : Type.Result<MediaService.StagingBatch | undefined> = await this.dynamo.get<MediaService.StagingBatch>( "media_staging", { accountId, batchId } );
+        if( !got.ok || !got.data ) return { status: 404 };
+        const batch : MediaService.StagingBatch = got.data;
+
+        // promote each selected + READY candidate → a new library asset seeded with the generation provenance
+        const created : Array<{ guid : string; name : string }> = [];
+        const chosen : Array<MediaService.StagingCandidate> = batch.candidates.filter(
+            ( candidate : MediaService.StagingCandidate ) : boolean => candidateIds.includes( candidate.id ) && candidate.status === AiGen.CandidateStatus.READY && !!candidate.key );
+        let index : number = 0;
+        for( const candidate of chosen )
+        {
+            index++;
+            // read the staged bytes
+            const object : Type.Result<{ Body? : { transformToByteArray() : Promise<Uint8Array> } }> = await this.s3.get( "media-staging", candidate.key as string );
+            if( !object.ok || !object.data.Body ) continue;
+            const bytes : Uint8Array = await object.data.Body.transformToByteArray();
+
+            // build the library asset (ORIGINAL item) with generation provenance from the batch
+            const guid : string = randomUUID();
+            const now : string = new Date().toISOString();
+            const baseName : string = ( name && name.trim() ) ? name.trim() : batch.prompt.slice( 0, 40 );
+            const assetName : string = chosen.length > 1 ? `${ baseName } (${ index })` : baseName;
+            const original : Media.Item = {
+                id: randomUUID(), usage: Media.Usage.ORIGINAL, kind: candidate.kind, mime: candidate.mime, extension: candidate.extension,
+                size: bytes.length, version: 1, status: Media.Status.SCANNING, createdAt: now, modifiedAt: now,
+            };
+            const asset : Media.Asset = {
+                accountId, guid, name: assetName, kind: candidate.kind,
+                tier: Media.Tier.PROTECTED, accessRole: Access.AccountRole.USER, status: Media.Status.SCANNING,
+                scope: Media.Scope.ACCOUNT, campaignIds: campaignIds ?? [], tags: tags ?? [],
+                source: {
+                    origin: Media.SourceOrigin.GENERATED, provider: batch.provider, model: batch.model,
+                    prompt: batch.prompt, params: batch.params, batchId, acquiredAt: now, acquiredBy: auth.userId,
+                },
+                items: [ original ], createdBy: auth.userId, createdAt: now, modifiedAt: now,
+            };
+            // store the bytes in the media bucket, index the asset, and advance it through scan → process
+            const put : Type.Result<void> = await this.s3.put( "media", MediaPipeline.itemKey( asset, original ), Buffer.from( bytes ), original.mime );
+            if( !put.ok ) continue;
+            const wrote : Type.Result<void> = await this.dynamo.put( "media", { ...asset } );
+            if( !wrote.ok ) continue;
+            void this.assetCreated( asset, auth.userId );
+            const queued : Type.Result<void> = await this.sqs.send( "media-scan", { accountId, guid } );
+            if( !queued.ok ) this.log.warn( "promote — media-scan send failed", { guid, error: queued.error } );
+            created.push( { guid, name: assetName } );
+        }
+
+        // discard the whole batch (chosen promoted; the rest are dropped) — staging bytes + row
+        await this.discardBatch( accountId, batchId );
+        return { status: 200, assets: created };
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** Discard a staging batch (media-18) — delete every candidate's staged bytes + the batch row. Idempotent. */
+    public async discardBatch( accountId : string, batchId : string ) : Promise<{ status : number }>
+    {
+        const got : Type.Result<MediaService.StagingBatch | undefined> = await this.dynamo.get<MediaService.StagingBatch>( "media_staging", { accountId, batchId } );
+        if( !got.ok ) return { status: 500 };
+        if( !got.data ) return { status: 404 };
+        // best-effort delete of each staged object
+        for( const candidate of got.data.candidates )
+            if( candidate.key )
+            {
+                const removed : Type.Result<void> = await this.s3.remove( "media-staging", candidate.key );
+                if( !removed.ok ) this.log.warn( "staging object delete failed", { batchId, candidateId: candidate.id, error: removed.error } );
+            }
+        const removed : Type.Result<void> = await this.dynamo.remove( "media_staging", { accountId, batchId } );
+        if( !removed.ok ) return { status: 500 };
+        return { status: 200 };
     }
 
     // The S3 object key for a download archive's zip — under the account, keyed by the archiveId (its own
@@ -521,28 +701,43 @@ export class MediaService extends Service
     /** ENQUEUE a download archive (media-20): create a PENDING {@link Media.Archive} record (its OWN table, so
      *  it never shows in the library) that zips the asset's original + variants, and enqueue the media-archive
      *  Job. Returns `{ status, archiveId }`; 404 when the asset is missing. */
-    public async enqueueArchive( auth : RestfulEndpoint.Authentication, guid : string ) : Promise<{ status : number; archiveId? : string }>
+    public async enqueueArchive( auth : RestfulEndpoint.Authentication, guid : string ) : Promise<{ status : number; archiveId? : string; reason? : string }>
     {
         const accountId : string | undefined = auth.accountId;
-        if( !accountId ) return { status: 400 };
-        const got : Type.Result<Media.Asset | undefined> = await this.dynamo.get<Media.Asset>( "media", { accountId, guid } );
-        if( !got.ok || !got.data ) return { status: 404 };
+        if( !accountId ) return { status: 400, reason: "no acting account" };
 
-        const archiveId : string = randomUUID();
-        const archive : Media.Archive = {
-            accountId, archiveId,
-            name: `${ got.data.name }.zip`,
-            status: Media.ArchiveStatus.PENDING, sourceGuids: [ guid ],
-            requestedBy: auth.userId, createdAt: new Date().toISOString(),
-        };
-        const wrote : Type.Result<void> = await this.dynamo.put( "archives", { ...archive } );
-        if( !wrote.ok ) { this.log.warn( "archive enqueue failed — archives table write", { guid, archiveId, error: wrote.error } ); return { status: 500 }; }
+        // wrap the whole enqueue so ANY failure (a missing table/queue env, a LocalStack resource error, a
+        // marshalling throw) is captured + surfaced as a reason instead of an opaque framework 500.
+        const attempt : Type.Result<{ status : number; archiveId? : string; reason? : string }> = await ResultUtils.from( async () : Promise<{ status : number; archiveId? : string; reason? : string }> =>
+        {
+            // 1. the source asset must exist in this account
+            const got : Type.Result<Media.Asset | undefined> = await this.dynamo.get<Media.Asset>( "media", { accountId, guid } );
+            if( !got.ok )   return { status: 500, reason: `media read failed: ${ String( got.error ) }` };
+            if( !got.data ) return { status: 404, reason: "asset not found" };
 
-        void this.emitJobStage( accountId, archiveId, "archive", Events.JobStage.QUEUED, { userId: auth.userId } );
-        const queued : Type.Result<void> = await this.sqs.send( "media-archive", { accountId, archiveId, userId: auth.userId } );
-        if( !queued.ok ) { this.log.warn( "archive enqueue failed — media-archive queue send", { guid, archiveId, error: queued.error } ); return { status: 500 }; }
-        this.log.info( "archive queued", { guid, archiveId } );
-        return { status: 202, archiveId };
+            // 2. create the PENDING archive record (its own table)
+            const archiveId : string = randomUUID();
+            const archive : Media.Archive = {
+                accountId, archiveId,
+                name: `${ got.data.name }.zip`,
+                status: Media.ArchiveStatus.PENDING, sourceGuids: [ guid ],
+                requestedBy: auth.userId, createdAt: new Date().toISOString(),
+            };
+            const wrote : Type.Result<void> = await this.dynamo.put( "archives", { ...archive } );
+            if( !wrote.ok ) { this.log.warn( "archive enqueue failed — archives table write", { guid, archiveId, error: wrote.error } ); return { status: 500, reason: `archives table write failed: ${ String( wrote.error ) }` }; }
+
+            // 3. enqueue the media-archive Job (best-effort event first)
+            void this.emitJobStage( accountId, archiveId, "archive", Events.JobStage.QUEUED, { userId: auth.userId } );
+            const queued : Type.Result<void> = await this.sqs.send( "media-archive", { accountId, archiveId, userId: auth.userId } );
+            if( !queued.ok ) { this.log.warn( "archive enqueue failed — media-archive queue send", { guid, archiveId, error: queued.error } ); return { status: 500, reason: `media-archive queue send failed: ${ String( queued.error ) }` }; }
+
+            this.log.info( "archive queued", { guid, archiveId } );
+            return { status: 202, archiveId };
+        } );
+
+        // a throw anywhere above (e.g. a resolver "missing resource identifier 'QUEUE_MEDIA_ARCHIVE'") lands here
+        if( !attempt.ok ) { this.log.warn( "archive enqueue threw", { guid, error: attempt.error } ); return { status: 500, reason: `archive enqueue error: ${ String( attempt.error ) }` }; }
+        return attempt.data;
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
@@ -786,8 +981,9 @@ export class MediaService extends Service
         const config : MediaConfig.Config = await this.mediaConfig();
         // Resolve the CHAT-modality client (auto-tag vision) from config/ai routing — only when auto-tag is on.
         const chatAi : Ai | undefined = config.autoTag.enabled ? await this.aiFor( AiRouting.Modality.CHAT ) : undefined;
-        // the malware-scan engine for the ingest gate — the config-selected adapter (Noop when scanning is off).
-        const scanner : MalwareScanner = MalwareScanFactory.forConfig( config.scan );
+        // the malware-scan engine for the ingest gate — the config-selected shared adapter (Noop when off).
+        // MediaConfig.Scan is structurally the shared Scanner.Config (enabled/provider/failClosed/clamd).
+        const scanner : Scanner = ScanFactory.forConfig( config.scan );
         return { dynamo: this.dynamo, s3: this.s3, sqs: this.sqs, log: this.log, config, chatAi, scanner };
     }
 
@@ -800,6 +996,301 @@ export class MediaService extends Service
         const seeded : Type.Result<MediaConfig.Config> = await this.appConfig.ensureSeeded( "config", "settings", MediaConfig.DEFAULT );
         if( seeded.ok ) this.log.info( "media config ready" );
         else this.log.warn( "media config seed failed — using DEFAULT until deployed", { error: seeded.error } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // ── Studio projects (media-21) — the project tree in DynamoDB; the canvas snapshot in S3 ──────────────
+
+    /** List an account's Studio projects, newest-modified first. */
+    public async listStudioProjects( accountId : string ) : Promise<Array<StudioProject.Entity>>
+    {
+        const found : Type.Result<Array<StudioProject.Entity>> = await this.dynamo.query<StudioProject.Entity>( "studio_projects", {
+            KeyConditionExpression:    "accountId = :a",
+            ExpressionAttributeValues: { ":a": accountId },
+        } );
+        if( !found.ok ) return [];
+        return found.data.sort( ( first : StudioProject.Entity, second : StudioProject.Entity ) : number => second.modifiedAt.localeCompare( first.modifiedAt ) );
+    }
+
+    /** Read a single Studio project (undefined when missing). */
+    public async getStudioProject( accountId : string, id : string ) : Promise<StudioProject.Entity | undefined>
+    {
+        const got : Type.Result<StudioProject.Entity | undefined> = await this.dynamo.get<StudioProject.Entity>( "studio_projects", { accountId, id } );
+        return got.ok ? got.data : undefined;
+    }
+
+    /** Create/replace a Studio project record. */
+    public putStudioProject( project : StudioProject.Entity ) : Promise<Type.Result<void>>
+    {
+        return this.dynamo.put( "studio_projects", { ...project } );
+    }
+
+    /** Delete a Studio project record + its stored canvas (best-effort on the S3 object). */
+    public async removeStudioProject( accountId : string, id : string ) : Promise<Type.Result<void>>
+    {
+        const removedCanvas : Type.Result<void> = await this.s3.remove( "media", this.studioCanvasKey( accountId, id ) );
+        if( !removedCanvas.ok ) { /* best-effort — a leftover canvas object is harmless */ }
+        return this.dynamo.remove( "studio_projects", { accountId, id } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // the S3 object key for a project's canvas snapshot (in the media bucket, isolated under studio/)
+    private studioCanvasKey( accountId : string, id : string ) : string
+    {
+        return `studio/${ accountId }/${ id }/canvas.json`;
+    }
+
+    /** Read a project's canvas snapshot JSON from S3 (null when none saved / unreadable). */
+    public async getStudioCanvas( accountId : string, id : string ) : Promise<string | null>
+    {
+        const object : Type.Result<{ Body? : { transformToByteArray() : Promise<Uint8Array> } }> = await this.s3.get( "media", this.studioCanvasKey( accountId, id ) );
+        if( !object.ok || !object.data.Body ) return null;
+        const bytes : Uint8Array = await object.data.Body.transformToByteArray();
+        return new TextDecoder().decode( bytes );
+    }
+
+    /** Write a project's canvas snapshot JSON to S3. */
+    public putStudioCanvas( accountId : string, id : string, canvas : string ) : Promise<Type.Result<void>>
+    {
+        return this.s3.put( "media", this.studioCanvasKey( accountId, id ), Buffer.from( canvas, "utf8" ), FileUtils.Mime.JSON );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // ── Studio video render (media-21) — composite the timeline to an mp4 library asset via ffmpeg ─────────
+
+    /** Enqueue a video project render (heavy → a Job; MAIN drains locally). */
+    public async enqueueStudioRender( accountId : string, projectId : string, userId? : string ) : Promise<Type.Result<void>>
+    {
+        // config picks the render engine → its queue (each has a dedicated consumer): ffmpeg (in-process,
+        // fast) or remotion (headless Chromium, exact preview==output). Switchable without a redeploy.
+        const config : MediaConfig.Config = await this.mediaConfig();
+        const queue : string = config.render.engine === MediaConfig.RenderEngine.REMOTION ? "studio-render-remotion" : "studio-render";
+        return this.sqs.send( queue, { accountId, projectId, userId } );
+    }
+
+    /** Render a video project's timeline → mp4 and save it to the library (create, or update the linked asset
+     *  in place). Resolves each scene's DURABLE source bytes from S3, composites with ffmpeg, uploads, links
+     *  the asset to the project, and emits `media.job` progress. */
+    public async runStudioRender( accountId : string, projectId : string, userId? : string, engine : MediaConfig.RenderEngine = MediaConfig.RenderEngine.FFMPEG ) : Promise<void>
+    {
+        const fail = ( message : string ) : void => { void this.emitJobStage( accountId, projectId, "studio-render", Events.JobStage.FAILED, { message, userId } ); this.log.warn( "studio render failed", { projectId, message } ); };
+
+        const project : StudioProject.Entity | undefined = await this.getStudioProject( accountId, projectId );
+        if( project === undefined ) { fail( "project not found" ); return; }
+        const canvas : string | null = await this.getStudioCanvas( accountId, projectId );
+        if( canvas === null ) { fail( "no timeline saved" ); return; }
+        let doc : StudioProject.VideoDoc;
+        try { doc = JSON.parse( canvas ) as StudioProject.VideoDoc; }
+        catch { fail( "unreadable timeline" ); return; }
+        // normalize to the track/clip timeline model (migrates legacy scene docs)
+        const timeline : StudioProject.VideoDoc = StudioProject.migrateToTimeline( doc );
+        const tracks : Array<StudioProject.TimelineTrack> = timeline.tracks ?? [];
+        const clips : Array<StudioProject.TimelineClip> = timeline.clips ?? [];
+        if( clips.length === 0 ) { fail( "empty timeline" ); return; }
+
+        void this.emitJobStage( accountId, projectId, "studio-render", Events.JobStage.RUNNING, { progress: 20, message: engine === MediaConfig.RenderEngine.REMOTION ? "preparing render" : "gathering clips", userId } );
+
+        // the output formats: the master, then each chosen DESTINATION (deduped) — one variant per format
+        const masterKey : string = StudioProject.videoFormatFor( timeline )?.key ?? "master";
+        const formats : Array<{ key : string; width : number; height : number }> = [ { key: masterKey, width: timeline.width, height: timeline.height } ];
+        for( const targetKey of timeline.targets ?? [] )
+        {
+            const format : StudioProject.VideoFormat | undefined = StudioProject.VIDEO_FORMATS.find( ( entry : StudioProject.VideoFormat ) : boolean => entry.key === targetKey );
+            if( format === undefined || formats.some( ( existing : { key : string } ) : boolean => existing.key === format.key ) ) continue;
+            formats.push( { key: format.key, width: format.width, height: format.height } );
+        }
+        const durationSec : number = StudioProject.timelineDurationSec( timeline );
+        // export encode: quality preset (crf + x264 preset) from the doc, plus an optional explicit bitrate
+        const qualitySpec : { crf : number; preset : string } = StudioProject.VIDEO_QUALITY[ timeline.quality ?? StudioProject.VideoQuality.STANDARD ];
+        const encodeQuality : { crf : number; preset : string; bitrateKbps? : number } = { ...qualitySpec, bitrateKbps: timeline.bitrateKbps };
+
+        // REMOTION engine → render the SAME composition via headless Chromium (exact preview==output). Renders
+        // straight from the doc/inputProps, so it SKIPS the ffmpeg layer gathering (no spooling S3 bytes).
+        if( engine === MediaConfig.RenderEngine.REMOTION )
+        {
+            const remotionRenders : Array<{ profile : string; bytes : Uint8Array }> = [];
+            for( let index : number = 0; index < formats.length; index++ )
+            {
+                const format : { key : string; width : number; height : number } = formats[ index ];
+                void this.emitJobStage( accountId, projectId, "studio-render", Events.JobStage.RUNNING, { progress: 40 + Math.round( ( index / formats.length ) * 50 ), message: `rendering ${ format.key } (remotion)`, userId } );
+                const out : Uint8Array | null = await MediaAnalyzer.renderCompositeRemotion( timeline, format.width, format.height, timeline.fps, durationSec );
+                if( out !== null ) remotionRenders.push( { profile: format.key, bytes: out } );
+            }
+            if( remotionRenders.length === 0 ) { fail( "remotion render produced no output (Chromium worker + shared composition required)" ); return; }
+            const remotionGuid : string = await this.saveRenderedVideo( accountId, project, remotionRenders, userId, timeline.posterSec, timeline.gif );
+            void this.emitJobStage( accountId, projectId, "studio-render", Events.JobStage.COMPLETED, { progress: 100, message: "saved to library", userId } );
+            this.log.info( "studio render complete (remotion)", { projectId, guid: remotionGuid, formats: remotionRenders.length } );
+            return;
+        }
+
+        // build the compositing layers in PAINT order (bottom track first, clips left→right); media clips
+        // resolve their ORIGINAL bytes from S3 (cached per asset), text clips become time-windowed overlays
+        const bytesCache : Map<string, { bytes : Uint8Array; ext? : string; hasAudio : boolean }> = new Map<string, { bytes : Uint8Array; ext? : string; hasAudio : boolean }>();
+        const media : Array<MediaAnalyzer.CompositeMediaLayer> = [];
+        const texts : Array<MediaAnalyzer.CompositeTextLayer> = [];
+        for( let trackIndex : number = tracks.length - 1; trackIndex >= 0; trackIndex-- )
+        {
+            const track : StudioProject.TimelineTrack = tracks[ trackIndex ];
+            if( track.hidden ) continue;   // hidden tracks are excluded from the render
+            const trackClips : Array<StudioProject.TimelineClip> = clips
+                .filter( ( clip : StudioProject.TimelineClip ) : boolean => clip.trackId === track.id )
+                .sort( ( left : StudioProject.TimelineClip, right : StudioProject.TimelineClip ) : number => left.startSec - right.startSec );
+            for( const clip of trackClips )
+            {
+                // an entry transition renders as a dissolve/crossfade: pull the clip's start EARLIER by its
+                // duration so it overlaps the previous clip, then alpha-fade it IN over that same window
+                // (the overlay graph has no moving mask, so wipe/slide export as a dissolve — the animated
+                // reveal is preview-only fidelity)
+                const transitionSec : number = clip.transitionIn ? Math.max( 0, clip.transitionIn.durationSec ) : 0;
+                const adjStartSec : number = Math.max( 0, clip.startSec - transitionSec );
+                const adjDurationSec : number = clip.durationSec + transitionSec;
+                const adjFadeInSec : number | undefined = transitionSec > 0 ? transitionSec : clip.fadeInSec;
+
+                // text → a burned overlay (relative geometry, defaulted from the shared model)
+                if( clip.kind === StudioProject.VideoSceneKind.TEXT )
+                {
+                    // an entry animation renders as an alpha fade-in over its duration; slide/pop/typewriter
+                    // have no drawtext equivalent in the overlay graph, so they export as a fade (preview-only fidelity)
+                    const animInSec : number = clip.animateIn !== undefined ? Math.max( 0, clip.animateIn.durationSec ) : 0;
+                    const textFadeInSec : number | undefined = animInSec > 0 ? Math.max( adjFadeInSec ?? 0, animInSec ) : adjFadeInSec;
+                    texts.push( { text: clip.text ?? "", startSec: adjStartSec, durationSec: adjDurationSec, xPct: clip.xPct ?? StudioProject.DEFAULT_TEXT_GEOMETRY.xPct, yPct: clip.yPct ?? 0.5, fontPct: clip.fontPct ?? StudioProject.DEFAULT_TEXT_GEOMETRY.fontPct, align: clip.align ?? StudioProject.DEFAULT_TEXT_GEOMETRY.align, fadeInSec: textFadeInSec, fadeOutSec: clip.fadeOutSec, style: clip.style } );
+                    continue;
+                }
+                // solid color card → a generated layer (no asset bytes); a lavfi color source at render time
+                if( clip.kind === StudioProject.VideoSceneKind.SOLID )
+                {
+                    media.push( { kind: "solid", bytes: new Uint8Array(), color: clip.color, startSec: adjStartSec, durationSec: adjDurationSec, fadeInSec: adjFadeInSec, fadeOutSec: clip.fadeOutSec, transform: clip.transform, filters: clip.filters } );
+                    continue;
+                }
+                // SVG shape/graphic → recolor + rasterize to a transparent PNG (sharp), composited as an image.
+                // Force the transform path (contain fit) so its alpha is honored and the shape isn't cropped.
+                if( clip.kind === StudioProject.VideoSceneKind.SHAPE )
+                {
+                    const svg : string = StudioProject.buildShapeSvg( clip.shape, clip.shapeStyle );
+                    const png : Uint8Array | null = await MediaAnalyzer.rasterizeSvg( svg, 1024 );
+                    if( png !== null )
+                        media.push( { kind: "image", bytes: png, ext: "png", startSec: adjStartSec, durationSec: adjDurationSec, fadeInSec: adjFadeInSec, fadeOutSec: clip.fadeOutSec, transform: clip.transform ?? { fit: StudioProject.FitMode.CONTAIN }, kenBurns: clip.kenBurns, filters: clip.filters } );
+                    continue;
+                }
+                // image/video composite visually; audio contributes to the mixed soundtrack — all resolve bytes
+                if( clip.kind !== StudioProject.VideoSceneKind.IMAGE && clip.kind !== StudioProject.VideoSceneKind.VIDEO && clip.kind !== StudioProject.VideoSceneKind.AUDIO ) continue;
+                if( !clip.assetGuid ) continue;
+
+                // resolve the asset's original bytes once, then reuse for any repeat placements
+                let resolved : { bytes : Uint8Array; ext? : string; hasAudio : boolean } | undefined = bytesCache.get( clip.assetGuid );
+                if( resolved === undefined )
+                {
+                    const got : Type.Result<Media.Asset | undefined> = await this.dynamo.get<Media.Asset>( "media", { accountId, guid: clip.assetGuid } );
+                    if( !got.ok || !got.data ) continue;
+                    const original : Media.Item | undefined = Media.originalItem( got.data );
+                    if( original === undefined ) continue;
+                    const object : Type.Result<{ Body? : { transformToByteArray() : Promise<Uint8Array> } }> = await this.s3.get( "media", MediaPipeline.itemKey( got.data, original ) );
+                    if( !object.ok || !object.data.Body ) continue;
+                    const bytes : Uint8Array = await object.data.Body.transformToByteArray();
+                    // an audio clip always has audio; a video only if its probe found an audio codec (avoids a missing [i:a])
+                    const hasAudio : boolean = clip.kind === StudioProject.VideoSceneKind.AUDIO || Boolean( original.meta?.video?.audioCodec );
+                    resolved = { bytes, ext: original.extension, hasAudio };
+                    bytesCache.set( clip.assetGuid, resolved );
+                }
+                const kind : "image" | "video" | "audio" = clip.kind === StudioProject.VideoSceneKind.VIDEO ? "video" : clip.kind === StudioProject.VideoSceneKind.AUDIO ? "audio" : "image";
+                media.push( { kind, bytes: resolved.bytes, ext: resolved.ext, startSec: adjStartSec, durationSec: adjDurationSec, trimStartSec: clip.trimStartSec, hasAudio: resolved.hasAudio, muted: track.muted === true, volume: clip.volume, loop: clip.loop, speed: clip.speed, reverse: clip.reverse, fadeInSec: adjFadeInSec, fadeOutSec: clip.fadeOutSec, transform: clip.transform, kenBurns: clip.kenBurns, filters: clip.filters } );
+            }
+        }
+        if( media.length === 0 && texts.length === 0 ) { fail( "no renderable clips" ); return; }
+
+        // resolve the logo/watermark bytes ONCE (shared across every output format), if one is set on the doc
+        let watermarkLayer : MediaAnalyzer.CompositeWatermark | undefined = undefined;
+        if( timeline.watermark !== undefined )
+        {
+            const watermarkAsset : Type.Result<Media.Asset | undefined> = await this.dynamo.get<Media.Asset>( "media", { accountId, guid: timeline.watermark.assetGuid } );
+            const watermarkOriginal : Media.Item | undefined = watermarkAsset.ok && watermarkAsset.data ? Media.originalItem( watermarkAsset.data ) : undefined;
+            if( watermarkAsset.ok && watermarkAsset.data && watermarkOriginal !== undefined )
+            {
+                const watermarkObject : Type.Result<{ Body? : { transformToByteArray() : Promise<Uint8Array> } }> = await this.s3.get( "media", MediaPipeline.itemKey( watermarkAsset.data, watermarkOriginal ) );
+                if( watermarkObject.ok && watermarkObject.data.Body )
+                {
+                    const watermarkBytes : Uint8Array = await watermarkObject.data.Body.transformToByteArray();
+                    watermarkLayer = { bytes: watermarkBytes, ext: watermarkOriginal.extension, corner: timeline.watermark.corner, scalePct: timeline.watermark.scalePct, opacity: timeline.watermark.opacity, marginPct: timeline.watermark.marginPct };
+                }
+            }
+        }
+
+        // composite each format via the multi-track overlay graph; the master is the ORIGINAL, others variants
+        const renders : Array<{ profile : string; bytes : Uint8Array }> = [];
+        for( let index : number = 0; index < formats.length; index++ )
+        {
+            const format : { key : string; width : number; height : number } = formats[ index ];
+            void this.emitJobStage( accountId, projectId, "studio-render", Events.JobStage.RUNNING, { progress: 50 + Math.round( ( index / formats.length ) * 40 ), message: `rendering ${ format.key }`, userId } );
+            const out : Uint8Array | null = await MediaAnalyzer.renderComposite( format.width, format.height, timeline.fps, durationSec, media, texts, watermarkLayer, encodeQuality );
+            if( out !== null ) renders.push( { profile: format.key, bytes: out } );
+        }
+        if( renders.length === 0 ) { fail( "render produced no output" ); return; }
+
+        const guid : string = await this.saveRenderedVideo( accountId, project, renders, userId, timeline.posterSec, timeline.gif );
+        void this.emitJobStage( accountId, projectId, "studio-render", Events.JobStage.COMPLETED, { progress: 100, message: "saved to library", userId } );
+        this.log.info( "studio render complete", { projectId, guid, clips: clips.length, formats: renders.length } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // save the rendered mp4s as the project's ONE library asset: the master format as the ORIGINAL item + each
+    // destination as a COMPRESSED variant item (profile = format key). Create, or replace the linked asset in
+    // place. These are FINISHED renders → status OK, no scan/process pipeline. Returns the asset guid.
+    private async saveRenderedVideo( accountId : string, project : StudioProject.Entity, renders : Array<{ profile : string; bytes : Uint8Array }>, userId? : string, posterSec? : number, gif? : boolean ) : Promise<string>
+    {
+        const now : string = new Date().toISOString();
+        const name : string = project.name.trim() === "" ? "Studio video" : project.name.trim();
+        const master : { profile : string; bytes : Uint8Array } = renders[ 0 ];
+        const variants : Array<{ profile : string; bytes : Uint8Array }> = renders.slice( 1 );
+
+        // optional export extras from the master render: a POSTER frame (jpg) and/or an animated GIF
+        const posterBytes : Uint8Array | null = posterSec !== undefined ? await MediaAnalyzer.extractPosterFrame( master.bytes, posterSec ) : null;
+        const gifBytes : Uint8Array | null = gif === true ? await MediaAnalyzer.toGif( master.bytes ) : null;
+
+        // reuse the linked asset (replace in place) when it still exists, else mint a new one
+        const existing : Type.Result<Media.Asset | undefined> | undefined = project.libraryAssetId ? await this.dynamo.get<Media.Asset>( "media", { accountId, guid: project.libraryAssetId } ) : undefined;
+        const prior : Media.Asset | undefined = existing && existing.ok ? existing.data : undefined;
+        const priorOriginal : Media.Item | undefined = prior ? Media.originalItem( prior ) : undefined;
+        const guid : string = prior?.guid ?? randomUUID();
+        const originalId : string = priorOriginal?.id ?? randomUUID();
+
+        // the ORIGINAL (master format) + a COMPRESSED item per destination variant (stable id/key per profile)
+        const original : Media.Item = { id: originalId, usage: Media.Usage.ORIGINAL, kind: Media.Kind.VIDEO, mime: "video/mp4", extension: "mp4", size: master.bytes.length, version: ( priorOriginal?.version ?? 0 ) + 1, status: Media.Status.OK, createdAt: prior?.createdAt ?? now, modifiedAt: now };
+        const variantItems : Array<Media.Item> = variants.map( ( variant : { profile : string; bytes : Uint8Array } ) : Media.Item =>
+            ( { id: `v-${ variant.profile }`, usage: Media.Usage.COMPRESSED, profile: variant.profile, kind: Media.Kind.VIDEO, mime: "video/mp4", extension: "mp4", size: variant.bytes.length, version: 1, status: Media.Status.OK, createdAt: now, modifiedAt: now } ) );
+        // export extras: a POSTER (jpg) item and/or a GIF (animated) item, when produced above
+        const posterItem : Media.Item | null = posterBytes !== null
+            ? { id: "poster", usage: Media.Usage.POSTER, kind: Media.Kind.IMAGE, mime: "image/jpeg", extension: "jpg", size: posterBytes.length, version: 1, status: Media.Status.OK, createdAt: now, modifiedAt: now }
+            : null;
+        const gifItem : Media.Item | null = gifBytes !== null
+            ? { id: "v-gif", usage: Media.Usage.COMPRESSED, profile: "gif", kind: Media.Kind.IMAGE, mime: "image/gif", extension: "gif", size: gifBytes.length, version: 1, status: Media.Status.OK, createdAt: now, modifiedAt: now }
+            : null;
+        const extraItems : Array<Media.Item> = [ ...( posterItem ? [ posterItem ] : [] ), ...( gifItem ? [ gifItem ] : [] ) ];
+
+        const config : MediaConfig.Config = await this.mediaConfig();
+        const asset : Media.Asset = prior
+            ? { ...prior, name, kind: Media.Kind.VIDEO, status: Media.Status.OK, modifiedAt: now, items: [ original, ...variantItems, ...extraItems ] }
+            : { accountId, guid, name, kind: Media.Kind.VIDEO, tier: config.delivery.defaultTier, accessRole: Access.AccountRole.USER,
+                status: Media.Status.OK, scope: Media.Scope.ACCOUNT,
+                tags: project.tags ?? [], campaignIds: project.campaignId && project.campaignId !== "" ? [ project.campaignId ] : [],
+                items: [ original, ...variantItems, ...extraItems ], source: { origin: Media.SourceOrigin.GENERATED, acquiredBy: userId, acquiredAt: now },
+                createdBy: userId, createdAt: now, modifiedAt: now };
+
+        // upload the master + each variant to its (usage/profile-keyed) S3 object
+        await this.s3.put( "media", MediaPipeline.itemKey( asset, original ), Buffer.from( master.bytes ), "video/mp4" );
+        for( let index : number = 0; index < variants.length; index++ )
+        {
+            const put : Type.Result<void> = await this.s3.put( "media", MediaPipeline.itemKey( asset, variantItems[ index ] ), Buffer.from( variants[ index ].bytes ), "video/mp4" );
+            if( !put.ok ) this.log.warn( "studio render: variant upload failed", { profile: variantItems[ index ].profile, error: put.error } );
+        }
+        // upload the poster + gif export extras (best-effort — a failure just omits that item's bytes)
+        if( posterItem !== null && posterBytes !== null ) await this.s3.put( "media", MediaPipeline.itemKey( asset, posterItem ), Buffer.from( posterBytes ), "image/jpeg" );
+        if( gifItem !== null && gifBytes !== null ) await this.s3.put( "media", MediaPipeline.itemKey( asset, gifItem ), Buffer.from( gifBytes ), "image/gif" );
+        await this.dynamo.put( "media", { ...asset } );
+        if( prior ) void this.assetUpdated( asset, userId ); else void this.assetCreated( asset, userId );
+
+        // link a NEW asset to the project so the next render updates it in place
+        if( !prior ) await this.putStudioProject( { ...project, libraryAssetId: guid, modifiedAt: now, modifiedBy: userId } );
+        return guid;
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
@@ -828,18 +1319,54 @@ export namespace MediaService
         [ Role.STUDIO ] : Ports.MEDIA.STUDIO,
     };
 
-    /** The `media-generate` SQS job body — one generation request over N placeholder guids (media-19). */
+    // how long a staging batch lives before the TTL sweeps it (matches the staging bucket's 7-day lifecycle)
+    export const STAGING_TTL_SEC : number = 7 * 24 * 60 * 60;
+
+    /** The `media-generate` SQS job body — one generation request over N STAGING candidates (media-18). The
+     *  Job produces each candidate's bytes into the staging bucket + updates the staging batch row; nothing is
+     *  written to the library until the user promotes. */
     export interface GenerateJob
     {
-        accountId : string;
-        userId?   : string;
-        batchId   : string;
-        guids     : Array<string>;
-        modality  : AiRouting.Modality;
-        prompt    : string;
-        provider  : AiRouting.Provider;
-        model?    : string;
-        params    : Record<string, unknown>;
+        accountId  : string;
+        userId?    : string;
+        batchId    : string;
+        candidates : Array<{ id : string; kind : Media.Kind; mime : string; extension : string }>;
+        modality   : AiRouting.Modality;
+        prompt     : string;
+        provider   : AiRouting.Provider;
+        model?     : string;
+        params     : Record<string, unknown>;
+    }
+
+    /** One staged AI candidate — its bytes live in the staging bucket (`key`) until promoted; never a library
+     *  asset. `status` mirrors AiGen.CandidateStatus. */
+    export interface StagingCandidate
+    {
+        id        : string;
+        kind      : Media.Kind;
+        mime      : string;
+        extension : string;
+        status    : string;      // AiGen.CandidateStatus
+        size?     : number;
+        key?      : string;      // staging-bucket object key (when READY)
+        error?    : string;      // failure reason (when FAILED)
+    }
+
+    /** The `media_staging` row — one AI-generation batch: its request context + the staged candidates. TTL
+     *  sweeps abandoned batches (matches the staging bucket lifecycle). */
+    export interface StagingBatch
+    {
+        accountId  : string;
+        batchId    : string;
+        userId?    : string;
+        provider   : string;
+        model?     : string;
+        prompt     : string;
+        modality   : AiRouting.Modality;
+        params     : Record<string, unknown>;
+        candidates : Array<StagingCandidate>;
+        createdAt  : string;
+        ttl        : number;     // DynamoDB TTL (epoch seconds)
     }
 
     /** The outcome of an AI generation call — the produced bytes, or null with a diagnostic `error` (surfaced

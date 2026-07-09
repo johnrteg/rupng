@@ -10,6 +10,7 @@
 //
 import * as cdk from "aws-cdk-lib";
 import { Environment, ResourceManifest, PlatformManifest } from "@repo/cloud-manifest";
+import { Providers } from "@repo/system";
 import { ServiceStack, type GatewayRegistry } from "./lib/ServiceStack";
 import { PlatformStack } from "./lib/PlatformStack";
 import { isLocal, DestroyAll } from "./lib/local";
@@ -23,7 +24,9 @@ import { manifest as authManifest } from "auth/manifest";     // apps/core/auth/
 import { manifest as accountManifest } from "account/manifest"; // apps/core/account/src/CloudManifest.ts
 import { manifest as mediaManifest } from "media/manifest";   // apps/core/media/src/CloudManifest.ts (S3 + DDB + scan/process SQS)
 import { manifest as webManifest } from "web/manifest";       // apps/core/web/src/CloudManifest.ts (S3+CloudFront / Amplify)
-// import { manifest as contactManifest } from "contact/manifest";
+import { manifest as contactManifest } from "contact/manifest";   // apps/core/contact/src/CloudManifest.ts (contacts + segments DDB)
+import { manifest as campaignManifest } from "campaign/manifest"; // apps/core/campaign/src/CloudManifest.ts (campaigns DDB)
+import { manifest as emailManifest } from "email/manifest";   // apps/core/email/src/CloudManifest.ts (templates + send-log + suppression + blasts DDB, S3, send/feedback/batch SQS)
 
 // Generate the API Gateway routes from the service's public RestfulEndpoint defs (same defs the web
 // client + server share), so the gateway can't drift from the contract — the endpoints carry their own
@@ -31,22 +34,32 @@ import { manifest as webManifest } from "web/manifest";       // apps/core/web/s
 // manifest already declares (e.g. the root /version + /health probes), never replacing it.
 import { apiEndpoints } from "./lib/endpoints";
 import {
-    GetBootstrap, GetAccount,
-    PostUpload, PostUploadComplete, GetAssets, GetAsset, GetAssetStatus, PatchAsset, PostAssetVariants, PostAssetRescan, PostAssetDuplicate, PostAssetPoster, DeleteAsset, GetMediaUrl, GetItemVersions, PostItemRevert, PostItemText, GetDensities, PostAssetDensity, GetVariantSpecs,
-    GetBrowseProviders, PostBrowseSearch, PostBrowseImport, PostAiGenerate, PostAssetTranscribe,
+    GetBootstrap, GetOpenApi, GetArticle, GetAccount,
+    PostUpload, PostUploadComplete, PostAssetReplace, GetAssets, GetAsset, GetAssetStatus, PatchAsset, PostAvatar, PostAssetVariants, PostAssetRescan, PostAssetScan, PostAssetDuplicate, PostAssetPoster, DeleteAsset, GetMediaUrl, GetItemVersions, PostItemRevert, PostItemText, GetDensities, PostAssetDensity, GetVariantSpecs,
+    GetBrowseProviders, PostBrowseSearch, PostBrowseImport, PostAiGenerate, GetGenerateBatch, PostGeneratePromote, DeleteGenerateBatch, PostAssetTranscribe, PostAssetExtractAudio,
     PostAssetArchive, GetArchives, GetArchiveUrl, DeleteArchive, PostAssetCompress,
     PostVoiceClone, GetVoices, DeleteVoice,
+    GetStudioProjects, PostStudioProject, PatchStudioProject, DeleteStudioProject, GetStudioCanvas, PutStudioCanvas, PostStudioRender,
     PostLogin, PostLoginIdentify, PostLoginChallenge, PostLoginChallengeResend,
     PostRegister, PostRegisterVerify, PostVerifyResend, PostVerifyPhone,
-    GetUsers, GetUserExists, GetUserMeta, PostUserMeta, DeleteUserMeta,
+    GetUsers, GetUserExists, GetUserMeta, PostUserMeta, PostUser, DeleteUserMeta,
     GetSession, DeleteSession, PostPasswordForgot, PostPasswordReset,
+    GetAuthAction, PostAuthAction, PostAuthActionConsume, GetAuthActions, PostAuthActionCancel,
     PostSessionRefresh, PostSessionSwitch, GetSessions, DeleteSessionById, PostSessionsRevokeAll, GetAccounts,
     PostPasskeyRegisterOptions, PostPasskeyRegisterVerify, PostLoginPasskeyOptions, PostLoginPasskeyVerify,
     GetPasskeys, DeletePasskey,
-    GetApiKeys, PostApiKey, DeleteApiKey
+    GetApiKeys, PostApiKey, DeleteApiKey,
+    GetContacts, GetContact, PostContact, PatchContact, DeleteContact,
+    GetSegments, PostSegment, PostSegmentPreview, PostSegmentRefresh, PostSegmentReset, PostSegmentCopy, GetSegmentRuns, PatchSegment, DeleteSegment,
+    GetSegmentMembers, PostSegmentMembers, DeleteSegmentMember, GetContactSegments,
+    GetContactFields, PostContactField, PatchContactField, DeleteContactField,
+    GetImportMaps, GetImportMap, PostImportMap, PatchImportMap, DeleteImportMap, PostImportMapCopy,
+    GetCampaigns, GetCampaign, PostCampaign, PatchCampaign, DeleteCampaign,
+    PostEmailSend, GetEmailTemplates, GetEmailTemplate, PostEmailTemplate, PatchEmailTemplate, DeleteEmailTemplate, PostEmailTemplatePublish, PostEmailTemplatePreview, GetEmailTemplateVersion, PostEmailTemplateRevert, PostEmailPreview, GetEmailConfig, PutEmailConfig,
+    PostEmailBatch, GetEmailBlasts, PatchEmailBlast, DeleteEmailBlast
 } from "@repo/api";
 if( appManifest.owns.api )
-    appManifest.owns.api.endpoints = [ ...( appManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetBootstrap() ] ) ];
+    appManifest.owns.api.endpoints = [ ...( appManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetBootstrap(), new GetOpenApi(), new GetArticle() ] ) ];
 if( authManifest.owns.api )
     authManifest.owns.api.endpoints = [ ...( authManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
         new PostLogin(),
@@ -55,9 +68,11 @@ if( authManifest.owns.api )
         // sign-up + verification
         new PostRegister(), new PostRegisterVerify(), new PostVerifyResend(), new PostVerifyPhone(),
         // user lookup + metadata
-        new GetUsers(), new GetUserExists(), new GetUserMeta(), new PostUserMeta(), new DeleteUserMeta(),
+        new GetUsers(), new GetUserExists(), new GetUserMeta(), new PostUserMeta(), new PostUser(), new DeleteUserMeta(),
         // sessions + password reset
         new GetSession(), new DeleteSession(), new PostPasswordForgot(), new PostPasswordReset(),
+        // no-auth landing actions (verify/reset/mfa/invite/unsubscribe) — TTL queue
+        new GetAuthAction(), new PostAuthAction(), new PostAuthActionConsume(), new GetAuthActions(), new PostAuthActionCancel(),
         // session management + acting context
         new PostSessionRefresh(), new PostSessionSwitch(), new GetSessions(), new DeleteSessionById(), new PostSessionsRevokeAll(), new GetAccounts(),
         // passkeys (WebAuthn)
@@ -70,19 +85,47 @@ if( accountManifest.owns.api )
     accountManifest.owns.api.endpoints = [ ...( accountManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetAccount() ] ) ];
 if( mediaManifest.owns.api )
     mediaManifest.owns.api.endpoints = [ ...( mediaManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
-        new PostUpload(), new PostUploadComplete(), new GetAssets(), new GetAsset(), new GetAssetStatus(), new PatchAsset(), new PostAssetVariants(), new PostAssetRescan(), new PostAssetDuplicate(), new PostAssetPoster(), new DeleteAsset(), new GetMediaUrl(), new GetItemVersions(), new PostItemRevert(), new PostItemText(), new GetDensities(), new PostAssetDensity(), new GetVariantSpecs(),
+        new PostUpload(), new PostUploadComplete(), new PostAssetReplace(), new GetAssets(), new GetAsset(), new GetAssetStatus(), new PatchAsset(), new PostAvatar(), new PostAssetVariants(), new PostAssetRescan(), new PostAssetScan(), new PostAssetDuplicate(), new PostAssetPoster(), new DeleteAsset(), new GetMediaUrl(), new GetItemVersions(), new PostItemRevert(), new PostItemText(), new GetDensities(), new PostAssetDensity(), new GetVariantSpecs(),
         // Browse (media-12..17) — served by the media BROWSE role
         new GetBrowseProviders(), new PostBrowseSearch(), new PostBrowseImport(),
-        // AI Gen (media-18) — generate a new asset from a prompt; served by the MAIN role
-        new PostAiGenerate(),
+        // AI Gen (media-18) — generate candidates to a STAGING bucket; poll the batch, then promote / discard
+        new PostAiGenerate(), new GetGenerateBatch(), new PostGeneratePromote(), new DeleteGenerateBatch(),
         // Transcribe (media-18) — audio/video → text + timed segments (async media-transcribe Job)
         new PostAssetTranscribe(),
+        new PostAssetExtractAudio(),
         // Downloads (media-20) — zip original+variants as a TTL'd archive; list / download / delete
         new PostAssetArchive(), new GetArchives(), new GetArchiveUrl(), new DeleteArchive(),
         // Video compression (media-10.10) — compress a video to a distribution target
         new PostAssetCompress(),
         // Voice cloning (media-21) — clone from an audio asset; list / delete account voices
-        new PostVoiceClone(), new GetVoices(), new DeleteVoice()
+        new PostVoiceClone(), new GetVoices(), new DeleteVoice(),
+        // Studio projects (media-21) — the project tree (DDB) + canvas snapshot (S3): list / create / update / delete / canvas get+put
+        new GetStudioProjects(), new PostStudioProject(), new PatchStudioProject(), new DeleteStudioProject(), new GetStudioCanvas(), new PutStudioCanvas(), new PostStudioRender()
+    ] ) ];
+if( contactManifest.owns.api )
+    contactManifest.owns.api.endpoints = [ ...( contactManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        // contact + segment CRUD (initial cut)
+        new GetContacts(), new GetContact(), new PostContact(), new PatchContact(), new DeleteContact(),
+        new GetSegments(), new PostSegment(), new PostSegmentPreview(), new PostSegmentRefresh(), new PostSegmentReset(), new PostSegmentCopy(), new GetSegmentRuns(), new PatchSegment(), new DeleteSegment(),
+        // segment ↔ contact membership (the join)
+        new GetSegmentMembers(), new PostSegmentMembers(), new DeleteSegmentMember(), new GetContactSegments(),
+        // custom-field definitions (account schema)
+        new GetContactFields(), new PostContactField(), new PatchContactField(), new DeleteContactField(),
+        // import maps (reusable column→field maps: system catalog + account maps, copyable)
+        new GetImportMaps(), new GetImportMap(), new PostImportMap(), new PatchImportMap(), new DeleteImportMap(), new PostImportMapCopy()
+    ] ) ];
+if( campaignManifest.owns.api )
+    campaignManifest.owns.api.endpoints = [ ...( campaignManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        // campaign CRUD + archive (initial cut)
+        new GetCampaigns(), new GetCampaign(), new PostCampaign(), new PatchCampaign(), new DeleteCampaign()
+    ] ) ];
+if( emailManifest.owns.api )
+    emailManifest.owns.api.endpoints = [ ...( emailManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        // send (single + batch/blast) + blast controls + template CRUD/publish/preview + config
+        new PostEmailSend(), new PostEmailBatch(), new GetEmailBlasts(), new PatchEmailBlast(), new DeleteEmailBlast(),
+        new GetEmailTemplates(), new GetEmailTemplate(), new PostEmailTemplate(), new PatchEmailTemplate(), new DeleteEmailTemplate(),
+        new PostEmailTemplatePublish(), new PostEmailTemplatePreview(), new GetEmailTemplateVersion(), new PostEmailTemplateRevert(), new PostEmailPreview(),
+        new GetEmailConfig(), new PutEmailConfig()
     ] ) ];
 
 // ── Resolve environment from CDK context: `cdk synth -c env=staging` (default dev) ──
@@ -107,15 +150,11 @@ const platformManifest : PlatformManifest = {
     kafkaCluster  : { brokers: { default: 2 }, sizing: { default: { size: 3 }, production: { size: 6 } }, version: "3.6.0" },
     searchCluster : { serverless: true, sizing: { default: { size: 2 }, production: { size: 6 } } },
     cloudTrail    : { enabled: true, multiRegion: true, managementEvents: true },
-    // Platform-shared AI provider keys — granted read + ARN-injected into every service (all run the
-    // AiFactory). Created empty; values set by a root op. Service-specific keys stay in owns.secrets.
-    secrets       : [
-        { key: "ai-openai",     description: "OpenAI API key (platform AI)" },
-        { key: "ai-anthropic",  description: "Anthropic API key (platform AI)" },
-        { key: "ai-fish",       description: "fish.audio API key (platform AI — TTS / voice cloning)" },
-        { key: "ai-elevenlabs", description: "ElevenLabs API key (platform AI — TTS / voice cloning / SFX)" },
-        { key: "ai-magnific",   description: "Magnific / Freepik API key (platform AI — image generation)" },
-    ],
+    // Platform-shared provider keys — granted read + ARN-injected into every service. DERIVED from the single
+    // provider registry (@repo/system Providers): every platform-scoped provider's secret is provisioned here.
+    // Created empty; values set via the Console. Service-specific provider keys live in that service's
+    // owns.secrets (also derived from the registry — see each CloudManifest).
+    secrets       : Providers.platform().map( ( provider ) => ( { key: provider.secretKey, description: `${ provider.label } (${ provider.category })` } ) ),
 };
 const platform : PlatformStack = new PlatformStack( app, `platform-${deployEnv}`, {
     manifest  : platformManifest,
@@ -134,7 +173,9 @@ const manifests : Array<ResourceManifest> = [
     accountManifest,
     mediaManifest,
     webManifest,
-    // contactManifest,
+    contactManifest,
+    campaignManifest,
+    emailManifest,
 ];
 
 // Shared gateway registry: each ServiceStack publishes its API Gateway(s) here and a CDN (web) reads

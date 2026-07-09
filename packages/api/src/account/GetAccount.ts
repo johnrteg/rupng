@@ -10,7 +10,7 @@ export class GetAccount extends RestfulEndpoint< {}, undefined, GetAccount.Respo
     public readonly method   : NetworkUtils.Method = NetworkUtils.Method.GET;
     public readonly access   : Access.Role = Access.AccountRole.MINIMUM;
     public readonly timeout  : number | undefined = undefined;
-    public readonly audience : RestfulEndpoint.Audience = RestfulEndpoint.Audience.APP;   // edge-reachable, not a published dev API
+    public readonly audience : RestfulEndpoint.Audience = RestfulEndpoint.Audience.PUBLIC;   // edge-reachable, not a published dev API
 
     constructor()
     {

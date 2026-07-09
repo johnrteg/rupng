@@ -17,10 +17,11 @@ export class PostAssetArchiveImpl extends PostAssetArchive
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
         if( !this.query.guid ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "guid required" } };
 
-        const outcome : { status : number; archiveId? : string } = await this.service.enqueueArchive( auth, this.query.guid );
+        const outcome : { status : number; archiveId? : string; reason? : string } = await this.service.enqueueArchive( auth, this.query.guid );
         if( outcome.status === NetworkUtils.Status.ACCEPTED && outcome.archiveId )
             return { status: NetworkUtils.Status.ACCEPTED, data: { archiveId: outcome.archiveId } };
-        const message : string = outcome.status === NetworkUtils.Status.NOT_FOUND ? "asset not found" : "could not start the archive";
+        // surface the specific reason (which resource/step failed) so the failure is diagnosable, not opaque
+        const message : string = outcome.reason ?? ( outcome.status === NetworkUtils.Status.NOT_FOUND ? "asset not found" : "could not start the archive" );
         return { status: outcome.status, data: { message } };
     }
 }

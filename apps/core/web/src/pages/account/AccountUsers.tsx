@@ -3,7 +3,7 @@ import AppModel from "@model/AppModel";
 import React from 'react';
 import { JSX } from "react";
 
-import { Box, Button, Card, CardContent, CardHeader, Chip, CircularProgress, Divider, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Button, Card, CardContent, CardHeader, Chip, CircularProgress, Divider, Stack, Typography } from "@mui/material";
 import RefreshOutlinedIcon         from '@mui/icons-material/RefreshOutlined';
 import PersonAddAltOutlinedIcon    from '@mui/icons-material/PersonAddAltOutlined';
 import BlockOutlinedIcon           from '@mui/icons-material/BlockOutlined';
@@ -15,17 +15,19 @@ import ManageAccountsOutlinedIcon  from '@mui/icons-material/ManageAccountsOutli
 import WorkspacePremiumOutlinedIcon from '@mui/icons-material/WorkspacePremiumOutlined';
 
 import { Access }   from '@repo/system';
-import { Account, GetMembers, PatchMember, DeleteMember, GetInvites, PostInvite, PostInviteResend, DeleteInvite, PostOwnerTransfer, GetSession } from '@repo/api';
+import { Account, GetMembers, PatchMember, DeleteMember, GetInvites, PostInvite, PostInviteResend, DeleteInvite, PostOwnerTransfer, GetSession, Paging } from '@repo/api';
 import { RestfulService } from '@repo/endpoint';
 
 import AuthPage        from '@widgets/app/AuthPage';
-import EmailInput      from '@widgets/core/EmailInput';
+import UserChip        from '@widgets/app/UserChip';
+import ButtonIcon      from '@widgets/core/ButtonIcon';
 import SelectInput     from '@widgets/core/SelectInput';
 import SnackAlert      from '@widgets/core/SnackAlert';
 import TableInput      from '@widgets/core/TableInput';
 import ButtonIconDropdown from '@widgets/core/ButtonIconDropdown';
 import AlertPrompt     from '@widgets/core/AlertPrompt';
 import ChangeOwnerDialog from '@pages/account/dialogs/ChangeOwnerDialog';
+import InvitePeopleDialog from '@pages/account/dialogs/InvitePeopleDialog';
 import AccountChange   from '@widgets/app/AccountChange';
 
 // TableInput row-action ids — enums so they're referenced by symbol, not retyped string literals
@@ -54,30 +56,51 @@ export function AccountUsers( props : AccountUsers.Props ) : JSX.Element
 
     const [members,setMembers] = React.useState< Array<Account.Member> >( [] );
     const [invites,setInvites] = React.useState< Array<Account.Invite> >( [] );
+    const [membersPage,setMembersPage] = React.useState< Paging.Page | null >( null );
+    const [invitesPage,setInvitesPage] = React.useState< Paging.Page | null >( null );
     const [loading,setLoading] = React.useState< boolean >( true );
-    const [busy,setBusy]       = React.useState< boolean >( false );
     const [snack,setSnack]     = React.useState< { message : string; severity : SnackAlert.Severity } | null >( null );
     const [confirm,setConfirm] = React.useState< AccountUsers.Confirm | null >( null );   // state-changing action → confirm dialog
     const [changeOwnerOpen,setChangeOwnerOpen] = React.useState< boolean >( false );      // "change owner" picker (from the owner's row)
 
-    // invite form
-    const [inviteEmail,setInviteEmail] = React.useState< string >( "" );
-    const [inviteRole,setInviteRole]   = React.useState< string >( Access.AccountRole.USER );
+    // invite dialog (multi-person: rows of role + emails)
+    const [inviteOpen,setInviteOpen] = React.useState< boolean >( false );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     React.useEffect( () => { if( editable ) void load(); else setLoading( false ); }, [] );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // initial load — fetch the first page of both lists in parallel
     async function load() : Promise<void>
     {
         setLoading( true );
-        const [ membersReply, invitesReply ] = await Promise.all( [
-            appmodel.server.fetch( new GetMembers() ) as Promise<RestfulService.Reply<GetMembers.Response>>,
-            appmodel.server.fetch( new GetInvites() ) as Promise<RestfulService.Reply<GetInvites.Response>>,
-        ] );
-        if( membersReply.ok && membersReply.data ) setMembers( membersReply.data.members );
-        if( invitesReply.ok && invitesReply.data ) setInvites( invitesReply.data.invites );
+        const membersReply : RestfulService.Reply<GetMembers.Response> = await appmodel.server.fetch( new GetMembers() );
+        const invitesReply : RestfulService.Reply<GetInvites.Response> = await appmodel.server.fetch( new GetInvites() );
+        if( membersReply.ok && membersReply.data )
+        {
+            setMembers( membersReply.data.records );
+            setMembersPage( membersReply.data.page );
+            // warm the shared user cache so other surfaces can resolve these users (name/email/avatar) by id
+            membersReply.data.records.forEach( ( entry : Account.Member ) : void => appmodel.cache.putUser( { userId: entry.userId, name: entry.name, email: entry.email, avatarAssetId: entry.avatarAssetId } ) );
+        }
+        if( invitesReply.ok && invitesReply.data ) { setInvites( invitesReply.data.records ); setInvitesPage( invitesReply.data.page ); }
         setLoading( false );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // page the members list (token paging — the members TableInput drives next via onNext)
+    async function loadMembers( token? : string ) : Promise<void>
+    {
+        const reply : RestfulService.Reply<GetMembers.Response> = await appmodel.server.fetch( new GetMembers( { start: token } ) );
+        if( reply.ok && reply.data ) { setMembers( reply.data.records ); setMembersPage( reply.data.page ); }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // page the invites list (token paging)
+    async function loadInvites( token? : string ) : Promise<void>
+    {
+        const reply : RestfulService.Reply<GetInvites.Response> = await appmodel.server.fetch( new GetInvites( { start: token } ) );
+        if( reply.ok && reply.data ) { setInvites( reply.data.records ); setInvitesPage( reply.data.page ); }
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -90,10 +113,13 @@ export function AccountUsers( props : AccountUsers.Props ) : JSX.Element
     // TableInput custom-cell renderers (display only)
     function memberNameRenderer( _col : TableInput.Column, row : TableInput.Row ) : JSX.Element
     {
-        return  <Typography variant="body2">
-                    { row.name }
-                    { row.owner && <Chip size="small" variant="outlined" label={"Owner"} sx={{ ml: 1 }} /> }
-                </Typography>;
+        const name : string = String( row.name || row.email || "" );
+        const email : string | undefined = row.email ? String( row.email ) : undefined;
+        const member : Account.Member | undefined = members.find( ( entry : Account.Member ) : boolean => entry.userId === row.id );
+        return  <Stack direction="row" spacing={ 1 } sx={{ alignItems: "center" }}>
+                    <UserChip size="small" name={ name } email={ email } assetId={ member?.avatarAssetId } />
+                    { row.owner && <Chip size="small" variant="outlined" label={"Owner"} /> }
+                </Stack>;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -127,6 +153,9 @@ export function AccountUsers( props : AccountUsers.Props ) : JSX.Element
     {
         const member : Account.Member | undefined = members.find( ( entry ) => entry.userId === row.id );
         if( !member ) return;
+
+        // guard: you can never suspend or remove your OWN membership (also enforced by hiding those row actions)
+        if( member.userId === appmodel.auth.user?.id && ( action === MemberAction.SUSPEND || action === MemberAction.REMOVE ) ) return;
 
         if( action === MemberAction.ROLE && choice && choice !== member.role )
             setConfirm( {
@@ -187,15 +216,28 @@ export function AccountUsers( props : AccountUsers.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // ── invite form (a deliberate submit — its own action; no extra confirm) ─────────────────────
-    async function onInvite() : Promise<void>
+    // ── invite (multi-person): POST each { email, role } pair; summarize successes/failures ──────────
+    async function onInviteMany( invites : Array<InvitePeopleDialog.Invite> ) : Promise<boolean>
     {
-        if( inviteEmail.trim() === "" ) return;
-        setBusy( true );
-        const reply = await appmodel.server.fetch( new PostInvite( { email: inviteEmail.trim(), role: inviteRole as Access.Role } ) );
-        setBusy( false );
-        if( reply.ok ) { setInviteEmail( "" ); setSnack( { message: "Invitation sent", severity: "success" } ); void load(); }
-        else setSnack( { message: "Something went wrong. Please try again.", severity: "error" } );
+        let sent : number = 0;
+        let failed : number = 0;
+        // one POST per invite (the endpoint invites a single email); tally the outcome for a summary snack
+        for( const invite of invites )
+        {
+            const reply : RestfulService.Reply<PostInvite.Response> = await appmodel.server.fetch( new PostInvite( { email: invite.email, role: invite.role } ) );
+            if( reply.ok ) sent += 1;
+            else failed += 1;
+        }
+        if( sent > 0 )
+        {
+            setInviteOpen( false );
+            const suffix : string = failed > 0 ? ` (${ failed } failed)` : "";
+            setSnack( { message: `${ sent } invitation${ sent === 1 ? "" : "s" } sent${ suffix }.`, severity: failed > 0 ? "warning" : "success" } );
+            void load();
+            return true;
+        }
+        setSnack( { message: "Could not send the invitations. Please try again.", severity: "error" } );
+        return false;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -253,11 +295,13 @@ export function AccountUsers( props : AccountUsers.Props ) : JSX.Element
             status:      member.status,
             createdAt:   member.createdAt ? new Date( member.createdAt ) : undefined,
             lastLoginAt: member.lastLoginAt ? new Date( member.lastLoginAt ) : undefined,
-            actions:     member.owner
+            // you can't SUSPEND or REMOVE your OWN membership — those actions are dropped from your own row
+            actions:     ( member.owner
                             ? [ MemberAction.CHANGE_OWNER ]   // the owner: only ownership can change (role/status are protected)
                             : member.status === Account.MemberStatus.SUSPENDED
                                 ? [ MemberAction.ROLE, MemberAction.REACTIVATE, MemberAction.REMOVE ]
-                                : [ MemberAction.ROLE, MemberAction.SUSPEND, MemberAction.REMOVE ],
+                                : [ MemberAction.ROLE, MemberAction.SUSPEND, MemberAction.REMOVE ]
+                         ).filter( ( id : string ) : boolean => !isMe || ( id !== MemberAction.SUSPEND && id !== MemberAction.REMOVE ) ),
         };
     } );
 
@@ -291,7 +335,7 @@ export function AccountUsers( props : AccountUsers.Props ) : JSX.Element
     } );
 
     return  <AuthPage minAccess={ Access.AccountRole.USER } title={"Account : Users"}>
-                <Box sx={{ p: 2, maxWidth: 1000, mx: "auto" }}>
+                <Box sx={{ p: 2, mx: "auto" }}>
 
                     { !editable &&
                         <Typography variant="body2" sx={{ color: "text.secondary", p: 2 }}>{"Only account admins can manage users."}</Typography> }
@@ -305,7 +349,7 @@ export function AccountUsers( props : AccountUsers.Props ) : JSX.Element
                             {/* ── Members ──────────────────────────────────────────────────────────── */}
                             <Card variant="outlined">
                                 <CardHeader title={"Members"} subheader={"People with access to this account."}
-                                            action={ <Tooltip title={"Refresh"}><span><IconButton size="small" onClick={ () => void load() } disabled={ loading } sx={{ mt: 1, mr: 1 }}><RefreshOutlinedIcon fontSize="small" /></IconButton></span></Tooltip> } />
+                                            action={ <ButtonIcon id="members-refresh" label={"Refresh"} size="small" disabled={ loading } sx={{ mt: 1, mr: 1 }} icon={ <RefreshOutlinedIcon fontSize="small" /> } onClick={ () => void load() } /> } />
                                 <Divider />
                                 <CardContent>
                                     <TableInput id="account-members"
@@ -313,31 +357,29 @@ export function AccountUsers( props : AccountUsers.Props ) : JSX.Element
                                                 data={ memberRows }
                                                 actions={ memberActions }
                                                 onAction={ onMemberAction }
-                                                selectable={ TableInput.Selectable.NONE } />
+                                                selectable={ TableInput.Selectable.NONE }
+                                                paging={ TableInput.Paging.TOKEN }
+                                                total={ membersPage?.total }
+                                                next={ membersPage?.next }
+                                                onNext={ ( token : string ) : void => void loadMembers( token ) } />
                                 </CardContent>
                             </Card>
 
                             {/* ── Invite ───────────────────────────────────────────────────────────── */}
                             <Card variant="outlined">
-                                <CardHeader title={"Invite a user"} subheader={"Existing users are added on their next sign-in; new users get an email to register."} />
-                                <Divider />
-                                <CardContent>
-                                    <Stack direction="row" spacing={ 2 } sx={{ alignItems: "flex-start", flexWrap: "wrap" }}>
-                                        <Box sx={{ flexGrow: 1, minWidth: 240 }}>
-                                            <EmailInput id="invite-email" label={"Email"} value={ inviteEmail } onChange={ setInviteEmail } sx={{ width: "100%" }} />
-                                        </Box>
-                                        <SelectInput id="invite-role" label={"Role"} value={ inviteRole } choices={ ROLE_CHOICES } onChange={ setInviteRole } sx={{ width: 180 }} />
-                                        <Button variant="contained" startIcon={ <PersonAddAltOutlinedIcon /> } disabled={ busy || inviteEmail.trim() === "" } onClick={ () => void onInvite() }>
-                                            {"Invite"}
-                                        </Button>
-                                    </Stack>
-                                </CardContent>
+                                <CardHeader title={"Invite people"}
+                                            subheader={"Invite several people at once — different roles, multiple emails each. Existing users are added on their next sign-in; new users get an email to register."}
+                                            action={
+                                                <Button variant="contained" startIcon={ <PersonAddAltOutlinedIcon /> } onClick={ () => setInviteOpen( true ) } sx={{ mt: 1, mr: 1 }}>
+                                                    {"Invite people"}
+                                                </Button>
+                                            } />
                             </Card>
 
                             {/* ── Pending invitations ──────────────────────────────────────────────── */}
                             <Card variant="outlined">
                                 <CardHeader title={"Invitations"} subheader={"Invites and their status."}
-                                            action={ <Tooltip title={"Refresh"}><span><IconButton size="small" onClick={ () => void load() } disabled={ loading } sx={{ mt: 1, mr: 1 }}><RefreshOutlinedIcon fontSize="small" /></IconButton></span></Tooltip> } />
+                                            action={ <ButtonIcon id="invites-refresh" label={"Refresh"} size="small" disabled={ loading } sx={{ mt: 1, mr: 1 }} icon={ <RefreshOutlinedIcon fontSize="small" /> } onClick={ () => void load() } /> } />
                                 <Divider />
                                 <CardContent>
                                     { invites.length === 0
@@ -347,7 +389,11 @@ export function AccountUsers( props : AccountUsers.Props ) : JSX.Element
                                                       data={ inviteRows }
                                                       actions={ inviteActions }
                                                       onAction={ onInviteAction }
-                                                      selectable={ TableInput.Selectable.NONE } />
+                                                      selectable={ TableInput.Selectable.NONE }
+                                                      paging={ TableInput.Paging.TOKEN }
+                                                      total={ invitesPage?.total }
+                                                      next={ invitesPage?.next }
+                                                      onNext={ ( token : string ) : void => void loadInvites( token ) } />
                                     }
                                 </CardContent>
                             </Card>
@@ -375,6 +421,11 @@ export function AccountUsers( props : AccountUsers.Props ) : JSX.Element
                                        onConfirm={ onChangeOwner }
                                        onClose={ () => setChangeOwnerOpen( false ) } />
                 }
+
+                { inviteOpen &&
+                    <InvitePeopleDialog roleChoices={ ROLE_CHOICES }
+                                        onInvite={ onInviteMany }
+                                        onClose={ () => setInviteOpen( false ) } /> }
 
                 { snack && <SnackAlert message={ snack.message } severity={ snack.severity } onClose={ () => setSnack( null ) } /> }
             </AuthPage>;

@@ -38,6 +38,8 @@ import { isReadOnly, setTarget, targetInfo } from "./aws";
 import { deleteRequest, discoverEndpoints, listSaved, localApiRoutes, saveRequest, sendRequest } from "./apiTester";
 import { kafkaMonitor } from "./kafkaMonitor";
 import { sesClear, sesMessages } from "./ses";
+import { fakeInbox, fakeClear, fakeConfigGet, fakeConfigSave } from "./fakeEmail";
+import { authActionsList, authActionsCancel } from "./authActions";
 import { cognitoCodes } from "./cognitoCodes";
 import { killProcessTree, reapStale, scanProcesses } from "./processScan";
 import { LOG_DIR, REPO_ROOT } from "./paths";
@@ -268,6 +270,16 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
     ipcMain.handle( IPC.sesMessages, () => sesMessages() );
     ipcMain.handle( IPC.sesClear, () => sesClear() );
     ipcMain.handle( IPC.cognitoCodes, () => cognitoCodes() );
+
+    // fake providers (Fake → Email) — the fake-email service's inbox + behavior config
+    ipcMain.handle( IPC.fakeInbox, () => fakeInbox() );
+    ipcMain.handle( IPC.fakeClear, () => fakeClear() );
+    ipcMain.handle( IPC.fakeConfigGet, () => fakeConfigGet() );
+    ipcMain.handle( IPC.fakeConfigSave, ( _event, config : unknown ) => fakeConfigSave( config ) );
+
+    // auth actions (Actions tab) — the auth service's pending-action queue
+    ipcMain.handle( IPC.authActionsList, ( _event, status : string ) => authActionsList( status ) );
+    ipcMain.handle( IPC.authActionsCancel, ( _event, actionId : string ) => authActionsCancel( actionId ) );
 
     // ── process monitor (the Processes sub-tab) ────────────────────────────────────────────────────────
     ipcMain.handle( IPC.processList, () => scanProcesses( processManager.ownedPids() ) );

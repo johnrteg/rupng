@@ -914,9 +914,16 @@ export interface SecretSummary
     key         : string;                       // the logical key (name minus env/service/kind prefix)
     scope       : "service" | "platform";
     description? : string;
+    exists      : boolean;                       // the secret is CREATED in Secrets Manager (false = declared but no key yet)
     hasValue    : boolean;
     lastChanged? : string;                       // ISO timestamp of the last value change
     isJson      : boolean;                       // the stored value parses as a JSON object (multi-field secret)
+    // provider-registry metadata (present for a declared provider secret) — drives the "Providers" UI
+    category?   : string;                        // provider category (ai / browse / email / texting / payments)
+    label?      : string;                        // provider display name
+    keyHint?    : string;                        // format hint (e.g. "starts with AIza")
+    docsUrl?    : string;                        // where to get the key
+    fields?     : Array<{ name : string; label : string; secret? : boolean }>;   // multi-field secret (JSON); omit → single string
 }
 
 /** The secrets relevant to a service: its own + the platform-shared AI keys. */
@@ -1019,6 +1026,66 @@ export interface SesMessage
 }
 /** Result of fetching the LocalStack SES capture. */
 export interface SesListing { ok : boolean; messages : Array<SesMessage>; endpoint : string; error? : string; }
+
+// ── Fake providers (Fake → Email) — the fake-email service's inbox + behavior config ─────────────
+/** One event on a fake message (accepted / delivered / bounced / open / click …). */
+export interface FakeEmailEvent { type : string; at : string; detail? : string; }
+/** One stored message in the fake ESP's inbox. */
+export interface FakeEmailMessage
+{
+    id       : string;
+    at       : string;
+    to       : Array<string>;
+    summary? : string;                 // the email subject
+    delivery : string;                 // the delivery outcome (delivered / hard-bounce / …)
+    events   : Array<FakeEmailEvent>;
+    payload  : unknown;                // rendered from/to/subject/html/text/headers
+    raw?     : string;                 // the emitted RFC822/MIME source (the raw text of the email file)
+}
+/** Result of listing the fake inbox. */
+export interface FakeEmailListing { ok : boolean; messages : Array<FakeEmailMessage>; error? : string; }
+/** Result of reading the fake behavior config (the raw JSON knobs). */
+export interface FakeEmailConfigResult { ok : boolean; config? : unknown; error? : string; }
+/** Result of saving the fake behavior config. */
+export interface FakeEmailSaveResult { ok : boolean; error? : string; }
+
+// ── Auth actions (Actions tab) — the pending-action queue (verify/reset/mfa/invite/unsubscribe) ───────
+/** One pending/handled action row (mirrors AuthAction.Entity's public shape). */
+export interface AuthActionRow { actionId : string; type : string; status : string; target : string; accountId? : string; userId? : string; createdAt : string; expiresAt : number; consumedAt? : string; cancelledAt? : string; }
+/** Result of listing the action queue. */
+export interface AuthActionsListing { ok : boolean; records : Array<AuthActionRow>; error? : string; }
+/** Result of cancelling an action. */
+export interface AuthActionCancelResult { ok : boolean; error? : string; }
+
+// ── The fake ESP behavior "knobs" (mirrors FakeService.Behavior; the Config form renders these) ──────
+export interface FakeToggle { enabled : boolean; }
+export interface FakeRateKnob extends FakeToggle { perMinute : number; }
+export interface FakeTimeoutKnob extends FakeToggle { seconds : number; }
+export interface FakePctKnob extends FakeToggle { percent : number; }
+export interface FakeLatencyKnob extends FakeToggle { minMs : number; maxMs : number; }
+export interface FakeLimitsKnob extends FakeToggle { maxSizeBytes : number; maxRecipients : number; }
+export interface FakeEngagementKnob extends FakeToggle { percent : number; delayMinSec : number; delayMaxSec : number; }
+export interface FakeEmailConfig
+{
+    rateLimit      : FakeRateKnob;
+    timeout        : FakeTimeoutKnob;
+    unavailable    : FakeToggle;
+    latency        : FakeLatencyKnob;
+    hardBounce     : FakePctKnob;
+    softBounce     : FakePctKnob;
+    complaint      : FakePctKnob;
+    deferred       : FakePctKnob;
+    invalid        : FakePctKnob;
+    bounceCategory : string;
+    limits         : FakeLimitsKnob;
+    open           : FakeEngagementKnob;
+    click          : FakeEngagementKnob;
+    unsubscribe    : FakeEngagementKnob;
+    ttlSeconds     : number;
+    maxMessages    : number;
+    webhookEnabled : boolean;
+    webhookUrl     : string;
+}
 
 /** A Cognito verification code captured from the LocalStack log (dev-only — no SES delivery there). */
 export interface CognitoCode { user : string; code : string; at : number; }
@@ -1200,6 +1267,14 @@ export const IPC =
     sesMessages        : "ses:messages",
     sesClear           : "ses:clear",
     cognitoCodes       : "cognito:codes",   // captured Cognito verification codes (dev)
+    // fake providers (the Fake → Email sub-tab) — talk to the fake-email service directly
+    fakeInbox          : "fake:inbox",
+    fakeClear          : "fake:clear",
+    fakeConfigGet      : "fake:config:get",
+    fakeConfigSave     : "fake:config:save",
+    // auth actions (the Actions tab) — the auth service's pending-action queue
+    authActionsList    : "auth:actions:list",
+    authActionsCancel  : "auth:actions:cancel",
     // process monitor (the Processes sub-tab)
     processList        : "proc:list",
     processKill        : "proc:kill",

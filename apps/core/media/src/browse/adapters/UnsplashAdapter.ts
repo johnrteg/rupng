@@ -30,9 +30,22 @@ export class UnsplashAdapter implements BrowseProvider
         if( !query.kinds.includes( Media.Kind.IMAGE ) ) return [];
         const perPage : number = ctx.limits.maxResultsPerProvider;
         const page : number = query.page ?? 1;
-        const url : string = `https://api.unsplash.com/search/photos?query=${ encodeURIComponent( query.text ) }&per_page=${ perPage }&page=${ page }`;
+        // Unsplash supports a color filter with its OWN vocabulary — map ours to it (unsupported ones are skipped)
+        const colorParam : string = UnsplashAdapter.colorParam( query.filters?.color );
+        const url : string = `https://api.unsplash.com/search/photos?query=${ encodeURIComponent( query.text ) }&per_page=${ perPage }&page=${ page }${ colorParam }`;
         const data = await this.fetchJson( url, ctx.apiKey );
         return ( ( data?.results ?? [] ) as Array<Record<string, any>> ).map( ( photo ) => this.photoResult( photo ) );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // map our named color → Unsplash's `color` param (`&color=…`), or "" when unset / unsupported by Unsplash.
+    private static colorParam( color : string | undefined ) : string
+    {
+        if( color === undefined ) return "";
+        const MAP : Record<string, string> =
+            { red: "red", orange: "orange", yellow: "yellow", green: "green", blue: "blue", purple: "purple", pink: "magenta", black: "black", white: "white" };
+        const mapped : string | undefined = MAP[ color ];
+        return mapped ? `&color=${ mapped }` : "";
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////

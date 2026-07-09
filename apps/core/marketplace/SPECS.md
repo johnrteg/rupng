@@ -233,7 +233,11 @@ Credentials are the crux — get this right and the rest is plumbing.
   monitor + the account UI.
 * **Multiple instances (opt-in)** — a definition may allow several installs per account (`multiInstance`)
   for agency / multi-brand cases (multiple stores, ad accounts, SFTP destinations); each has an
-  instance id + label.
+  instance id + label. This is the per-account **cardinality** knob: default **single-instance (`0:1`)** vs
+  **multi-instance (`0:N`)**. **Provider/channel integrations are single-instance** (`0:1`) — an account runs
+  at most one instance of a given email/SMS/print/social provider (incl. the dev **"fake" providers**), which
+  may still hold **multiple named credentials for rotation** within that one instance; only agency/multi-brand
+  connectors opt into `multiInstance`.
 * **Audit + multi-tenancy** — all installs/config/credential changes audited; everything account-scoped.
 * **Connector SDK — one contract, two run modes** — a typed `triggers` / `actions` / `sync` + credential
   + config schema, surfaced **both** as **workflow nodes** and as a **standalone service** plugged into

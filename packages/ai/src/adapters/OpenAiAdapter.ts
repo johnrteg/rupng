@@ -83,14 +83,43 @@ export class OpenAiAdapter extends BaseAdapter
     }
 
     /** Build a diagnostic failure message from a non-OK reply — preferring OpenAI's own body error
-     *  (`{ error: { message } }`), which carries the REAL reason (bad size, model access, billing, …). The
-     *  shared `RestfulService.error` only reads `reply.error.message` (unset for OpenAI bodies), so it degrades
-     *  to a generic "server error"; digging into `reply.data.error.message` surfaces the actual cause. */
+     *  (`{ error: { message } }`), which carries the REAL reason (bad size, model access, billing, moderation…).
+     *  On a non-2xx, RestfulService throws + captures the response body under `reply.error.data` (its top-level
+     *  message/code/type are stripped, but OpenAI's are NESTED under `.error`), and leaves `reply.data` unset.
+     *  So dig BOTH `reply.data.error.message` and `reply.error.data.error.message` before degrading to the
+     *  generic `RestfulService.error` ("server error"). */
+    /** Map a requested WxH to the closest size the given OpenAI image model actually accepts (each model has a
+     *  different valid set): dall-e-2 = squares only; dall-e-3 = 1024² / 1792×1024 / 1024×1792; gpt-image-1 =
+     *  1024² / 1536×1024 / 1024×1536. Preserves the requested orientation. */
+    private static normalizeSize( model : string, size : string ) : string
+    {
+        const parts : Array<number> = size.split( "x" ).map( ( value : string ) : number => Number( value ) );
+        const width : number = parts[ 0 ] || 0;
+        const height : number = parts[ 1 ] || 0;
+        const landscape : boolean = width > height;
+        const portrait : boolean = height > width;
+        if( model.startsWith( "dall-e-2" ) ) return "1024x1024";
+        if( model.startsWith( "dall-e-3" ) ) return landscape ? "1792x1024" : portrait ? "1024x1792" : "1024x1024";
+        return landscape ? "1536x1024" : portrait ? "1024x1536" : "1024x1024";   // gpt-image-1 (+ default)
+    }
+
+    /** Map the provider-agnostic quality tier (low/medium/high) to the given model's native `quality` value:
+     *  gpt-image-1 takes low/medium/high directly; dall-e-3 takes standard/hd (low/medium → standard, high →
+     *  hd); dall-e-2 has no quality param (returns undefined → omitted). */
+    private static normalizeQuality( model : string, quality? : string ) : string | undefined
+    {
+        if( !quality ) return undefined;
+        if( model.startsWith( "dall-e-2" ) ) return undefined;                       // no quality knob
+        if( model.startsWith( "dall-e-3" ) ) return quality === "high" ? "hd" : "standard";
+        return quality;                                                             // gpt-image-1: low | medium | high
+    }
+
     private static failureMessage( response : RestfulService.Reply, fallback : string ) : string
     {
-        const body : { error? : { message? : string; code? : string; type? : string } } | undefined =
-            response.data as { error? : { message? : string; code? : string; type? : string } } | undefined;
-        return body?.error?.message ?? RestfulService.error( response, fallback );
+        type OpenAiBody = { error? : { message? : string; code? : string; type? : string } };
+        const fromData : string | undefined = ( response.data as OpenAiBody | undefined )?.error?.message;
+        const fromError : string | undefined = ( response.error?.data as OpenAiBody | undefined )?.error?.message;
+        return fromData ?? fromError ?? RestfulService.error( response, fallback );
     }
 
     /** Post the conversation to chat/completions and return the first choice's text. */
@@ -146,16 +175,23 @@ export class OpenAiAdapter extends BaseAdapter
 
         const outcome : Attempt<ImageGeneration> = await this.withRetry<ImageGeneration>( async () : Promise<Attempt<ImageGeneration>> =>
         {
+            // per-model shaping: dall-e-* need an explicit response_format + have DIFFERENT valid sizes than
+            // gpt-image-1 (which REJECTS response_format). Normalize both so any configured model works.
+            const isDallE : boolean = imageModel.startsWith( "dall-e" );
+            const size : string = OpenAiAdapter.normalizeSize( imageModel, request.size ?? "1024x1024" );
+            const quality : string | undefined = OpenAiAdapter.normalizeQuality( imageModel, request.quality );
+            const payload : Record<string, unknown> = {
+                model  : imageModel,
+                prompt : request.prompt,
+                n      : request.n ?? 1,
+                size,
+                ...( quality ? { quality } : {} ),                      // per-model quality knob (see normalizeQuality)
+                ...( isDallE ? { response_format: "b64_json" } : {} ),   // gpt-image-1 rejects this; dall-e needs it for b64
+            };
             const response : RestfulService.Reply = await this.http.post(
                 OpenAiAdapter.IMAGE_PATH,
                 null,
-                {
-                    model  : imageModel,
-                    prompt : request.prompt,
-                    n      : request.n ?? 1,
-                    size   : request.size ?? "1024x1024",
-                    // NOTE: no `response_format` — gpt-image-1 rejects it (returns b64_json by default)
-                },
+                payload,
                 { authorization: `Bearer ${key}` },
             );
             return response.ok

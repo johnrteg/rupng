@@ -21,6 +21,8 @@ export interface AdapterOptions
     region?      : string;
     /** S3 bucket for async video output (Bedrock Nova Reel writes the mp4 here; the adapter reads it back). */
     videoBucket? : string;
+    /** S3 bucket used to STAGE audio for async speech-to-text (Amazon Transcribe reads its input from S3). */
+    transcribeBucket? : string;
     /** Retry attempts on transient failures (default 3). */
     maxAttempts? : number;
     /** Sink for per-call usage records (e.g. forward to monitor). */

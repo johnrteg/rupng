@@ -1,6 +1,6 @@
 //
 import { RestfulEndpoint, Access, apiPath } from "@repo/endpoint";
-import { NetworkUtils } from "@repo/common";
+import { NetworkUtils, Type } from "@repo/common";
 import { Billing } from "./model/Billing";
 
 //
@@ -27,7 +27,7 @@ export class PostBalanceTopup extends RestfulEndpoint<{}, PostBalanceTopup.Body,
 export namespace PostBalanceTopup
 {
     export const URI : string = apiPath( "acct", 1, "/billing/balance/topup" );
-    export interface Body extends RestfulEndpoint.AuthRequest { amountMinor : number; }   // minor units (cents)
+    export interface Body extends RestfulEndpoint.AuthRequest { amountMinor : Type.Cents; }   // whole cents (minor units)
     export interface Response { balance : Billing.AccountBalance; }
     export enum Error { BAD_REQUEST = NetworkUtils.Status.BAD_REQUEST, UNAUTHORIZED = NetworkUtils.Status.UNAUTHORIZED, FORBIDDEN = NetworkUtils.Status.FORBIDDEN, INTERNAL_SERVER_ERROR = NetworkUtils.Status.INTERNAL_SERVER_ERROR }
 }

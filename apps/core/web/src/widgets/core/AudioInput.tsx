@@ -22,8 +22,6 @@ export function AudioInput( props : AudioInput.Props ) : JSX.Element
     const [current,setCurrent]     = React.useState< number >( 0 );
     const [duration,setDuration]   = React.useState< number >( 0 );
     const [volume,setVolume]       = React.useState< number >( 1 );   // 0..1
-    const [volumeOpen,setVolumeOpen] = React.useState< boolean >( false );   // the volume slider reveals on hover
-    const closeTimer : React.RefObject<ReturnType<typeof setTimeout> | null> = React.useRef<ReturnType<typeof setTimeout> | null>( null );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // slightly thicker slider rail/track/thumb than MUI's small default (rail 2px → 4px)
@@ -34,24 +32,8 @@ export function AudioInput( props : AudioInput.Props ) : JSX.Element
     } as const;
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // reveal the volume slider on hover; keep it open for 2s after the pointer leaves before hiding
-    function openVolume() : void
-    {
-        if( closeTimer.current ) { clearTimeout( closeTimer.current ); closeTimer.current = null; }
-        setVolumeOpen( true );
-    }
-    function scheduleCloseVolume() : void
-    {
-        if( closeTimer.current ) clearTimeout( closeTimer.current );
-        closeTimer.current = setTimeout( () : void => setVolumeOpen( false ), 2000 );
-    }
-
-    ////////////////////////////////////////////////////////////////////////////////////////////
     // reset playback state whenever the source changes (a reused player must not keep the old position)
     React.useEffect( () : void => { setPlaying( false ); setCurrent( 0 ); setDuration( 0 ); }, [ props.value ] );
-
-    // clear the pending volume-close timer on unmount (no setState after unmount)
-    React.useEffect( () : ( () => void ) => () : void => { if( closeTimer.current ) clearTimeout( closeTimer.current ); }, [] );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // format a seconds count as MM:SS (a NaN/negative duration shows 0:00)
@@ -139,20 +121,19 @@ export function AudioInput( props : AudioInput.Props ) : JSX.Element
                 </Typography>
 
                 <Box sx={{ flexGrow: 1, display: "flex", alignItems: "center", pl: 1, pr: 0.5 }}>
-                    <Slider size="small" value={ current } min={ 0 } max={ duration > 0 ? duration : 0 } step={ 0.1 } onChange={ onSeek } aria-label="Seek" sx={ sliderSx } />
+                    <Slider size="small" value={ current } min={ 0 } max={ duration > 0 ? duration : 0 } step={ 0.1 } onChange={ onSeek }
+                            valueLabelDisplay="auto" valueLabelFormat={ ( value : number ) : string => formatTime( value ) }
+                            aria-label="Seek" sx={ sliderSx } />
                 </Box>
 
-                {/* volume control on the right (opt-out via the `volume` prop) — the mute icon is the hover
-                    target; the level slider reveals on hover and stays open 2s after the pointer leaves */}
+                {/* volume control on the right (opt-out via the `volume` prop) — the mute icon toggles mute,
+                    and the level slider is shown alongside it whenever the control is open */}
                 { props.volume !== false &&
-                    <Box onMouseEnter={ openVolume } onMouseLeave={ scheduleCloseVolume }
-                         sx={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+                    <Box sx={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
                         <IconButton size="small" onClick={ toggleMute } aria-label={ volume > 0 ? "Mute" : "Unmute" } sx={{ color: "text.secondary", p: 0.5 }}>
                             { volume > 0 ? <VolumeUpRoundedIcon fontSize="small" /> : <VolumeOffRoundedIcon fontSize="small" /> }
                         </IconButton>
-                        {/* animate the slider open/closed by width; pad so the draggable THUMB isn't clipped at
-                            the 0/100% ends by the overflow:hidden used for the collapse animation */}
-                        <Box sx={{ width: volumeOpen ? 80 : 0, overflow: "hidden", transition: "width 150ms ease", display: "flex", alignItems: "center", px: volumeOpen ? 1 : 0 }}>
+                        <Box sx={{ width: 70, display: "flex", alignItems: "center", px: 1 }}>
                             <Slider size="small" value={ volume } min={ 0 } max={ 1 } step={ 0.05 } onChange={ onVolume } aria-label="Volume" sx={ sliderSx } />
                         </Box>
                     </Box> }

@@ -1,5 +1,5 @@
 //
-import { Account } from "@repo/api";
+import { Account, Media } from "@repo/api";
 import { Events } from "@repo/system";
 import { Sqs, RequestContext } from "@repo/services";
 
@@ -28,8 +28,15 @@ export class AccountMainService extends AccountService
     protected async init() : Promise<void>
     {
         await super.init();
-        await this.startProvisioningConsumer();
-        await this.startLoginConsumer();          // auth.session.created → update member.lastLoginAt
+        // Kafka consumers only when a bus is configured — skip quietly in local dev (no brokers) instead of
+        // three "bus unreachable?" WARNs; the SQS invite consumer is independent of Kafka and always runs.
+        if( this.kafka.configured() )
+        {
+            await this.startProvisioningConsumer();
+            await this.startLoginConsumer();          // auth.session.created → update member.lastLoginAt
+            await this.startAvatarConsumer();         // media.asset (USER) → denormalize avatarAssetId onto member rows
+        }
+        else this.log.info( "account Kafka consumers skipped — no Kafka brokers configured (dev)" );
         void this.startInviteConsumer();          // SQS invite-requests → write invite + stub email (long-poll loop)
     }
 
@@ -96,6 +103,40 @@ export class AccountMainService extends AccountService
 
         const now : string = new Date().toISOString();
         for( const row of found.data ) await this.dynamo.put( "members", { ...row, lastLoginAt: now } );
+    }
+
+    /////////////////////////////////////////////////////////////////////
+    // media.asset (USER scope) → the user (set/replaced) their avatar; denormalize the guid onto their member
+    // rows so member lists (GetMembers) carry it. Best-effort; a bus outage just means avatars lag.
+    private async startAvatarConsumer() : Promise<void>
+    {
+        try
+        {
+            await this.kafka.subscribeEvents( "account-avatar", Events.Object.MEDIA_ASSET, async ( event ) : Promise<void> =>
+            {
+                if( event.verb === Events.Verb.DELETED ) return;
+                const asset = event.data as { scope? : string; scopeId? : string; guid? : string };
+                if( asset?.scope !== Media.Scope.USER || !asset.scopeId || !asset.guid ) return;
+                await this.updateAvatar( asset.scopeId, asset.guid );
+            } );
+            this.log.info( "account-avatar consumer subscribed", { topic: Events.Object.MEDIA_ASSET } );
+        }
+        catch( error )
+        {
+            this.log.warn( "account-avatar consumer failed to start (bus unreachable?)", { error: String( error ) } );
+        }
+    }
+
+    // stamp avatarAssetId on every membership row for a user (the members GSI userId returns full rows)
+    private async updateAvatar( userId : string, avatarAssetId : string ) : Promise<void>
+    {
+        const found = await this.dynamo.query<Record<string, unknown>>( "members", {
+            IndexName:                 "userId",
+            KeyConditionExpression:    "userId = :u",
+            ExpressionAttributeValues: { ":u": userId },
+        } );
+        if( !found.ok ) return;
+        for( const row of found.data ) await this.dynamo.put( "members", { ...row, avatarAssetId } );
     }
 
     /////////////////////////////////////////////////////////////////////

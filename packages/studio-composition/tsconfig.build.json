@@ -1,0 +1,14 @@
+{
+    "//": "Build/emit config — clears paths so @repo/* resolves to built .d.ts, pins rootDir to ./src.",
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "rootDir": "./src",
+        "outDir": "./bin",
+        "declaration": true,
+        "declarationMap": true,
+        "paths": {},
+        "module": "Node16",
+        "moduleResolution": "Node16"
+    },
+    "include": ["src/**/*"]
+}

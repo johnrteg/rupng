@@ -97,6 +97,18 @@ export class MediaBrowseService extends MediaService
     }
 
     /////////////////////////////////////////////////////////////////////
+    /** Browse providers that need NO credential (public APIs) — always usable; their `apiKey` is "". */
+    private static readonly KEYLESS_PROVIDERS : ReadonlySet<Browse.Provider> = new Set<Browse.Provider>( [ Browse.Provider.SVGL, Browse.Provider.ICONIFY ] );
+
+    /** The API key for a provider: "" for a KEYLESS (public) provider, the resolved secret for a keyed one, or
+     *  null when a keyed provider's secret is unset (→ excluded from listing / search / import). */
+    private async apiKeyFor( provider : Browse.Provider ) : Promise<string | null>
+    {
+        if( MediaBrowseService.KEYLESS_PROVIDERS.has( provider ) ) return "";
+        return this.resolveKey( provider );
+    }
+
+    /////////////////////////////////////////////////////////////////////
     /** The providers enabled (by config) AND resolvable (have a key), scoped to their enabled kinds. Each
      *  exclusion is LOGGED (no silent drops) so an empty list is diagnosable — the usual cause is a missing
      *  key (the `browse-<provider>` secret unset, or its ARN not injected into this role's env). */
@@ -110,8 +122,8 @@ export class MediaBrowseService extends MediaService
             const adapter : BrowseProvider | undefined = this.factory.get( provider );
             if( !policy?.enabled ) { this.log.info( "browse.provider skipped — not enabled in config", { provider, hasPolicy: !!policy } ); continue; }
             if( !adapter )         { this.log.info( "browse.provider skipped — no adapter registered", { provider } ); continue; }
-            const key : string | null = await this.resolveKey( provider );
-            if( !key )             { this.log.info( "browse.provider skipped — no API key resolved", { provider, secret: `browse-${ provider }` } ); continue; }
+            const key : string | null = await this.apiKeyFor( provider );
+            if( key === null )     { this.log.info( "browse.provider skipped — no API key resolved", { provider, secret: `browse-${ provider }` } ); continue; }
             this.log.info( "browse.provider available", { provider } );
             infos.push( adapter.info( policy.enabledKinds ) );
         }
@@ -137,8 +149,8 @@ export class MediaBrowseService extends MediaService
             const enabledKinds : Array<Media.Kind> = policy.enabledKinds;
             const matchKinds : Array<Media.Kind> = wantKinds.filter( ( k ) => enabledKinds.includes( k ) );
             if( matchKinds.length === 0 ) continue;
-            const apiKey : string | null = await this.resolveKey( provider );
-            if( !apiKey ) continue;
+            const apiKey : string | null = await this.apiKeyFor( provider );
+            if( apiKey === null ) continue;
             const ctx : BrowseContext = { apiKey, limits: config.limits };
             tasks.push( { provider, run: () => this.withTimeout( adapter.search( { ...query, kinds: matchKinds }, ctx ), config.limits.perProviderTimeoutMs, provider ) } );
         }
@@ -168,8 +180,8 @@ export class MediaBrowseService extends MediaService
         const policy : BrowseConfig.ProviderPolicy | undefined = config.providers[ provider ];
         const adapter : BrowseProvider | undefined = this.factory.get( provider );
         if( !policy?.enabled || !adapter ) return { status: 400 };
-        const apiKey : string | null = await this.resolveKey( provider );
-        if( !apiKey ) return { status: 400 };
+        const apiKey : string | null = await this.apiKeyFor( provider );
+        if( apiKey === null ) return { status: 400 };
 
         const acquisition : BrowseAcquisition | null = await adapter.acquire( externalId, { apiKey, limits: config.limits } );
         if( !acquisition ) return { status: 404 };

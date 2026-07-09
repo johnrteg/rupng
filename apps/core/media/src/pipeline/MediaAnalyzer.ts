@@ -8,7 +8,7 @@ import type { FfprobeData, FfprobeStream } from "fluent-ffmpeg";
 
 import { AiFactory, Ai } from "@repo/ai";
 import { FileUtils, type Type } from "@repo/common";
-import { Media, MediaConfig } from "@repo/api";
+import { Media, MediaConfig, StudioProject } from "@repo/api";
 
 //
 // MediaAnalyzer — probe an asset's ORIGINAL bytes for type-specific stats (media-4): IMAGE via `sharp`
@@ -105,6 +105,36 @@ export namespace MediaAnalyzer
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
+    /** Crop an image to a normalized rectangle (fractions of W/H) then resize to the spec — sharp `extract` +
+     *  `resize` (cover). Used for the square avatar renditions framed by the pan/zoom crop. The source is
+     *  EXIF-rotated FIRST so the crop rect maps to what the user actually saw. Returns null on failure. */
+    export async function cropResizeImage( bytes : Uint8Array, crop : Media.CropRect, spec : Media.VariantSpec ) : Promise<Rendition | null>
+    {
+        try
+        {
+            const sharp = await loadSharp();
+            // bake EXIF rotation, then probe the ROTATED dimensions the crop fractions are relative to
+            const rotated : Buffer = await sharp( Buffer.from( bytes ), { failOn: "none" } ).rotate().toBuffer();
+            const meta = await sharp( rotated ).metadata();
+            const width : number = meta.width ?? 0;
+            const height : number = meta.height ?? 0;
+            if( width === 0 || height === 0 ) return null;
+            // clamp the normalized rect to the image bounds → an integer pixel extract region
+            const left : number = Math.max( 0, Math.min( width - 1, Math.round( crop.x * width ) ) );
+            const top : number = Math.max( 0, Math.min( height - 1, Math.round( crop.y * height ) ) );
+            const cropWidth : number = Math.max( 1, Math.min( width - left, Math.round( crop.w * width ) ) );
+            const cropHeight : number = Math.max( 1, Math.min( height - top, Math.round( crop.h * height ) ) );
+
+            let pipeline = sharp( rotated ).extract( { left, top, width: cropWidth, height: cropHeight } );
+            pipeline = pipeline.resize( { width: spec.width, height: spec.height, fit: "cover" } );
+            if( spec.format ) pipeline = pipeline.toFormat( spec.format as keyof import( "sharp" ).FormatEnum, spec.quality ? { quality: spec.quality } : undefined );
+            const out = await pipeline.toBuffer( { resolveWithObject: true } );
+            return { bytes: out.data, width: out.info.width, height: out.info.height, size: out.info.size, format: out.info.format };
+        }
+        catch( error ) { console.error( "MediaAnalyzer.cropResizeImage failed", error ); return null; }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
     /** Re-render an image at a target DPI/density (media-4). Always stamps the `density` metadata; when
      *  `upscale` and the source density is BELOW the target, resamples pixels UP by the ratio (lanczos3) so the
      *  physical print size is preserved at the higher DPI (never downscales for density). Returns null on
@@ -175,6 +205,510 @@ export namespace MediaAnalyzer
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
+    /** A burned-in text overlay for a render segment, positioned relatively (normalized 0..1) so it lands the
+     *  same place in EVERY output format. */
+    export interface RenderOverlay { text : string; xPct : number; yPct : number; fontPct : number; align : "left" | "center" | "right"; }
+
+    /** One resolved segment for {@link renderVideo}: source bytes (image/video) or a text card, + overlays. */
+    export interface RenderSegment
+    {
+        kind        : "image" | "video" | "text";
+        bytes?      : Uint8Array;   // source bytes for image/video segments (written to a temp file internally)
+        ext?        : string;       // source file extension (e.g. "png", "mp4")
+        text?       : string;       // text-card body
+        overlays?   : Array<RenderOverlay>;
+        durationSec : number;
+    }
+
+    /** Escape a string for use inside an ffmpeg drawtext `text='…'` value. */
+    function drawtextEscape( value : string ) : string
+    {
+        return value.replace( /\\/g, "\\\\" ).replace( /'/g, "’" ).replace( /:/g, "\\:" ).replace( /%/g, "\\%" );
+    }
+
+    /** Convert a `#rrggbb` hex to the ffmpeg `0xrrggbb` color form (drawtext expects `0x…` or a named color);
+     *  a value that isn't a 6-digit hex (e.g. already `0x…` or a name like `white`) is passed through. */
+    function ffColor( hex : string ) : string
+    {
+        return /^#[0-9a-fA-F]{6}$/.test( hex ) ? `0x${ hex.slice( 1 ) }` : hex;
+    }
+
+    /** Clamp an opacity to [0,1] with two decimals, for the drawtext `color@alpha` suffix. */
+    function ffAlpha( opacity : number ) : string
+    {
+        return Math.max( 0, Math.min( 1, opacity ) ).toFixed( 2 );
+    }
+
+    /** Decompose a playback-speed factor into a chain of `atempo` filters (each pitch-preserving but limited to
+     *  [0.5, 2.0]) whose product equals `speed` — so slow-mo (e.g. 0.25 → 0.5,0.5) and fast (4 → 2,2) work. */
+    function atempoChain( speed : number ) : Array<string>
+    {
+        const parts : Array<string> = [];
+        let remaining : number = speed;
+        while( remaining > 2.0 ) { parts.push( "atempo=2.0" ); remaining /= 2.0; }
+        while( remaining < 0.5 ) { parts.push( "atempo=0.5" ); remaining /= 0.5; }
+        parts.push( `atempo=${ remaining.toFixed( 4 ) }` );
+        return parts;
+    }
+
+    /** Build the ffmpeg color-EFFECTS chain for a visual layer (`,eq=…`, `,gblur=…`, `,vignette`) from a clip's
+     *  filters — neutral values are omitted; grayscale folds into `eq` saturation=0. Returns "" (no filters) or a
+     *  leading-comma chain to splice into the layer prep. Mirrors the preview's CSS `filter`. */
+    function videoFilterChain( filters : StudioProject.ClipFilters | undefined ) : string
+    {
+        if( filters === undefined ) return "";
+        const parts : Array<string> = [];
+        // brightness / contrast / saturation → a single eq node (grayscale = saturation 0)
+        const equalize : Array<string> = [];
+        const brightness : number = filters.brightness ?? 0;
+        const contrast : number = filters.contrast ?? 1;
+        const saturation : number = filters.grayscale ? 0 : ( filters.saturation ?? 1 );
+        if( brightness !== 0 ) equalize.push( `brightness=${ brightness }` );
+        if( contrast !== 1 ) equalize.push( `contrast=${ contrast }` );
+        if( saturation !== 1 ) equalize.push( `saturation=${ saturation }` );
+        if( equalize.length > 0 ) parts.push( `eq=${ equalize.join( ":" ) }` );
+        // blur (fraction → gaussian sigma) + edge vignette
+        const blur : number = filters.blur ?? 0;
+        if( blur > 0 ) parts.push( `gblur=sigma=${ ( blur * StudioProject.FILTER_BLUR_MAX ).toFixed( 2 ) }` );
+        if( filters.vignette ) parts.push( "vignette" );
+        return parts.length > 0 ? "," + parts.join( "," ) : "";
+    }
+
+    /** Build the drawtext STYLE options (fill / outline / shadow / background box) from a text layer's style,
+     *  filling unset fields from {@link StudioProject.DEFAULT_TEXT_STYLE} so an unstyled layer draws the legacy
+     *  white-with-shadow look. Widths/padding scale with the font size to match the preview across formats. */
+    function drawtextStyleOptions( style : StudioProject.TextStyle | undefined, fontSize : number ) : Array<string>
+    {
+        const resolved : StudioProject.TextStyle = { ...StudioProject.DEFAULT_TEXT_STYLE, ...( style ?? {} ) };
+        const options : Array<string> = [ `fontcolor=${ ffColor( resolved.color ?? "#ffffff" ) }` ];
+        // outline → border; width relative to the font size
+        if( resolved.outline !== undefined && resolved.outline.widthPct > 0 )
+        {
+            options.push( `borderw=${ Math.max( 1, Math.round( resolved.outline.widthPct * fontSize ) ) }` );
+            options.push( `bordercolor=${ ffColor( resolved.outline.color ) }` );
+        }
+        // drop shadow (on unless explicitly disabled) — matches the preview's textShadow
+        if( resolved.shadow !== false )
+            options.push( "shadowcolor=black@0.6", "shadowx=2", "shadowy=2" );
+        // background box (lower-third) → box + boxcolor@opacity + padding
+        if( resolved.background !== undefined )
+        {
+            options.push( "box=1" );
+            options.push( `boxcolor=${ ffColor( resolved.background.color ) }@${ ffAlpha( resolved.background.opacity ) }` );
+            options.push( `boxborderw=${ Math.max( 1, Math.round( resolved.background.padPct * fontSize ) ) }` );
+        }
+        return options;
+    }
+
+    /** Build a drawtext filter for one relative overlay against a WxH frame (x/y expressions in ffmpeg vars). */
+    function overlayFilter( overlay : RenderOverlay, height : number ) : string
+    {
+        const fontSize : number = Math.max( 8, Math.round( overlay.fontPct * height ) );
+        const xExpr : string = overlay.align === "left" ? `(w*${ overlay.xPct })`
+            : overlay.align === "right" ? `(w*${ overlay.xPct })-text_w`
+            : `(w*${ overlay.xPct })-(text_w/2)`;
+        const yExpr : string = `(h*${ overlay.yPct })-(text_h/2)`;
+        return `drawtext=text='${ drawtextEscape( overlay.text ) }':fontcolor=white:fontsize=${ fontSize }:x=${ xExpr }:y=${ yExpr }:shadowcolor=black@0.6:shadowx=2:shadowy=2`;
+    }
+
+    /** Composite a video project's timeline into an mp4 (Studio video render / a destination variant). Each
+     *  scene is normalized to a uniform H.264 clip at WxH @ fps (media COVER-fit + cropped so it fills the
+     *  aspect; text cards on a dark bg) with its relative overlays BURNED IN, then the clips are concatenated.
+     *  The relative overlay geometry means the SAME doc renders correctly at any target size. Returns the mp4
+     *  bytes, or null if nothing rendered; a scene that fails to normalize is skipped (best-effort). */
+    export async function renderVideo( segments : Array<RenderSegment>, width : number, height : number, fps : number ) : Promise<Uint8Array | null>
+    {
+        if( segments.length === 0 ) return null;
+        const runId : string = randomUUID();
+        const workDir : string = path.join( os.tmpdir(), `studio-render-${ runId }` );
+        const outPath : string = path.join( workDir, "out.mp4" );
+        const listPath : string = path.join( workDir, "list.txt" );
+        // COVER: scale up to fill the frame, then crop the overflow (fills the target aspect, no letterbox)
+        const coverFit : string = `scale=${ width }:${ height }:force_original_aspect_ratio=increase,crop=${ width }:${ height },setsar=1,fps=${ fps }`;
+
+        try
+        {
+            // configure fluent-ffmpeg against the bundled static binary (lazy import — degrade if unbuilt)
+            const ffmpegModule = await import( "fluent-ffmpeg" );
+            const ffmpegStatic = await import( "ffmpeg-static" );
+            const ffmpeg = ( ( ffmpegModule as { default? : unknown } ).default ?? ffmpegModule ) as typeof import( "fluent-ffmpeg" );
+            const ffmpegBin : string | null = ( ffmpegStatic as { default? : string | null } ).default ?? ( ffmpegStatic as unknown as string );
+            if( ffmpegBin ) ffmpeg.setFfmpegPath( ffmpegBin );
+            await fs.mkdir( workDir, { recursive: true } );
+
+            // normalize each scene to a uniform clip; collect the ones that succeed
+            const segmentPaths : Array<string> = [];
+            for( let index : number = 0; index < segments.length; index++ )
+            {
+                const segment : RenderSegment = segments[ index ];
+                const segPath : string = path.join( workDir, `seg-${ index }.mp4` );
+                const duration : number = Math.max( 0.1, segment.durationSec );
+                try
+                {
+                    // spool an image/video source's bytes to a temp file (text cards need no source)
+                    const isMedia : boolean = ( segment.kind === "image" || segment.kind === "video" ) && segment.bytes !== undefined;
+                    const srcPath : string = path.join( workDir, `src-${ index }.${ segment.ext || "bin" }` );
+                    if( isMedia && segment.bytes ) await fs.writeFile( srcPath, segment.bytes );
+
+                    // build the filter chain: base fit / card, then each overlay burned on top
+                    const filters : Array<string> = [];
+                    if( isMedia ) filters.push( coverFit );
+                    if( !isMedia && segment.text ) filters.push( overlayFilter( { text: segment.text, xPct: 0.5, yPct: 0.5, fontPct: 0.08, align: "center" }, height ) );
+                    for( const overlay of segment.overlays ?? [] ) filters.push( overlayFilter( overlay, height ) );
+
+                    await new Promise<void>( ( resolve : () => void, reject : ( error : Error ) => void ) : void =>
+                    {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        let command : any;
+                        if( !isMedia )
+                            command = ffmpeg( `color=c=0x111111:s=${ width }x${ height }:r=${ fps }` ).inputFormat( "lavfi" );
+                        else if( segment.kind === "image" )
+                            command = ffmpeg( srcPath ).inputOptions( [ "-loop 1" ] );
+                        else
+                            command = ffmpeg( srcPath );
+                        if( filters.length > 0 ) command = command.videoFilters( filters );
+                        command.outputOptions( [ `-t ${ duration }`, "-c:v libx264", "-pix_fmt yuv420p", "-an", "-preset veryfast" ] )
+                            .on( "end", () : void => resolve() )
+                            .on( "error", ( error : Error ) : void => reject( error ) )
+                            .save( segPath );
+                    } );
+                    segmentPaths.push( segPath );
+                }
+                catch( error ) { console.error( `MediaAnalyzer.renderVideo: scene ${ index } failed`, error ); }
+            }
+            if( segmentPaths.length === 0 ) return null;
+
+            // concat the normalized clips (uniform params → stream copy)
+            const listBody : string = segmentPaths.map( ( segPath : string ) : string => `file '${ segPath }'` ).join( "\n" );
+            await fs.writeFile( listPath, listBody );
+            await new Promise<void>( ( resolve : () => void, reject : ( error : Error ) => void ) : void =>
+            {
+                ffmpeg( listPath ).inputOptions( [ "-f concat", "-safe 0" ] ).outputOptions( [ "-c copy" ] )
+                    .on( "end", () : void => resolve() )
+                    .on( "error", ( error : Error ) : void => reject( error ) )
+                    .save( outPath );
+            } );
+
+            const bytes : Buffer = await fs.readFile( outPath );
+            return bytes;
+        }
+        catch( error ) { console.error( "MediaAnalyzer.renderVideo failed", error ); return null; }
+        finally { await fs.rm( workDir, { recursive: true, force: true } ).catch( () => { /* best-effort */ } ); }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** One layer for {@link renderComposite}: a still image, a video clip, or an audio clip, placed at an
+     *  absolute start. Video/audio layers contribute to the mixed soundtrack unless muted; `hasAudio` marks a
+     *  video whose source actually has an audio stream (so the graph never references a missing `[i:a]`). */
+    export interface CompositeMediaLayer
+    {
+        kind          : "image" | "video" | "audio" | "solid";
+        bytes         : Uint8Array;
+        ext?          : string;
+        color?        : string;    // solid: fill color (hex, e.g. #1a2b3c)
+        startSec      : number;
+        durationSec   : number;
+        trimStartSec? : number;   // in-point into the source (video/audio only)
+        hasAudio?     : boolean;   // video: the source has an audio stream (audio clips are always true)
+        muted?        : boolean;   // exclude this layer's audio from the mix
+        volume?       : number;    // 0..1 gain
+        loop?         : boolean;   // audio: loop the source to fill the clip's timeline duration
+        speed?        : number;    // playback rate (1 = normal); source consumed = durationSec × speed
+        reverse?      : boolean;   // play the source backwards (video `reverse` / audio `areverse`)
+        fadeInSec?    : number;    // transition: alpha (+ audio) ramp IN over N seconds
+        fadeOutSec?   : number;    // transition: alpha (+ audio) ramp OUT over N seconds
+        transform?    : StudioProject.ClipTransform;   // per-clip fit / scale / rotation / opacity / position
+        kenBurns?     : StudioProject.KenBurns;         // animated pan-zoom (exported as a static midpoint zoom)
+        filters?      : StudioProject.ClipFilters;      // color effects: brightness / contrast / saturation / grayscale / blur / vignette
+    }
+
+    /** One burned-in text layer for {@link renderComposite}: relative geometry + an absolute time window. */
+    export interface CompositeTextLayer
+    {
+        text        : string;
+        startSec    : number;
+        durationSec : number;
+        xPct        : number;
+        yPct        : number;
+        fontPct     : number;
+        align       : "left" | "center" | "right";
+        fadeInSec?  : number;
+        fadeOutSec? : number;
+        style?      : StudioProject.TextStyle;   // fill / outline / shadow / background (drawtext options)
+    }
+
+    /** A logo/watermark burned over the WHOLE composite (top-most): the image bytes + its corner placement,
+     *  width (fraction of frame width), opacity, and edge margin (fraction of frame width). */
+    export interface CompositeWatermark
+    {
+        bytes     : Uint8Array;
+        ext?      : string;
+        corner    : StudioProject.WatermarkCorner;
+        scalePct  : number;
+        opacity   : number;
+        marginPct : number;
+    }
+
+    /** Composite a MULTI-TRACK timeline into an mp4 via a single ffmpeg filter_complex graph — the TRUE-OVERLAP
+     *  render (unlike {@link renderVideo}'s sequential concat). `media` layers are given in PAINT order
+     *  (bottom-most first): each is cover-fit to WxH, shifted to its absolute start (`setpts`) and composited
+     *  with an `overlay` whose `enable` time window makes it visible only during its span — so clips that
+     *  overlap in time on DIFFERENT tracks stack correctly. `texts` are burned on top via `drawtext` (also
+     *  time-windowed, relative geometry that reflows across formats). Silent for now (audio mix is a follow-up).
+     *  Returns the mp4 bytes, or null on failure. NOTE: ffmpeg is UNVERIFIED in this environment. */
+    export async function renderComposite( width : number, height : number, fps : number, durationSec : number, media : Array<CompositeMediaLayer>, texts : Array<CompositeTextLayer>, watermark? : CompositeWatermark, encode? : { crf : number; preset : string; bitrateKbps? : number } ) : Promise<Uint8Array | null>
+    {
+        const runId : string = randomUUID();
+        const workDir : string = path.join( os.tmpdir(), `studio-composite-${ runId }` );
+        const outPath : string = path.join( workDir, "out.mp4" );
+        const total : number = Math.max( 0.1, durationSec );
+
+        try
+        {
+            // configure fluent-ffmpeg against the bundled static binary (lazy import — degrade if unbuilt)
+            const ffmpegModule = await import( "fluent-ffmpeg" );
+            const ffmpegStatic = await import( "ffmpeg-static" );
+            const ffmpeg = ( ( ffmpegModule as { default? : unknown } ).default ?? ffmpegModule ) as typeof import( "fluent-ffmpeg" );
+            const ffmpegBin : string | null = ( ffmpegStatic as { default? : string | null } ).default ?? ( ffmpegStatic as unknown as string );
+            if( ffmpegBin ) ffmpeg.setFfmpegPath( ffmpegBin );
+            await fs.mkdir( workDir, { recursive: true } );
+
+            // input 0 = a full-duration black canvas; inputs 1..N = each media layer's spooled source file
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            let command : any = ffmpeg( `color=c=black:s=${ width }x${ height }:r=${ fps }:d=${ total }` ).inputFormat( "lavfi" );
+            for( let index : number = 0; index < media.length; index++ )
+            {
+                const layer : CompositeMediaLayer = media[ index ];
+                // a SOLID layer has no bytes — it's a generated lavfi color source at full frame size
+                if( layer.kind === "solid" )
+                {
+                    command = command.input( `color=c=${ ffColor( layer.color ?? "#000000" ) }:s=${ width }x${ height }:r=${ fps }:d=${ Math.max( 0.1, layer.durationSec ) }` ).inputFormat( "lavfi" );
+                    continue;
+                }
+                const srcPath : string = path.join( workDir, `src-${ index }.${ layer.ext || "bin" }` );
+                await fs.writeFile( srcPath, layer.bytes );
+                command = command.input( srcPath );
+                if( layer.kind === "image" ) command = command.inputOptions( [ "-loop 1" ] );   // still image → loop across its window
+                else if( layer.kind === "audio" && layer.loop === true ) command = command.inputOptions( [ "-stream_loop -1" ] );   // background music → loop the source (atrim cuts it to duration)
+            }
+            // the watermark image (if any) is the LAST input, looped so it persists across the whole timeline
+            const watermarkInputIndex : number = media.length + 1;   // inputs: 0 = canvas, 1..N = media, N+1 = watermark
+            if( watermark !== undefined )
+            {
+                const watermarkPath : string = path.join( workDir, `watermark.${ watermark.ext || "png" }` );
+                await fs.writeFile( watermarkPath, watermark.bytes );
+                command = command.input( watermarkPath ).inputOptions( [ "-loop 1" ] );
+            }
+
+            // build the video graph: prep each layer, overlay in paint order, then burn text on top
+            const filters : Array<string> = [];
+            let last : string = "0:v";
+            for( let index : number = 0; index < media.length; index++ )
+            {
+                const layer : CompositeMediaLayer = media[ index ];
+                if( layer.kind === "audio" ) continue;   // audio-only layer contributes no video (still an input slot)
+                const inputIndex : number = index + 1;   // input 0 is the base canvas
+                const start : number = Math.max( 0, layer.startSec );
+                const end : number = start + Math.max( 0.1, layer.durationSec );
+                // playback speed (video only): consume `duration × speed` of source, then `setpts /= speed`
+                // compresses (fast, >1) or stretches (slow-mo, <1) it back to the clip's timeline duration
+                const speed : number = layer.kind === "video" && layer.speed !== undefined && layer.speed > 0 ? layer.speed : 1;
+                // cover-fit to the frame, select the source window, then shift onto the timeline at `start`
+                const sourceTrim : string = layer.kind === "video"
+                    ? `trim=start=${ layer.trimStartSec ?? 0 }:duration=${ layer.durationSec * speed }`
+                    : `trim=duration=${ layer.durationSec }`;
+                const setptsExpr : string = speed !== 1 ? `setpts=(PTS-STARTPTS)/${ speed }+${ start }/TB` : `setpts=PTS-STARTPTS+${ start }/TB`;
+                const reverseFilter : string = layer.reverse === true ? ",reverse" : "";   // buffers the trimmed segment — fine for short clips
+                // transitions: fade the alpha in/out so the fade composites over the layers beneath (not to black)
+                const fadeIn : number = Math.max( 0, layer.fadeInSec ?? 0 );
+                const fadeOut : number = Math.max( 0, layer.fadeOutSec ?? 0 );
+                let fade : string = "";
+                if( fadeIn > 0 || fadeOut > 0 )
+                {
+                    fade += ",format=yuva420p";
+                    if( fadeIn > 0 ) fade += `,fade=t=in:st=${ start }:d=${ fadeIn }:alpha=1`;
+                    if( fadeOut > 0 ) fade += `,fade=t=out:st=${ Math.max( start, start + layer.durationSec - fadeOut ) }:d=${ fadeOut }:alpha=1`;
+                }
+                // color EFFECTS chain (eq / gblur / vignette) — spliced into whichever layer path runs
+                const colorChain : string = videoFilterChain( layer.filters );
+                // a per-clip transform (or Ken Burns) takes a GENERALIZED path; otherwise the fast cover-fit path
+                if( layer.transform === undefined && layer.kenBurns === undefined )
+                {
+                    // default: cover-fit + crop to the frame, apply effects, composited full-frame
+                    filters.push( `[${ inputIndex }:v]scale=${ width }:${ height }:force_original_aspect_ratio=increase,crop=${ width }:${ height }${ colorChain },setsar=1,fps=${ fps },${ sourceTrim }${ reverseFilter },${ setptsExpr }${ fade }[v${ index }]` );
+                    filters.push( `[${ last }][v${ index }]overlay=eof_action=pass:enable='between(t,${ start },${ end })'[o${ index }]` );
+                }
+                else
+                {
+                    // fold a Ken Burns pan/zoom into a STATIC midpoint transform for the export (the animated
+                    // pan/zoom is preview-only fidelity — the overlay graph places one static frame)
+                    const kenBurns : StudioProject.KenBurns | undefined = layer.kenBurns;
+                    const scale : number = ( layer.transform?.scale ?? 1 ) * ( kenBurns !== undefined ? ( kenBurns.fromScale + kenBurns.toScale ) / 2 : 1 );
+                    const offsetXPct : number = ( layer.transform?.xPct ?? 0 ) + ( kenBurns !== undefined ? ( kenBurns.fromXPct + kenBurns.toXPct ) / 2 : 0 );
+                    const offsetYPct : number = ( layer.transform?.yPct ?? 0 ) + ( kenBurns !== undefined ? ( kenBurns.fromYPct + kenBurns.toYPct ) / 2 : 0 );
+                    const rotation : number = layer.transform?.rotation ?? 0;
+                    const opacity : number = layer.transform?.opacity ?? 1;
+                    const fitMode : string = layer.transform?.fit === StudioProject.FitMode.CONTAIN ? "decrease" : "increase";
+                    // fit → optional zoom → optional rotate → alpha (needed for opacity + fade compositing)
+                    let prep : string = `scale=${ width }:${ height }:force_original_aspect_ratio=${ fitMode }`;
+                    if( scale !== 1 ) prep += `,scale=iw*${ scale }:ih*${ scale }`;
+                    if( rotation !== 0 ) prep += `,rotate=${ rotation }*PI/180:c=none`;
+                    prep += colorChain;
+                    prep += ",format=yuva420p";
+                    if( opacity !== 1 ) prep += `,colorchannelmixer=aa=${ ffAlpha( opacity ) }`;
+                    // alpha fades (format is already yuva) applied after the time shift
+                    let fadeAlpha : string = "";
+                    if( fadeIn > 0 ) fadeAlpha += `,fade=t=in:st=${ start }:d=${ fadeIn }:alpha=1`;
+                    if( fadeOut > 0 ) fadeAlpha += `,fade=t=out:st=${ Math.max( start, start + layer.durationSec - fadeOut ) }:d=${ fadeOut }:alpha=1`;
+                    filters.push( `[${ inputIndex }:v]${ prep },setsar=1,fps=${ fps },${ sourceTrim }${ reverseFilter },${ setptsExpr }${ fadeAlpha }[v${ index }]` );
+                    // composite CENTERED, then shift by the offset (fraction of the frame); the frame clips overflow
+                    const xExpr : string = `(main_w-overlay_w)/2+(${ offsetXPct }*main_w)`;
+                    const yExpr : string = `(main_h-overlay_h)/2+(${ offsetYPct }*main_h)`;
+                    filters.push( `[${ last }][v${ index }]overlay=${ xExpr }:${ yExpr }:eof_action=pass:enable='between(t,${ start },${ end })'[o${ index }]` );
+                }
+                last = `o${ index }`;
+            }
+
+            // text layers → drawtext nodes chained on the composited stream (time-windowed, align-aware x)
+            const drawnodes : Array<string> = texts.map( ( text : CompositeTextLayer ) : string =>
+            {
+                const fontSize : number = Math.max( 8, Math.round( text.fontPct * height ) );
+                const xExpr : string = text.align === "left" ? `(w*${ text.xPct })`
+                    : text.align === "right" ? `(w*${ text.xPct })-text_w`
+                    : `(w*${ text.xPct })-(text_w/2)`;
+                const yExpr : string = `(h*${ text.yPct })-(text_h/2)`;
+                const start : number = Math.max( 0, text.startSec );
+                const end : number = start + Math.max( 0.1, text.durationSec );
+                // transition: ramp text opacity via an alpha expression over the fade windows (single-quoted → commas safe)
+                const fadeIn : number = Math.max( 0, text.fadeInSec ?? 0 );
+                const fadeOut : number = Math.max( 0, text.fadeOutSec ?? 0 );
+                const rampIn : string = fadeIn > 0 ? `min(1,(t-${ start })/${ fadeIn })` : "";
+                const rampOut : string = fadeOut > 0 ? `min(1,(${ end }-t)/${ fadeOut })` : "";
+                const ramp : string = rampIn && rampOut ? `min(${ rampIn },${ rampOut })` : rampIn || rampOut;
+                const alpha : string = ramp !== "" ? `:alpha='${ ramp }'` : "";
+                // style options (fill / outline / shadow / background) sit between the text and the geometry
+                const styleOptions : string = drawtextStyleOptions( text.style, fontSize ).join( ":" );
+                return `drawtext=text='${ drawtextEscape( text.text ) }':${ styleOptions }:fontsize=${ fontSize }:x=${ xExpr }:y=${ yExpr }:enable='between(t,${ start },${ end })'${ alpha }`;
+            } );
+            const textOut : string = watermark !== undefined ? "vtext" : "vout";
+            if( drawnodes.length > 0 ) filters.push( `[${ last }]${ drawnodes.join( "," ) }[${ textOut }]` );
+            else filters.push( `[${ last }]null[${ textOut }]` );
+
+            // watermark → scale to its width (keep aspect, even dims), apply opacity, overlay in its corner for
+            // the whole duration (top-most). Placement mirrors the preview's watermarkCss corner/margin math.
+            if( watermark !== undefined )
+            {
+                const watermarkWidth : number = Math.max( 2, Math.round( width * watermark.scalePct ) );
+                const margin : number = Math.round( width * watermark.marginPct );
+                const isLeft : boolean = watermark.corner === StudioProject.WatermarkCorner.TOP_LEFT || watermark.corner === StudioProject.WatermarkCorner.BOTTOM_LEFT;
+                const isTop : boolean = watermark.corner === StudioProject.WatermarkCorner.TOP_LEFT || watermark.corner === StudioProject.WatermarkCorner.TOP_RIGHT;
+                const xExpr : string = isLeft ? `${ margin }` : `main_w-overlay_w-${ margin }`;
+                const yExpr : string = isTop ? `${ margin }` : `main_h-overlay_h-${ margin }`;
+                filters.push( `[${ watermarkInputIndex }:v]scale=${ watermarkWidth }:-2,format=rgba,colorchannelmixer=aa=${ ffAlpha( watermark.opacity ) }[wm]` );
+                filters.push( `[vtext][wm]overlay=${ xExpr }:${ yExpr }[vout]` );
+            }
+
+            // audio graph: every unmuted video-with-audio + audio clip → trim/gain/delay-to-start, then amix
+            const audioLabels : Array<string> = [];
+            for( let index : number = 0; index < media.length; index++ )
+            {
+                const layer : CompositeMediaLayer = media[ index ];
+                const contributes : boolean = layer.kind === "audio" || ( layer.kind === "video" && layer.hasAudio === true );
+                if( !contributes || layer.muted === true ) continue;
+                const inputIndex : number = index + 1;
+                const start : number = Math.max( 0, layer.startSec );
+                const delayMs : number = Math.round( start * 1000 );
+                const gain : number = layer.volume ?? 1;
+                const label : string = `a${ index }`;
+                // audio transitions mirror the visual fades (local time — asetpts has reset the stream to 0)
+                const fadeIn : number = Math.max( 0, layer.fadeInSec ?? 0 );
+                const fadeOut : number = Math.max( 0, layer.fadeOutSec ?? 0 );
+                let afade : string = "";
+                if( fadeIn > 0 ) afade += `,afade=t=in:st=0:d=${ fadeIn }`;
+                if( fadeOut > 0 ) afade += `,afade=t=out:st=${ Math.max( 0, layer.durationSec - fadeOut ) }:d=${ fadeOut }`;
+                // speed: consume `duration × speed` of source, then atempo (pitch-preserving) brings it back to
+                // the clip's timeline duration — the fades below run in that post-atempo output time
+                const speed : number = layer.speed !== undefined && layer.speed > 0 ? layer.speed : 1;
+                const atempo : string = speed !== 1 ? `${ atempoChain( speed ).join( "," ) },` : "";
+                const areverse : string = layer.reverse === true ? "areverse," : "";
+                filters.push( `[${ inputIndex }:a]atrim=start=${ layer.trimStartSec ?? 0 }:duration=${ layer.durationSec * speed },${ areverse }asetpts=PTS-STARTPTS,${ atempo }volume=${ gain }${ afade },adelay=${ delayMs }|${ delayMs }[${ label }]` );
+                audioLabels.push( label );
+            }
+            const hasAudio : boolean = audioLabels.length > 0;
+            if( hasAudio ) filters.push( `${ audioLabels.map( ( label : string ) : string => `[${ label }]` ).join( "" ) }amix=inputs=${ audioLabels.length }:normalize=0:duration=longest[aout]` );
+
+            // encode the composited stream (with the mixed soundtrack when present, else silent). The quality
+            // preset (crf + x264 preset) trades render time/size for visual quality; defaults to a balanced set.
+            const outputs : Array<string> = hasAudio ? [ "vout", "aout" ] : [ "vout" ];
+            const crf : number = encode?.crf ?? 23;
+            const preset : string = encode?.preset ?? "medium";
+            const bitrateKbps : number = encode?.bitrateKbps ?? 0;
+            const options : Array<string> = [ `-t ${ total }`, "-c:v libx264", "-pix_fmt yuv420p", `-preset ${ preset }` ];
+            // an explicit target bitrate (ABR: -b:v + cap) overrides the quality-based CRF encode
+            if( bitrateKbps > 0 ) options.push( `-b:v ${ bitrateKbps }k`, `-maxrate ${ bitrateKbps }k`, `-bufsize ${ bitrateKbps * 2 }k` );
+            else options.push( `-crf ${ crf }` );
+            options.push( hasAudio ? "-c:a aac" : "-an" );
+            await new Promise<void>( ( resolve : () => void, reject : ( error : Error ) => void ) : void =>
+            {
+                command.complexFilter( filters, outputs )
+                    .outputOptions( options )
+                    .on( "end", () : void => resolve() )
+                    .on( "error", ( error : Error ) : void => reject( error ) )
+                    .save( outPath );
+            } );
+
+            const bytes : Buffer = await fs.readFile( outPath );
+            return bytes;
+        }
+        catch( error ) { console.error( "MediaAnalyzer.renderComposite failed", error ); return null; }
+        finally { await fs.rm( workDir, { recursive: true, force: true } ).catch( () => { /* best-effort */ } ); }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** Render a video project via REMOTION / headless Chromium (media-21.18) — renders the SAME
+     *  `StudioVideoComposition` React component that drives the browser preview, so preview == output exactly
+     *  (no ffmpeg-graph approximations). Bundles the shared composition entry, selects the composition, and
+     *  renders it to mp4 at the given format, feeding the doc as inputProps.
+     *
+     *  UNVERIFIED / GATED: the @remotion/* render deps carry headless Chromium and are heavy, so they're loaded
+     *  via NON-LITERAL dynamic imports — this module compiles and the ffmpeg engine keeps working WITHOUT them.
+     *  Until the Chromium-capable render worker installs `@remotion/bundler` + `@remotion/renderer` and exposes
+     *  the shared composition entry (`@repo/studio-composition`: `registerRoot` + a `<Composition>` for
+     *  `StudioVideoComposition`), this returns null (the Job then fails cleanly and the config should stay on
+     *  the ffmpeg engine). Also note: the composition resolves each clip's `src` — those URLs must be valid at
+     *  render time (refresh signed URLs into the doc before enqueueing a remotion render). */
+    export async function renderCompositeRemotion( doc : StudioProject.VideoDoc, width : number, height : number, fps : number, durationSec : number ) : Promise<Uint8Array | null>
+    {
+        const runId : string = randomUUID();
+        const workDir : string = path.join( os.tmpdir(), `studio-remotion-${ runId }` );
+        const outPath : string = path.join( workDir, "out.mp4" );
+        try
+        {
+            // lazy-load via non-literal specifiers so TS/esbuild don't require these (Chromium-carrying) packages
+            const bundlerName : string = "@remotion/bundler";
+            const rendererName : string = "@remotion/renderer";
+            const compositionName : string = "@repo/studio-composition";
+            const bundler = await import( bundlerName ) as { bundle : ( options : unknown ) => Promise<string> };
+            const renderer = await import( rendererName ) as { selectComposition : ( options : unknown ) => Promise<{ durationInFrames : number }>; renderMedia : ( options : unknown ) => Promise<unknown> };
+            const entry = await import( compositionName ) as { ENTRY_POINT : string; COMPOSITION_ID : string };
+
+            await fs.mkdir( workDir, { recursive: true } );
+            const totalFrames : number = Math.max( 1, Math.round( Math.max( 0.1, durationSec ) * fps ) );
+            const inputProps : { doc : StudioProject.VideoDoc } = { doc };
+            // bundle the composition site → pick the composition (overriding its size/fps/length to this format)
+            // → render to mp4 via headless Chromium
+            const serveUrl : string = await bundler.bundle( { entryPoint: entry.ENTRY_POINT } );
+            const composition : { durationInFrames : number } = await renderer.selectComposition( { serveUrl, id: entry.COMPOSITION_ID, inputProps } );
+            await renderer.renderMedia( { serveUrl, codec: "h264", outputLocation: outPath, inputProps,
+                composition: { ...composition, width, height, fps, durationInFrames: totalFrames } } );
+            const bytes : Buffer = await fs.readFile( outPath );
+            return bytes;
+        }
+        catch( error ) { console.error( "MediaAnalyzer.renderCompositeRemotion unavailable (needs @remotion/* + Chromium + the shared composition entry)", error ); return null; }
+        finally { await fs.rm( workDir, { recursive: true, force: true } ).catch( () => { /* best-effort */ } ); }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
     /** The audio track extracted from a video (media-18) — MP3 bytes for the `audio` variant + transcription.
      *  Returns null on failure (ffmpeg unavailable / no audio stream). Spools the video to a temp file, strips
      *  video (`-vn`), encodes MP3, reads it back. */
@@ -212,6 +746,95 @@ export namespace MediaAnalyzer
             await fs.unlink( videoPath ).catch( () => { /* best-effort */ } );
             await fs.unlink( outPath ).catch( () => { /* best-effort */ } );
         }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** Extract a single frame at `atSec` from an mp4 as a JPEG (media-21 poster/thumbnail). Null on failure. */
+    export async function extractPosterFrame( bytes : Uint8Array, atSec : number ) : Promise<Uint8Array | null>
+    {
+        const id : string = randomUUID();
+        const videoPath : string = path.join( os.tmpdir(), `studio-poster-src-${ id }.mp4` );
+        const outPath : string = path.join( os.tmpdir(), `studio-poster-${ id }.jpg` );
+        try
+        {
+            const ffmpegModule = await import( "fluent-ffmpeg" );
+            const ffmpegStatic = await import( "ffmpeg-static" );
+            const ffmpeg = ( ( ffmpegModule as { default? : unknown } ).default ?? ffmpegModule ) as typeof import( "fluent-ffmpeg" );
+            const ffmpegBin : string | null = ( ffmpegStatic as { default? : string | null } ).default ?? ( ffmpegStatic as unknown as string );
+            if( ffmpegBin ) ffmpeg.setFfmpegPath( ffmpegBin );
+            await fs.writeFile( videoPath, bytes );
+            await new Promise<void>( ( resolve : () => void, reject : ( error : Error ) => void ) : void =>
+            {
+                ffmpeg( videoPath )
+                    .seekInput( Math.max( 0, atSec ) )   // -ss before the input → fast seek to the poster time
+                    .outputOptions( [ "-frames:v 1", "-q:v 2" ] )
+                    .on( "end", () : void => resolve() )
+                    .on( "error", ( err : Error ) : void => reject( err ) )
+                    .save( outPath );
+            } );
+            const jpg : Buffer = await fs.readFile( outPath );
+            return jpg;
+        }
+        catch( error ) { console.error( "MediaAnalyzer.extractPosterFrame failed", error ); return null; }
+        finally
+        {
+            await fs.unlink( videoPath ).catch( () => { /* best-effort */ } );
+            await fs.unlink( outPath ).catch( () => { /* best-effort */ } );
+        }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** Convert an mp4 to an animated GIF (media-21 export) — a single-pass `split`/`palettegen`/`paletteuse`
+     *  graph for good color; scaled to `maxWidth` at a reduced fps to keep the file sane. Null on failure. */
+    export async function toGif( bytes : Uint8Array, maxWidth : number = 640, fps : number = 12 ) : Promise<Uint8Array | null>
+    {
+        const id : string = randomUUID();
+        const videoPath : string = path.join( os.tmpdir(), `studio-gif-src-${ id }.mp4` );
+        const outPath : string = path.join( os.tmpdir(), `studio-gif-${ id }.gif` );
+        try
+        {
+            const ffmpegModule = await import( "fluent-ffmpeg" );
+            const ffmpegStatic = await import( "ffmpeg-static" );
+            const ffmpeg = ( ( ffmpegModule as { default? : unknown } ).default ?? ffmpegModule ) as typeof import( "fluent-ffmpeg" );
+            const ffmpegBin : string | null = ( ffmpegStatic as { default? : string | null } ).default ?? ( ffmpegStatic as unknown as string );
+            if( ffmpegBin ) ffmpeg.setFfmpegPath( ffmpegBin );
+            await fs.writeFile( videoPath, bytes );
+            const graph : string = `fps=${ fps },scale=${ maxWidth }:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse`;
+            await new Promise<void>( ( resolve : () => void, reject : ( error : Error ) => void ) : void =>
+            {
+                ffmpeg( videoPath )
+                    .complexFilter( graph )
+                    .on( "end", () : void => resolve() )
+                    .on( "error", ( err : Error ) : void => reject( err ) )
+                    .save( outPath );
+            } );
+            const gif : Buffer = await fs.readFile( outPath );
+            return gif;
+        }
+        catch( error ) { console.error( "MediaAnalyzer.toGif failed", error ); return null; }
+        finally
+        {
+            await fs.unlink( videoPath ).catch( () => { /* best-effort */ } );
+            await fs.unlink( outPath ).catch( () => { /* best-effort */ } );
+        }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** Rasterize an SVG string to a transparent square PNG (media-21.32 shape overlays) via `sharp` — so a
+     *  shape/graphic composites in the ffmpeg overlay graph like any image (transform then places it). `size`
+     *  is the raster's edge in px (the shape is fit inside, undistorted, on a transparent canvas). Null on failure. */
+    export async function rasterizeSvg( svg : string, size : number ) : Promise<Uint8Array | null>
+    {
+        try
+        {
+            const sharp = await loadSharp();
+            const png : Buffer = await sharp( Buffer.from( svg ), { density: 300 } )
+                .resize( size, size, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } } )
+                .png()
+                .toBuffer();
+            return png;
+        }
+        catch( error ) { console.error( "MediaAnalyzer.rasterizeSvg failed", error ); return null; }
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////

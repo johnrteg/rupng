@@ -2,12 +2,15 @@
 import React from 'react';
 import { JSX } from "react";
 
-import { Box, Chip, Collapse, IconButton, Menu, MenuItem, Stack, Typography } from "@mui/material";
+import { Box, Chip, Collapse, Stack, Typography } from "@mui/material";
 import ExpandMoreIcon    from '@mui/icons-material/ExpandMore';
 import ChevronRightIcon  from '@mui/icons-material/ChevronRight';
 import MoreVertIcon      from '@mui/icons-material/MoreVert';
 
 import { Account } from '@repo/api';
+
+import ButtonIcon from '@widgets/core/ButtonIcon';
+import ButtonIconDropdown from '@widgets/core/ButtonIconDropdown';
 
 //
 // SubAccountTree — renders the sub-account hierarchy as an expandable tree (nodes carry their own
@@ -19,7 +22,6 @@ import { Account } from '@repo/api';
 export function SubAccountTree( props : SubAccountTree.Props ) : JSX.Element
 {
     const [expanded,setExpanded] = React.useState< Set<string> >( () => new Set() );
-    const [menuFor,setMenuFor]   = React.useState< { id : string; anchor : HTMLElement } | null >( null );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     function toggle( id : string ) : void
@@ -52,26 +54,23 @@ export function SubAccountTree( props : SubAccountTree.Props ) : JSX.Element
         return  <Box key={ node.id }>
                     <Stack direction="row" spacing={ 1 } sx={{ alignItems: "center", py: 0.75, pr: 1, pl: depth * 3, borderBottom: "1px solid", borderColor: "divider" }}>
                         { hasChildren
-                            ? <IconButton size="small" onClick={ () => toggle( node.id ) }>{ open ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" /> }</IconButton>
+                            ? <ButtonIcon id={ `sub-toggle-${ node.id }` } label={ open ? "Collapse" : "Expand" } size="small"
+                                          icon={ open ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" /> }
+                                          onClick={ () => toggle( node.id ) } />
                             : <Box sx={{ width: 34, flexShrink: 0 }} /> }
                         <Typography variant="body2" sx={{ flexGrow: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ node.name }</Typography>
                         <Chip size="small" variant="outlined" color={ statusColor( node.status ) } label={ node.status } />
                         { actions.length > 0 &&
-                            <IconButton size="small" onClick={ ( event : React.MouseEvent<HTMLElement> ) => setMenuFor( { id: node.id, anchor: event.currentTarget } ) }>
-                                <MoreVertIcon fontSize="small" />
-                            </IconButton> }
+                            <ButtonIconDropdown id={ `sub-actions-${ node.id }` } label={"Actions"} size="small"
+                                                icon={ <MoreVertIcon fontSize="small" /> }
+                                                choices={ actions.map( ( action : SubAccountTree.Action ) : ButtonIconDropdown.Choice => ( { value: action.id, label: action.label } ) ) }
+                                                onChange={ ( value : string ) : void => props.onAction( value, node ) } /> }
                     </Stack>
 
                     { hasChildren &&
                         <Collapse in={ open } timeout="auto" unmountOnExit>
                             { children.map( ( child : Account.SubAccount ) => row( child, depth + 1 ) ) }
                         </Collapse> }
-
-                    { menuFor?.id === node.id &&
-                        <Menu anchorEl={ menuFor.anchor } open onClose={ () => setMenuFor( null ) }>
-                            { actions.map( ( action : SubAccountTree.Action ) =>
-                                <MenuItem key={ action.id } onClick={ () => { setMenuFor( null ); props.onAction( action.id, node ); } }>{ action.label }</MenuItem> ) }
-                        </Menu> }
                 </Box>;
     }
 

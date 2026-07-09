@@ -45,6 +45,10 @@ export class PutAccountImpl extends PutAccount
         if( patch.website      !== undefined ) edits.website       = patch.website;
         if( patch.timezone     !== undefined ) edits.timezone     = patch.timezone;
         if( patch.address      !== undefined ) edits.address       = patch.address;
+        if( patch.channels     !== undefined ) edits.channels     = patch.channels;
+        if( patch.palette      !== undefined ) edits.palette      = patch.palette;
+        if( patch.fonts        !== undefined ) edits.fonts        = patch.fonts;
+        if( patch.svgs         !== undefined ) edits.svgs         = patch.svgs;
 
         // backfill any fields an older row is missing from the model DEFAULT, so the row we write back is
         // complete (self-healing on save); identity fields are never defaulted

@@ -13,8 +13,11 @@ min-role), and **audience**. Three consumers read that one definition, so they c
 See `RestfulEndpoint.ts` for the model. Key concepts:
 
 * **Audience** (`INTERNAL ⊂ APP ⊂ PUBLIC`) — who an endpoint is for + whether it's published. An
-  ascending **ladder** (not a union): `APP` = first-party app, **JWT only**; `PUBLIC` = published dev
-  API, **JWT *or* dev-key**, and the only audience emitted to the docs. Network `exposure` derives from it.
+  ascending **ladder** (not a union): `INTERNAL` = S2S/VPC only; `APP` = first-party app, **session JWT
+  only**; `PUBLIC` = published dev API, **session JWT *or* dev-key**, and the only audience emitted to the
+  docs. Network `exposure` derives from it. **A dev key (`Bearer rup_<keyId>.<secret>`) authenticates ONLY
+  `PUBLIC` endpoints** — presented to an `APP`/`INTERNAL` endpoint it's **403**, even if valid (see
+  *Credentials by audience* below).
 * **`toOpenApi()`** — generates **OpenAPI 3.1** from the definitions (JSON Schema embeds directly, no
   translation), filtered to `PUBLIC`. Because it's generated from the same code the client/server use,
   the docs **cannot drift** — run it in the build, diff in CI.
@@ -40,6 +43,104 @@ timeout + grant ceilings, which compare ranks).
   control for *reorders*.) The authoritative ladder lives in **[`@repo/system`](../system/README.md)** (moved
   there with the `Events` vocabulary so the manifest can reference it too; re-exported here as
   [`Access`](src/Access.ts) for back-compat); the auth RBAC spec owns role semantics.
+
+---
+
+# API docs — OpenAPI 3.1 interface + generation (how it works)
+
+The published **developer API** is documented by an **OpenAPI 3.1** document **generated from the endpoint
+contracts** — never hand-written. The contract is the single source of truth the client, server, gateway,
+**and docs** all read, so the docs **cannot drift** from the running code. Because JSON Schema **is** the
+OpenAPI 3.1 schema dialect, our ajv query/body/response schemas embed into the spec with **no translation**.
+
+## The pipeline (code → spec → docs)
+
+```
+RestfulEndpoint contracts ──(audience=PUBLIC filter)──► PublicApi.endpoints()
+        │                                                        │
+        │  docs{} + getResponseSchema() + get*Schema()           ▼
+        └───────────────────────────────► RestfulEndpoint.toOpenApi() ──► OpenAPI 3.1 Document
+                                                                              │
+                        ┌─────────────────────────────────────┬─────────────┴───────────────┐
+                        ▼                                       ▼                             ▼
+      GET /api/app/v1/openapi.json (live)          rup-openapi → openapi.json (file)   SDK generators
+                        │                                       │
+                        ▼                                       ▼
+      Scalar viewer (Settings → API card)          readme.io sync (rdme, CI on release)
+```
+
+## What each endpoint contributes (the "self-documented" contract)
+
+An endpoint is **published** and fully documented when it declares three things — a lint/test enforces all
+three for every `audience === PUBLIC` contract (see *Enforcement*). [`GetVersion`](../api/src/common/GetVersion.ts)
+is the reference exemplar.
+
+1. **`audience: Audience.PUBLIC`** — the include switch. Only PUBLIC endpoints are emitted; `APP`/`INTERNAL`
+   never appear in the spec. (Network `exposure` derives from this too.)
+2. **`docs: RestfulEndpoint.Docs`** — operation metadata: `operationId` (stable SDK/handle; defaults to the
+   class name), `summary`, `description` (markdown), `tags` (grouping — first path segment/service is the
+   natural tag), `deprecated`, `examples`.
+3. **`getResponseSchema()`** — the success (200) body as JSON Schema. Requests already carry
+   `getBodySchema()`/`getQuerySchema()`; responses were TS-interface-only, so this is the piece to add.
+   **Hand-authored** next to the `Response` interface (matches the model `SCHEMA`/`validate` co-location),
+   with per-field `description`/`examples` **inside** the schema — those keywords render directly in the docs.
+
+`toOpenApi` ([`RestfulEndpoint.ts`](src/RestfulEndpoint.ts)) assembles paths from `uri`+`method`, `parameters`
+from `getMappings()`+query schema, `requestBody` from `getBodySchema()`, `responses` from
+`getResponseSchema()` + the standard `400`/`401`/`403`, and one **security scheme**.
+
+## Security scheme
+
+One scheme: **`bearer`** — the developer API key `Authorization: Bearer rup_<keyId>.<secret>` (an opaque
+key, **not** a JWT; the same header the platform [`Authorizer.verifyApiKey`](../services/src/Authorizer.ts)
+validates). Secured operations (`access !== undefined`) get `security: [{ bearer: [] }]`; unauthenticated
+ones get `[]`. Keys are minted under **Settings → API** (auth `ApiKey` model).
+
+The operation also carries **`x-min-role`** (vendor extension) — the RBAC minimum role a caller needs — on
+secured operations, and merges any endpoint-declared **`docs.errors`** (`status → description`, mirroring the
+namespace `Error` enum) into `responses` on top of the standard `400`/`401`/`403`. The in-app docs render
+these as auth / min-role / error chips.
+
+### Credentials by audience — dev keys are PUBLIC-only
+
+A dev key is the **published-API** credential, nothing more. It authenticates **only `PUBLIC` endpoints**;
+presented to an `APP` or `INTERNAL` endpoint it's rejected **403** ("API keys can only be used with the
+public API") even when the key itself is valid. This is enforced in `Service.processEndpoint`: on a verified
+`rup_` bearer, the identity is adopted **only if** `endpoint.audience === PUBLIC`, else the request 403s.
+
+| audience   | session JWT | dev key (`rup_…`) |
+|------------|:-----------:|:-----------------:|
+| `PUBLIC`   | ✅ (staff)  | ✅                |
+| `APP`      | ✅          | ❌ 403            |
+| `INTERNAL` | — (S2S/IAM) | ❌ (not edge-reachable) |
+
+So a dev key reaches an endpoint **iff** the endpoint is `PUBLIC` **and** the key's role satisfies `access`.
+Publishing an endpoint (`audience: PUBLIC`) is therefore a deliberate act — it opens it to dev-key callers,
+not just the docs.
+
+## The registry — one curated list
+
+[`PublicApi`](../api/src/docs/PublicApi.ts) (`@repo/api`) holds `endpoints()` (the curated PUBLIC instances,
+parameterless-constructed) + `document(info?)` (calls `toOpenApi` with the API `INFO` — title/version).
+Publishing an endpoint = set `audience: PUBLIC`, add `docs` + `getResponseSchema()`, **and add its class to
+`PublicApi.endpoints()`** (the same "add to the list" discipline as the CDK gateway registry). The published
+**API version** lives in `PublicApi.INFO.version` and is independent of any service's build version.
+
+## Consuming the spec
+
+* **Live, in-app** — `GET /api/app/v1/openapi.json` ([`GetOpenApi`](../api/src/app/GetOpenApi.ts), unauth +
+  PUBLIC, served by `AppPublicService`) returns `PublicApi.document()` at request time — always current.
+  The **Settings → API** page embeds the **Scalar** renderer (`@scalar/api-reference`) pointed at that URL;
+  its "Try It" injects the caller's dev key and hits the **real** PUBLIC edge route (option **C** below).
+* **Static file + readme.io** — the `rup-openapi` generator writes `openapi.json` to disk (a CI artifact);
+  CI pushes it to readme.io via `rdme openapi upload` on release. Same document → hosted docs + in-app docs.
+* **SDKs** (later) — the same document drives typed client generation (`operationId` is the stable handle).
+
+## Enforcement (no undocumented public endpoints)
+
+A unit test iterates `PublicApi.endpoints()` and asserts each has `docs.summary`, `docs.tags`, and a non-null
+`getResponseSchema()` — the build fails if a PUBLIC endpoint is published without docs. Optionally a
+**docs-drift** CI step regenerates `openapi.json` and diffs the committed copy (fail on mismatch).
 
 ---
 
@@ -79,6 +180,26 @@ Every service exposes the same two cross-cutting endpoints (in addition to its d
 > integrators. The public surface is a **facade** mapping `/v1/contacts` → internal `/contact/*`. Settle:
 > version placement (`/v1/{resource}`, version-first) and a **reserved** service-name segment set (no
 > resource/version collisions). See audience (topic 1) + versioning (topic 2).
+
+## List paging — the standard `{ data, page }` envelope (platform-wide)
+
+**Every GET that returns a collection pages**, with one convention (`@repo/api` `Paging`):
+
+* **Request** — `?count=<pageSize>&start=<token>` (both optional). `count` is the page size for **all** paging
+  requests (clamped to `[1, Paging.MAX_COUNT]`, default `Paging.DEFAULT_COUNT`). `start` is an **opaque page
+  token** — pass a prior response's `next` straight back.
+* **Response** — `Paging.Result<T>` = `{ records: Array<T>, page: Page }` where `Page = { count, total, start?,
+  next? }`. (The items live under **`records`**, not `data` — a list reads `reply.data.records`, clearer than
+  `reply.data.data`.):
+  * **`count`** — items on THIS page (`records.length`).
+  * **`total`** — total across ALL pages (for "showing 50 of 1,240").
+  * **`start`** — the token that produced this page (the current/previous cursor).
+  * **`next`** — the token for the next page; **absent ⇒ last page** (no more).
+* A list contract's `Query extends Paging.Request`; its `Response extends Paging.Result<T>`. An impl that has
+  already fetched + filtered its rows wraps them with `Paging.paginate( rows, this.query )` (in-memory paging
+  today; swappable for a DynamoDB `LastEvaluatedKey` cursor later without changing the contract). Reference
+  impls: the contact + campaign lists (`GetContacts`, `GetSegments`, `GetCampaigns`, `GetSegmentMembers`,
+  `GetContactSegments`). **Retrofit of the older service lists (media / account / auth) is a pending migration.**
 
 ## Method + path patterns — standard REST
 
@@ -241,6 +362,12 @@ Open design questions for this package — captured here so they're not re-litig
 
 ## 1. Publishing the API docs + a "try it" console (lead topic)
 
+> **DECIDED → (C) embed Scalar in our own page.** Live spec at `GET /api/app/v1/openapi.json`, rendered by
+> `@scalar/api-reference` on the **Settings → API** page, plus a static `openapi.json` synced to **readme.io**
+> for the hosted portal. Response shapes are **hand-authored** `getResponseSchema()`. See the implemented
+> design in *API docs — OpenAPI 3.1 interface + generation (how it works)* above. Options A/B kept below for
+> the record. **(A) ReadMe** is still the plan for the hosted/external portal via the same generated file.
+
 We can already **generate** an accurate OpenAPI 3.1 spec (`toOpenApi`). The open question is **how to
 surface it** to developers — ideally a docs page where they can read the endpoints **and enter their
 dev-key to test-run** the PUBLIC APIs live. Three paths:
@@ -297,11 +424,21 @@ API stabilizes; decide build-step vs on-demand.
 
 ## 4. Docs-drift guard in CI
 
+> **DECIDED (direction):** the live `GET /openapi.json` is always generated (can't drift). For the
+> readme.io **static** file, wire a CI step that regenerates + diffs the committed `openapi.json` (fail on
+> mismatch) and, on release, runs `rdme openapi upload`. Plus a unit test that every PUBLIC endpoint has
+> docs + `getResponseSchema()` (see *Enforcement* above).
+
 Since `toOpenApi` is generated from code, wire a CI step that **regenerates and diffs** the committed
 `openapi.json` (fail on mismatch) — or don't commit it and always generate. Either way the published
 docs track the code; pick which.
 
 ## 5. Standard error + response model in the docs
+
+> **DECIDED:** adopt **`getResponseSchema()`** (hand-authored, per-field `description`/`examples`) on every
+> PUBLIC endpoint — enforced by the self-documentation test. [`GetVersion`](../api/src/common/GetVersion.ts)
+> is the exemplar. Still open: factor the shared **error envelope + status codes** into a reusable
+> `components` ref so every operation points at one definition.
 
 Endpoints share `RestfulEndpoint.Response` / `ErrorResponse`. Adopt **`getResponseSchema()`** broadly so
 the docs show real response shapes (today many are `any`), and document the **standard error envelope +

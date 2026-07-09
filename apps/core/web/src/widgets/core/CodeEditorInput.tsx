@@ -10,6 +10,7 @@ import CodeMirror, { EditorView, Extension }    from '@uiw/react-codemirror';
 import { javascript }                           from '@codemirror/lang-javascript';
 import { json, jsonParseLinter }                from '@codemirror/lang-json';
 import { html }                                 from '@codemirror/lang-html';
+import { css }                                  from '@codemirror/lang-css';
 import { linter, lintGutter }                   from '@codemirror/lint';
 
 // Theme imports
@@ -226,6 +227,10 @@ export function CodeEditorInput( props : CodeEditorInput.Props ) : JSX.Element
             case "html":
                 baseExtensions.push(html());
                 break;
+
+            case "css":
+                baseExtensions.push(css());
+                break;
         }
         
         setExtensions(baseExtensions);
@@ -305,7 +310,7 @@ export namespace CodeEditorInput
         width?      : number | string;
         fontSize?   : number;        // Font size in pixels (default: 14)
         // other choices that can be added: cpp, java, lezer, markdown, php, python, rust, sql, xml, less, sass, csharp
-        format      : "javascript" | "json" | "html";
+        format      : "javascript" | "json" | "html" | "css";
         jsonSchema? : object; // JSON schema for validation (only applies when format is "json")
         onChange?   : ( ids: string ) => void;
     }

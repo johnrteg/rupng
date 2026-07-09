@@ -174,8 +174,10 @@ export class Application
     ////////////////////////////////////////////////////////////////////////
     /** An AI client for a modality (chat, image, text-to-speech, …), per this service's routing config: the
      *  configured provider (+model) with its key resolved from the platform Secrets. `undefined` when the
-     *  modality has no configured route (caller degrades gracefully). Provider keys never appear here. */
-    protected async aiFor( modality : AiRouting.Modality ) : Promise<Ai | undefined>
+     *  modality has no configured route (caller degrades gracefully). Provider keys never appear here.
+     *  `buckets` forwards S3 scratch locations that async providers need (Nova Reel video output / Amazon
+     *  Transcribe audio staging) — harmless for providers that don't use them. */
+    protected async aiFor( modality : AiRouting.Modality, buckets? : Application.AiBuckets ) : Promise<Ai | undefined>
     {
         const routing : AiRouting.Config = await this.aiRouting();
         const route : AiRouting.Route | undefined = routing.routes[ modality ];
@@ -183,7 +185,7 @@ export class Application
         // AiRouting.Provider is the config vocabulary; its values match Ai.Provider for providers that have a
         // registered adapter. A provider named in config before its adapter lands (e.g. fish) makes create()
         // throw — treat that as "unavailable" (undefined) so the caller degrades instead of erroring.
-        try { return AiFactory.create( { provider: route.provider as unknown as Ai.Provider, model: route.model } ); }
+        try { return AiFactory.create( { provider: route.provider as unknown as Ai.Provider, model: route.model, videoBucket: buckets?.videoBucket, transcribeBucket: buckets?.transcribeBucket } ); }
         catch( error ) { this.log.warn( "aiFor: no adapter for configured provider", { modality, provider: route.provider, error: String( error ) } ); return undefined; }
     }
 
@@ -330,6 +332,13 @@ export class Application
 export namespace Application
 {
     export const ID_DIVIDER : string = ':';
+
+    /** S3 scratch locations forwarded to async AI providers via {@link Application.aiFor}. */
+    export interface AiBuckets
+    {
+        videoBucket?      : string;   // Bedrock Nova Reel async video output
+        transcribeBucket? : string;   // Amazon Transcribe audio staging (input)
+    }
 
     // extended by inherited services
     export interface Config

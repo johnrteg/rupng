@@ -14,20 +14,30 @@ import { ProfileDisplay } from '@pages/profile/ProfileDisplay';
 import { ProfileSecurity } from '@pages/profile/ProfileSecurity';
 import { ProfileNotifications } from '@pages/profile/ProfileNotifications';
 import { AccountDetails } from '@pages/account/AccountDetails';
+import { AccountBranding } from '@pages/account/AccountBranding';
 import { AccountBilling } from '@pages/account/AccountBilling';
 import { AccountUsers } from '@pages/account/AccountUsers';
 import { AccountSubAccounts } from '@pages/account/AccountSubAccounts';
+import { ContactsList } from '@pages/contacts/ContactsList';
+import { Segments } from '@pages/contacts/Segments';
+import { Campaigns } from '@pages/campaigns/Campaigns';
 import { Schedule } from '@pages/schedule/Schedule';
 import { MediaLibrary } from '@pages/media/MediaLibrary';
-import { MediaBrowse } from '@pages/media/MediaBrowse';
+import { MediaBrowse } from '@pages/media/browse/MediaBrowse';
 import { MediaAiGen } from '@pages/media/MediaAiGen';
 import { MediaDownloads } from '@pages/media/MediaDownloads';
 import { MediaStudio } from '@pages/media/MediaStudio';
 import { Help } from '@pages/help/Help';
 import { SettingsApi } from '@pages/settings/SettingsApi';
+import { SettingsContacts } from '@pages/settings/SettingsContacts';
+import { SettingsEmail } from '@pages/settings/SettingsEmail';
+import { SettingsActions } from '@pages/settings/SettingsActions';
+import { EmailTemplates } from '@pages/email/EmailTemplates';
 import { Login }        from '@pages/login/Login';
 import { Register }     from '@pages/register/Register';
 import { ForgotPassword }   from '@pages/login/ForgotPassword';
+import { ActionLanding }    from '@pages/landing/ActionLanding';
+import { AuthAction }       from '@repo/api';
 import Subscriber       from '@widgets/core/Subscriber';
 import ErrorPage        from '@pages/common/ErrorPage';
 import StubPage         from '@widgets/app/StubPage';
@@ -102,9 +112,13 @@ export function AppRouter( props : AppRouter.Props ) : JSX.Element
         new_routes.push( { path: "/profile/security", component: () => <ProfileSecurity /> } );
         new_routes.push( { path: "/profile/notifications", component: () => <ProfileNotifications /> } );
         new_routes.push( { path: "/account/details", component: () => <AccountDetails /> } );
+        new_routes.push( { path: "/account/branding", component: () => <AccountBranding /> } );
         new_routes.push( { path: "/account/billing", component: () => <AccountBilling /> } );
         new_routes.push( { path: "/account/users", component: () => <AccountUsers /> } );
         new_routes.push( { path: "/account/sub-accounts", component: () => <AccountSubAccounts /> } );
+        new_routes.push( { path: "/campaigns", component: () => <Campaigns /> } );
+        new_routes.push( { path: "/contacts/list", component: () => <ContactsList /> } );
+        new_routes.push( { path: "/contacts/segments", component: () => <Segments /> } );
         new_routes.push( { path: "/schedule", component: () => <Schedule /> } );
         new_routes.push( { path: "/media/library", component: () => <MediaLibrary /> } );
         new_routes.push( { path: "/media/browse", component: () => <MediaBrowse /> } );
@@ -113,6 +127,10 @@ export function AppRouter( props : AppRouter.Props ) : JSX.Element
         new_routes.push( { path: "/media/studio", component: () => <MediaStudio /> } );
         new_routes.push( { path: "/help", component: () => <Help /> } );
         new_routes.push( { path: "/settings/api", component: () => <SettingsApi /> } );
+        new_routes.push( { path: "/settings/contacts", component: () => <SettingsContacts /> } );
+        new_routes.push( { path: "/settings/email", component: () => <SettingsEmail /> } );
+        new_routes.push( { path: "/settings/actions", component: () => <SettingsActions /> } );
+        new_routes.push( { path: "/studio/email-templates", component: () => <EmailTemplates /> } );
 
         // least common (mixed - some critical, some lazy)
         new_routes.push( { path: AppRouter.Route.ROOT     , component: () => <Dashboard /> } );
@@ -121,6 +139,12 @@ export function AppRouter( props : AppRouter.Props ) : JSX.Element
         new_routes.push( { path: AppRouter.Route.LOGIN    , component: ( params : Login.Props ) => <Login {...params} /> } );
         new_routes.push( { path: AppRouter.Route.REGISTER , component: () => <Register /> } );
         new_routes.push( { path: AppRouter.Route.FORGOT_PASSWORD , component: () => <ForgotPassword /> } );
+        // no-auth landing pages (opened from email links) — parse the token from the path; one component per type
+        new_routes.push( { path: `${ AuthAction.PATHS[ AuthAction.Type.EMAIL_VERIFICATION ] }/:token`, component: ( params : { token : string } ) => <ActionLanding token={ params.token } type={ AuthAction.Type.EMAIL_VERIFICATION } /> } );
+        new_routes.push( { path: `${ AuthAction.PATHS[ AuthAction.Type.PASSWORD_RESET ] }/:token`,     component: ( params : { token : string } ) => <ActionLanding token={ params.token } type={ AuthAction.Type.PASSWORD_RESET } /> } );
+        new_routes.push( { path: `${ AuthAction.PATHS[ AuthAction.Type.MFA_CODE ] }/:token`,            component: ( params : { token : string } ) => <ActionLanding token={ params.token } type={ AuthAction.Type.MFA_CODE } /> } );
+        new_routes.push( { path: `${ AuthAction.PATHS[ AuthAction.Type.ACCOUNT_INVITE ] }/:token`,      component: ( params : { token : string } ) => <ActionLanding token={ params.token } type={ AuthAction.Type.ACCOUNT_INVITE } /> } );
+        new_routes.push( { path: `${ AuthAction.PATHS[ AuthAction.Type.UNSUBSCRIBE ] }/:token`,         component: ( params : { token : string } ) => <ActionLanding token={ params.token } type={ AuthAction.Type.UNSUBSCRIBE } /> } );
         //new_routes.push( { path: AppRouter.Route.REGISTRY , component: withLazyWrapper(Registry) } );
 
         // nav destinations from the shared nav model — each renders a Dashboard-like page (StubPage until

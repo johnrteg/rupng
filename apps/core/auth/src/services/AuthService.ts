@@ -1,12 +1,15 @@
 //
 
-import { Application, Service, Ports, Register, Cognito, Dynamo, Kafka, Events } from "@repo/services";
+import { Application, Service, Ports, Register, Cognito, Dynamo, Kafka, Sqs, Events } from "@repo/services";
 
-import { AuthConfig } from "@repo/api";
+import type { Type } from "@repo/common";
+
+import { AuthConfig, AuthAction, Email, Notification } from "@repo/api";
 
 import UserStore from "./UserStore";
 import PasskeyStore from "./PasskeyStore";
 import ApiKeyStore from "./ApiKeyStore";
+import ActionStore from "./ActionStore";
 
 // read-side endpoint impls
 import GetUsersImpl      from '../endpoints/GetUsersImpl';
@@ -61,9 +64,29 @@ export class AuthService extends Service
     private _cognito?  : Cognito;
     private _dynamo?   : Dynamo;
     private _kafka?    : Kafka;
+    private _sqs?      : Sqs;
     private _users?    : UserStore;
     private _passkeys? : PasskeyStore;
     private _apiKeys?  : ApiKeyStore;
+    private _actions?  : ActionStore;
+
+    // maps a transactional notification case to the landing ACTION type it mints (the enums share string values
+    // but are distinct closed sets — this is the single crossing point between them)
+    private static readonly ACTION_TYPE : Partial<Record<Email.NotificationType, AuthAction.Type>> =
+    {
+        [ Email.NotificationType.EMAIL_VERIFICATION ]: AuthAction.Type.EMAIL_VERIFICATION,
+        [ Email.NotificationType.PASSWORD_RESET ]:     AuthAction.Type.PASSWORD_RESET,
+        [ Email.NotificationType.MFA_CODE ]:           AuthAction.Type.MFA_CODE,
+        [ Email.NotificationType.ACCOUNT_INVITE ]:     AuthAction.Type.ACCOUNT_INVITE,
+    };
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** The EMAIL service's send-queue URL — auth posts transactional sends here. Env-overridable
+     *  (`EMAIL_SEND_QUEUE_URL`); defaults to the local LocalStack send queue for dev. */
+    private static emailSendQueueUrl() : string
+    {
+        return process.env.EMAIL_SEND_QUEUE_URL ?? "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/local-email-queue-email-send";
+    }
 
     ///////////////////////////////////////////////////////////////////////////////////////
     constructor( role : AuthService.Role )
@@ -88,6 +111,10 @@ export class AuthService extends Service
     /** Kafka facade — publishes auth entity events (e.g. auth.user.created). Lazy + cached. */
     public get kafka() : Kafka { return this._kafka ??= new Kafka( this.cloud ); }
 
+    /** SQS facade — auth drops transactional SEND requests on the email service's send queue (app-driven mail —
+     *  verification / reset links go out branded via the email service, not Cognito). Lazy + cached. */
+    public get sqs() : Sqs { return this._sqs ??= new Sqs( this.cloud ); }
+
     ///////////////////////////////////////////////////////////////////////////////////////
     /** Publish an `auth.*` lifecycle event (events dictionary). Best-effort — a bus miss is logged, never
      *  fails the request. Identity-centric: `accountId` scopes by the acting account when known, else the
@@ -97,6 +124,17 @@ export class AuthService extends Service
         const env : Events.Envelope = Events.envelope( { object, verb, accountId, target: { type: targetType, id: targetId }, data, actorUserId } );
         const published = await this.kafka.publishEvent( env );
         if( !published.ok ) this.log.warn( "auth event publish failed", { action: env.action, targetId, error: published.error } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** Publish `auth.user.created` — the account service consumes it to provision the account + membership,
+     *  then emits `account.account.created`. In the APP-DRIVEN sign-up flow this fires at REGISTER (the account
+     *  exists immediately; the branded verification link then confirms the email), not at verification. Best-
+     *  effort: no account exists yet, so the tenant scope is the userId. */
+    public async publishUserCreated( user : AuthService.CreatedUser ) : Promise<void>
+    {
+        if( !user.userId ) return;
+        await this.emit( Events.Object.AUTH_USER, Events.Verb.CREATED, "user", user.userId, user.userId, user, user.userId );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
@@ -141,6 +179,71 @@ export class AuthService extends Service
 
     /** ApiKeyStore — developer API key mint/list/revoke (the `api_keys` table). Lazy + cached. */
     public get apiKeys() : ApiKeyStore { return this._apiKeys ??= new ApiKeyStore( this.dynamo ); }
+
+    /** ActionStore — no-auth landing-action TTL queue (the `auth_actions` table). Lazy + cached. */
+    public get actions() : ActionStore { return this._actions ??= new ActionStore( this.dynamo ); }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** Send a transactional NOTIFICATION (verification / reset / MFA / invite / …) the APP-DRIVEN way — the app
+     *  owns the mail, not Cognito. For a case that needs a landing token (`Notification.SPEC[type].createsAction`)
+     *  this mints a pending `AuthAction` and substitutes its resolved URL into the matching merge token, then drops
+     *  an `Email.SendRequest` on the EMAIL service's send queue. The email worker renders the published template
+     *  for the case, or `Notification.fallbackFor` if none is published — so something always goes out.
+     *
+     *  Best-effort + fail-CLOSED on the link: if the action can't be minted we DON'T send (a verification/reset
+     *  mail with a dead link is worse than none); a queue failure is logged, never thrown (callers stay
+     *  enumeration-neutral). Links are PATHS resolved to a full URL here at send time (origin → env → localhost),
+     *  so local dev, prod, and white-label all work. */
+    public async sendNotification( input : AuthService.NotifyInput ) : Promise<void>
+    {
+        // start from the caller's merge data; the action URL (if any) is layered on below
+        const mergeData : Record<string, unknown> = { ...( input.mergeData ?? {} ) };
+
+        // mint the landing ACTION for cases that need one, and fill its URL into the case's merge token
+        const spec : Notification.Spec | undefined = Notification.specFor( input.type );
+        const actionType : AuthAction.Type | undefined = AuthService.ACTION_TYPE[ input.type ];
+        if( spec?.createsAction && actionType !== undefined )
+        {
+            const minted : Type.Result<AuthAction.Entity> = await this.actions.create( {
+                type:        actionType,
+                target:      input.target,
+                accountId:   input.accountId,
+                userId:      input.userId,
+                requestedBy: input.requestedBy,
+                ttlMinutes:  spec.actionTtlMinutes,
+                params:      input.params,
+            } );
+            // fail closed — a link that won't validate is worse than sending nothing
+            if( !minted.ok ) { this.log.warn( "notification action mint failed — not sending", { type: input.type, error: minted.error } ); return; }
+
+            const base : string = this.landingBaseUrl( input.origin );
+            const url : string = AuthAction.urlFor( base, actionType, minted.data.actionId );
+            const token : string = spec.mergeToken ?? AuthAction.MERGE_TOKEN[ actionType ] ?? "action_url";
+            mergeData[ token ] = url;
+        }
+
+        // hand the send to the email service (its worker resolves template-or-fallback + the system sender)
+        const request : Email.SendRequest =
+        {
+            to:               [ { email: input.target } ],
+            accountId:        input.accountId,
+            notificationType: input.type,
+            mergeData,
+        };
+        const queueUrl : string = AuthService.emailSendQueueUrl();
+        this.log.info( "notification enqueue", { type: input.type, target: input.target, queueUrl, endpoint: process.env.AWS_ENDPOINT_URL ?? "(default)" } );
+        const enqueued : Type.Result<void> = await this.sqs.sendToUrl( queueUrl, { request } );
+        if( enqueued.ok ) this.log.info( "notification enqueued OK", { type: input.type } );
+        else this.log.warn( "notification enqueue failed", { type: input.type, error: enqueued.error } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** Resolve the base URL (protocol + host) that a landing PATH is appended to. The request origin the user
+     *  came from wins (white-label / local alike); else a per-env config env var; else the local web dev server. */
+    private landingBaseUrl( origin? : string ) : string
+    {
+        return origin ?? process.env.PUBLIC_BASE_URL ?? "http://localhost:5173";
+    }
 
     ///////////////////////////////////////////////////////////////////////////////////////
     protected async init() : Promise<void>
@@ -224,6 +327,31 @@ export class AuthService extends Service
 
 export namespace AuthService
 {
+    /** The new-user profile carried on `auth.user.created` (what the account service provisions from). */
+    export interface CreatedUser
+    {
+        userId      : string;
+        email?      : string;
+        phone?      : string;
+        firstName   : string;
+        lastName    : string;
+        accountName : string;
+    }
+
+    /** The inputs to {@link AuthService.sendNotification} — the case, who/where it goes to, and the request
+     *  origin used to resolve landing links to a full URL at send time. */
+    export interface NotifyInput
+    {
+        type         : Email.NotificationType;
+        target       : string;                       // the recipient email the notification is sent to
+        userId?      : string;                       // the subject user (attached to the minted action, if any)
+        accountId?   : string;                       // scopes template resolution (white-label override) + the action
+        requestedBy? : string;                       // the actor who triggered it (audit)
+        origin?      : string;                       // the request origin → base URL for landing links
+        mergeData?   : Record<string, unknown>;      // extra merge values (the action URL is layered on top)
+        params?      : Record<string, string>;       // action-specific params carried on the minted action
+    }
+
     export enum Role
     {
         MAIN = "main",

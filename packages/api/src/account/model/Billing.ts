@@ -24,11 +24,25 @@ export namespace Billing
 {
     // ── Shared primitives ──────────────────────────────────────────────────────────────────────
 
-    /** A monetary value. `amountMinor` is in the currency's minor unit (e.g. cents). */
+    /**
+     * A **settled** monetary value — whole cents. Use for balances, invoice amounts, fees, pack prices, top-ups,
+     * discounts: anything charged/recorded. For a FRACTIONAL-cent per-unit PRICE, use {@link Rate}.
+     */
     export interface Money
     {
-        amountMinor : number;
+        amountMinor : Type.Cents;       // whole cents (minor units)
         currency    : Type.Currency;    // ISO-4217, e.g. "USD"
+    }
+
+    /**
+     * A **per-unit rate** that may be a FRACTIONAL cent — e.g. $0.025 (2.5¢) per SMS segment, or $0.00002 per
+     * AI token. Stored in {@link Type.MilliCents} (thousandths of a cent) so sub-cent pricing is exact; multiply
+     * by a quantity and settle to whole cents with `CurrencyUtils.rateTotalCents` at the charge boundary.
+     */
+    export interface Rate
+    {
+        amountMilliCents : Type.MilliCents;   // thousandths of a cent (2.5¢ → 2500)
+        currency         : Type.Currency;     // ISO-4217, e.g. "USD"
     }
 
     /** Recurring / reset cadence. */
@@ -179,7 +193,7 @@ export namespace Billing
     {
         type       : PriceType.USAGE;
         metric     : string;            // what is counted — e.g. "data.records", "ai.tokens", "sms.segments"
-        unitAmount : Money;             // price per unit ("as-is" / pay-as-you-go metered; unit granularity per the metric, e.g. per token or per 1k)
+        unitAmount : Rate;              // per-unit price (fractional-cent) — pay-as-you-go metered; unit granularity per the metric
     }
 
     export interface PoolOveragePrice extends PriceBase
@@ -187,7 +201,7 @@ export namespace Billing
         type               : PriceType.POOL_OVERAGE;
         metric             : string;
         included           : number;    // allowance before overage kicks in
-        overageUnitAmount  : Money;     // price per unit over the allowance
+        overageUnitAmount  : Rate;      // per-unit price (fractional-cent) over the allowance
         interval           : Interval;  // pool reset cadence
     }
 
@@ -228,8 +242,8 @@ export namespace Billing
     export interface PriceTier
     {
         upTo       : number | null;     // upper bound of the tier; null = infinity (last tier)
-        unitAmount : Money;             // per-unit price within the tier
-        flatAmount? : Money;            // optional flat charge for entering the tier
+        unitAmount : Rate;              // per-unit price (fractional-cent) within the tier
+        flatAmount? : Money;            // optional flat charge (whole cents) for entering the tier
     }
 
     export enum TierMode
@@ -402,8 +416,8 @@ export namespace Billing
         featureId?  : Type.ID;
         metric?     : string;
         quantity    : number;
-        unitAmount  : Money;
-        amount      : Money;            // pre-discount line amount
+        unitAmount  : Rate;             // the per-unit (fractional-cent) rate applied
+        amount      : Money;            // pre-discount line amount (whole cents = rate × quantity, settled)
     }
 
     // ── 10. ACCOUNT BILLING SURFACE — balance, payment methods, settings (what the /billing UI reads). ──

@@ -135,11 +135,21 @@ export class Service extends Daemon
             // bare token with no userId. Verify it against the auth-owned key store (a shared authz read, like
             // the membership read) and ADOPT the key's owner/account/role. Fails closed: an invalid key stays
             // unauthenticated and the authorize gate below rejects it.
+            //
+            // SCOPE: dev keys are the PUBLIC developer-API credential ONLY. They must never authenticate a
+            // first-party (APP) or internal (INTERNAL) endpoint — those are session-JWT / S2S surfaces not in
+            // the published docs. So a key is accepted only on a PUBLIC-audience endpoint; presented anywhere
+            // else it's rejected outright (403), even if the key itself is valid.
             if( !authenticate.userId && authenticate.token && authenticate.token.startsWith( "rup_" ) )
             {
                 const identity : Authorizer.ApiKeyIdentity | undefined = await ( this._authorizer ??= new Authorizer( this.cloud ) ).verifyApiKey( authenticate.token );
                 if( identity )
                 {
+                    if( scoped.audience !== RestfulEndpoint.Audience.PUBLIC )
+                    {
+                        reply.code( NetworkUtils.Status.FORBIDDEN ).send( { message: "API keys can only be used with the public API" } );
+                        return;
+                    }
                     authenticate.userId    = identity.userId;
                     authenticate.accountId = identity.accountId;
                     authenticate.role      = identity.role;
@@ -407,7 +417,10 @@ export class Service extends Daemon
     // to override by actual service to do something
     protected serviceReady() : void
     {
-        this.log.info( "ServiceReady" );
+        // Announce WHICH process this is — service, version, pid, port. The log line's own timestamp is the
+        // start time, so a glance answers "am I running current code, or a stale/orphan process?" (services run
+        // under plain `tsx`, no hot-reload, so a code change needs a real restart).
+        this.log.info( "ServiceReady", { service: this.name(), version: this.version, pid: process.pid, port: this.port } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -1,0 +1,20 @@
+{
+    "name": "@repo/studio-composition",
+    "version": "1.0.0",
+    "private": true,
+    "main": "./bin/index.js",
+    "types": "./bin/index.d.ts",
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@repo/api": "*",
+        "react": "19.2.7",
+        "remotion": "^4.0.485"
+    },
+    "devDependencies": {
+        "@repo/tsconfig": "*",
+        "@types/react": "19.2.17"
+    }
+}

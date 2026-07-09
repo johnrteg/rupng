@@ -10,14 +10,21 @@ import {
     ResourceManifest,
     ApiAuthorizer, LaunchType, BucketAccess,
     AttrType,
+    ManagedAiService,
     Ports,
 } from "@repo/cloud-manifest";
+import { Providers } from "@repo/system";
 
 export const manifest : ResourceManifest =
 {
     service     : "media",
     description : "Account media plane — storage (S3), object index (DynamoDB), ingest pipeline (SQS scan → process), delivery. Focus: images.",
     tracing     : true,
+
+    // Managed AWS AI services the media compute calls over IAM (no key): Bedrock (AI generate — image/video),
+    // Transcribe (speech-to-text; stages audio through the media-staging bucket). Grants a curated action set
+    // to the task role + job Lambdas (see ServiceStack.AI_SERVICE_ACTIONS).
+    aiServices  : [ ManagedAiService.BEDROCK, ManagedAiService.TRANSCRIBE ],
 
     owns:
     {
@@ -91,11 +98,9 @@ export const manifest : ResourceManifest =
         // Secrets — Browse provider API keys (media-16.1), root-managed in Secrets Manager (never AppConfig/env).
         // Created empty on deploy; the value is set by a root op (root API / `awslocal secretsmanager
         // put-secret-value`). The service reads them via `Secrets.get("browse-<provider>")`.
-        secrets:
-        [
-            { key: "browse-pexels",   description: "Pexels API key (Browse provider) — plain string" },
-            { key: "browse-unsplash", description: "Unsplash credentials (Browse provider) — JSON { appId, accessKey, secretKey }; accessKey used for public search" },
-        ],
+        // DERIVED from the provider registry (@repo/system Providers) — every provider this service OWNS
+        // (Browse: Pexels/Unsplash). The service reads them via `Secrets.get("<secretKey>")`.
+        secrets: Providers.forService( "media" ).map( ( provider ) => ( { key: provider.secretKey, description: `${ provider.label } (${ provider.category })` } ) ),
 
         // S3 — the per-account media bytes. PRIVATE by default (served via signed URLs / CDN, never public).
         // Versioned (media-1.3 keeps the original). Object keys are the typed S3.ObjectKey MEDIA / AVATAR
@@ -110,6 +115,15 @@ export const manifest : ResourceManifest =
                 cors      : true,               // direct-to-S3 presigned PUT from the browser
                 presignedUpload: true,          // provision the presigner path (media-3.1)
                 lifecycle : [ { prefix: "", transitionToInfrequentDays: 60, transitionToGlacierDays: 180 } ],   // cold tiering (media-6.1)
+            },
+            // AI-generation STAGING bytes (media-18) — candidate images/videos live here until the user promotes
+            // one into the library (never a Media.Asset until then). SEPARATE bucket so generated candidates are
+            // fully isolated from the account library. A lifecycle rule auto-expires abandoned candidates.
+            {
+                key       : "media-staging",
+                access    : BucketAccess.PRIVATE,
+                encryption: true,
+                lifecycle : [ { prefix: "", expireDays: 7 } ],   // discard un-promoted candidates after 7 days
             },
         ],
 
@@ -130,6 +144,14 @@ export const manifest : ResourceManifest =
             // Cloned voices (media-21) — account-scoped synthetic voices (speech-cloning is account-only); their
             // own table so a voice is never visible/usable across accounts.
             { key: "voices", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "voiceId", type: AttrType.STRING } },
+            // AI-generation staging batches (media-18) — one row per generate request; holds the candidates +
+            // their per-candidate status/bytes-key while they're staged (NOT in the library). TTL sweeps
+            // abandoned batches (matches the staging bucket's lifecycle). Removed when a batch is discarded.
+            { key: "media_staging", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "batchId", type: AttrType.STRING },
+              ttlAttribute: "ttl" },
+            // Studio projects (media-21) — the project tree metadata (name/kind/campaign/tags/page + the saved
+            // library asset guid). The tldraw canvas snapshot lives in S3 (the media bucket), keyed by project.
+            { key: "studio_projects", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "id", type: AttrType.STRING } },
         ],
 
         // Work queues (auto-DLQ) — the ingest pipeline. On upload-complete (or an S3-created event) the item
@@ -145,6 +167,8 @@ export const manifest : ResourceManifest =
             { key: "media-transcribe", maxReceiveCount: 3, dlq: true, visibilityTimeoutSec: 600 },   // audio extract + speech-to-text
             { key: "media-archive",    maxReceiveCount: 3, dlq: true, visibilityTimeoutSec: 300 },   // zip original + variants for download
             { key: "media-video",      maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 900 },   // video compression (ffmpeg CRF ladder, media-10.10)
+            { key: "studio-render",    maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 900 },   // Studio video render — ffmpeg composite of the timeline → mp4 (media-21)
+            { key: "studio-render-remotion", maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 1800 },   // Studio video render — Remotion/Chromium exact-fidelity render (media-21.18); longer timeout (heavier)
         ],
     },
 

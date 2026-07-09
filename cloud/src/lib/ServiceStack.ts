@@ -46,7 +46,7 @@ import { HttpJwtAuthorizer } from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 
 import {
     Environment, PerEnv, forEnv,
-    ResourceManifest, ResourceRef, ResourceKind, AccessIntent,
+    ResourceManifest, ResourceRef, ResourceKind, AccessIntent, ManagedAiService,
     QueueSpec, BucketSpec, StaticSiteSpec, TableSpec, KmsKeySpec, SecretSpec, SnsTopicSpec, LogGroupSpec,
     AppConfigSpec, JobSpec, ApiSpec, ApiEndpointSpec, ApiAuthorizer, ThrottleSpec,
     DatabaseSpec, CacheSpec, ServiceSpec, AutoScalingSpec, KafkaTopicSpec, SesSpec, BatchJobSpec,
@@ -63,14 +63,16 @@ import { isLocal, supportedLocally } from "./local";
 //   • style-src 'unsafe-inline' — MUI/emotion inject inline <style>; removing needs nonces/hashes.
 //   • connect-src https: wss: — the API gateway (cross-origin) + websockets; narrow to specific hosts later.
 //   • script-src 'self' — the built bundle only (no eval); dev/HMR is unaffected (this is edge-only).
+//   • Google Fonts — brand fonts are referenced from Google's CDN (stylesheet on fonts.googleapis.com, font
+//     files on fonts.gstatic.com), so style-src + font-src must allow those hosts or brand fonts silently fail.
 const STARTER_CSP : string = [
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'none'",
     "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "script-src 'self'",
     "connect-src 'self' https: wss:",
 ].join( "; " );
@@ -105,6 +107,7 @@ export class ServiceStack extends cdk.Stack
     private readonly deployEnv : Environment;
     private readonly service   : string;
     private readonly tracing   : boolean;       // X-Ray active tracing across this service's compute
+    private readonly aiServices : Array<ManagedAiService>;   // managed AWS AI services the compute may call (IAM-only)
 
     // Owned resources keyed by logical key, for trigger wiring + env injection + grants.
     private readonly keys    : Map<string, kms.IKey>          = new Map();
@@ -156,6 +159,7 @@ export class ServiceStack extends cdk.Stack
         this.service   = props.manifest.service;
         this._vpc      = props.vpc;
         this.tracing   = props.manifest.tracing ?? false;
+        this.aiServices = props.manifest.aiServices ?? [];
         this.gateways  = props.gateways ?? new Map();
 
         const owns = props.manifest.owns;
@@ -245,6 +249,17 @@ export class ServiceStack extends cdk.Stack
     }
 
     /** Grant a compute role least-privilege on this service's own resources. */
+    /** Curated least-privilege action set per managed AWS AI service (attached in {@link grantOwned}). Kept
+     *  narrow to the calls our adapters actually make — widen deliberately as adapters grow. */
+    private static readonly AI_SERVICE_ACTIONS : Record<ManagedAiService, Array<string>> =
+    {
+        [ ManagedAiService.BEDROCK ]:     [ "bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:StartAsyncInvoke", "bedrock:GetAsyncInvoke", "bedrock:ListAsyncInvokes" ],
+        [ ManagedAiService.TRANSCRIBE ]:  [ "transcribe:StartTranscriptionJob", "transcribe:GetTranscriptionJob", "transcribe:ListTranscriptionJobs" ],
+        [ ManagedAiService.POLLY ]:       [ "polly:SynthesizeSpeech" ],
+        [ ManagedAiService.COMPREHEND ]:  [ "comprehend:DetectEntities", "comprehend:DetectSentiment", "comprehend:DetectKeyPhrases" ],
+        [ ManagedAiService.REKOGNITION ]: [ "rekognition:DetectLabels", "rekognition:DetectModerationLabels", "rekognition:DetectText" ],
+    };
+
     private grantOwned( g : iam.IGrantable ) : void
     {
         this.tables.forEach(  t => t.grantReadWriteData( g ) );
@@ -254,6 +269,14 @@ export class ServiceStack extends cdk.Stack
         this.secrets.forEach( s => s.grantRead( g ) );
         this.platformSecrets.forEach( s => s.grantRead( g ) );   // read-only on the platform-shared AI keys
         this.topics.forEach(  t => t.grantPublish( g ) );
+
+        // Managed AWS AI services (IAM-only, no resource): grant each declared service's curated action set.
+        // Actions are region/account-wide (the AI services don't take a scoping ARN), so resources is "*".
+        this.aiServices.forEach( ( service : ManagedAiService ) : void =>
+        {
+            const actions : Array<string> = ServiceStack.AI_SERVICE_ACTIONS[ service ];
+            iam.Grant.addToPrincipal( { grantee: g, actions, resourceArns: [ "*" ] } );
+        } );
     }
 
     //////////////////////////////////////////////////////////////////////////////

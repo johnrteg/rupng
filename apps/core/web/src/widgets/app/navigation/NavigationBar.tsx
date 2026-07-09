@@ -2,7 +2,7 @@
 import React from 'react';
 import { JSX } from "react";
 
-import { Box, Collapse, IconButton, List, ListItemButton, ListItemIcon, ListItemText, Stack, Tooltip, Typography } from '@mui/material';
+import { Box, Collapse, List, ListItemButton, ListItemIcon, ListItemText, Stack, Typography } from '@mui/material';
 import ExpandMoreIcon    from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon    from '@mui/icons-material/ExpandLess';
 import ChevronLeftIcon   from '@mui/icons-material/ChevronLeft';
@@ -11,6 +11,7 @@ import ChevronRightIcon  from '@mui/icons-material/ChevronRight';
 import { Access }      from '@repo/system';
 import AppModel        from '@model/AppModel';
 import PubSubService   from '@model/service/PubSubService';
+import ButtonIcon      from '@widgets/core/ButtonIcon';
 import Subscriber      from '@widgets/core/Subscriber';
 import navModel        from './navModel';
 import AccountSwitcher from './AccountSwitcher';
@@ -130,13 +131,11 @@ export function NavigationBar( props : NavigationBar.Props ) : JSX.Element
     {
         const hasChildren : boolean = ( item.children?.length ?? 0 ) > 0;
         const active : boolean = hasChildren ? ancestorId === item.id : selectedId === item.id;
-        return  <Tooltip key={ item.id } title={ item.label } placement="right">
-                    <IconButton onClick={ () => hasChildren ? expandAndOpen( item.id ) : navigate( item ) }
-                                sx={{ borderRadius: 1, color: active ? "primary.main" : "text.secondary",
-                                      bgcolor: active ? "action.selected" : "transparent" }}>
-                        { item.icon }
-                    </IconButton>
-                </Tooltip>;
+        return  <ButtonIcon key={ item.id } id={ `nav-rail-${ item.id }` } label={ item.label }
+                            icon={ item.icon ?? <></> }
+                            onClick={ () => hasChildren ? expandAndOpen( item.id ) : navigate( item ) }
+                            sx={{ borderRadius: 1, color: active ? "primary.main" : "text.secondary",
+                                  bgcolor: active ? "action.selected" : "transparent" }} />;
     }
 
     // ===============================================================================================
@@ -152,14 +151,12 @@ export function NavigationBar( props : NavigationBar.Props ) : JSX.Element
                 {/* HEADER (pinned): account + collapse toggle */}
                 { collapsed
                     ? <Stack direction="column" spacing={ 0.5 } sx={{ alignItems: "center", flexShrink: 0, py: 0.75 }}>
-                          <Tooltip title="Expand menu" placement="right">
-                              <IconButton size="small" onClick={ () => setCollapsed( false ) }><ChevronRightIcon /></IconButton>
-                          </Tooltip>
+                          <ButtonIcon id="nav-expand" label="Expand menu" size="small" icon={ <ChevronRightIcon /> } onClick={ () => setCollapsed( false ) } />
                           <AccountSwitcher compact />
                       </Stack>
                     : <Box sx={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 0.5, px: 1, py: 0.75 }}>
                           <Box sx={{ flexGrow: 1, minWidth: 0 }}><AccountSwitcher /></Box>
-                          <Tooltip title="Collapse menu"><IconButton size="small" onClick={ () => setCollapsed( true ) }><ChevronLeftIcon /></IconButton></Tooltip>
+                          <ButtonIcon id="nav-collapse" label="Collapse menu" size="small" icon={ <ChevronLeftIcon /> } onClick={ () => setCollapsed( true ) } />
                       </Box> }
 
                 {/* MIDDLE (scrolls): sections / rail icons */}

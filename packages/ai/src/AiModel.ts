@@ -122,6 +122,10 @@ export namespace Ai
         ELEVENLABS = "elevenlabs",
         /** Magnific / Freepik — image generation + upscale (requires an api key). */
         MAGNIFIC   = "magnific",
+        /** Google Gemini — chat/vision, Imagen image gen, Veo video gen, Gemini TTS (requires an api key). */
+        GEMINI     = "gemini",
+        /** Amazon Transcribe — speech-to-text (IAM-authed; stages audio through S3, async job). */
+        AWS_TRANSCRIBE = "aws-transcribe",
     }
 
     /** A unit of capability a model/adapter may support. */
@@ -232,6 +236,8 @@ export namespace Ai
         n?        : number;
         /** Pixel size, e.g. `"1024x1024"`. */
         size?     : string;
+        /** Provider-agnostic quality tier (`low`/`medium`/`high`) — mapped to the provider's native knob. */
+        quality?  : string;
         /** Metering/trace context (not sent to the model). */
         metadata? : RequestMeta;
     }

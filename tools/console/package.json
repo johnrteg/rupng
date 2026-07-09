@@ -43,7 +43,8 @@
         "@mui/material": "6.1.9",
         "@mui/x-charts": "7.29.1",
         "react": "19.2.7",
-        "react-dom": "19.2.7"
+        "react-dom": "19.2.7",
+        "@repo/system": "*"
     },
     "devDependencies": {
         "@types/node": "26.0.0",

@@ -20,6 +20,7 @@ export class PatchAsset extends RestfulEndpoint<PatchAsset.Query, PatchAsset.Bod
         return { type: "object", additionalProperties: false, properties: {
             tags: { type: "array", items: { type: "string" } },
             name: { type: "string", minLength: 1, maxLength: 300 },
+            campaignIds: { type: "array", items: { type: "string" } },
         } };
     }
 }
@@ -28,7 +29,8 @@ export namespace PatchAsset
 {
     export const URI : string = apiPath( "media", 1, "/assets/:guid" );
     export interface Query { guid : string; }
-    export interface Body extends RestfulEndpoint.AuthRequest { tags? : Array<string>; name? : string; }
+    // `campaignIds` — the 0..N campaigns this asset is used by (denormalized filter; campaign is the SoT).
+    export interface Body extends RestfulEndpoint.AuthRequest { tags? : Array<string>; name? : string; campaignIds? : Array<string>; }
     export interface Response { asset : Media.Asset; }
     export enum Error { BAD_REQUEST = NetworkUtils.Status.BAD_REQUEST, UNAUTHORIZED = NetworkUtils.Status.UNAUTHORIZED, NOT_FOUND = NetworkUtils.Status.NOT_FOUND, INTERNAL_SERVER_ERROR = NetworkUtils.Status.INTERNAL_SERVER_ERROR }
 }

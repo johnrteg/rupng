@@ -2,6 +2,7 @@
 import { Type } from "@repo/common";
 import { Access } from "@repo/endpoint";
 import { Validation } from "../../model/Validation";
+import { Contact } from "../../contact/model/Contact";
 
 //
 // Account — the shared **wire contract** types for the account domain: the `Account.Entity` record
@@ -64,6 +65,23 @@ export namespace Account
     /** Per-account feature-flag overrides — boolean on/off, string A/B variant, or numeric gate. */
     export type FeatureFlags = Record<string, boolean | string | number>;
 
+    /** A brand font — a PUBLIC web-font reference (name + a public, CORS-permissive, non-expiring URL) so it
+     *  renders anywhere the brand does: the image editor, exported images, and email recipients' clients. Shared
+     *  by Account + Campaign brand identity. */
+    export interface BrandFont
+    {
+        name : string;   // font family name (as referenced in CSS)
+        href : string;   // public stylesheet/font URL (e.g. a Google Fonts URL)
+    }
+
+    /** A brand SVG — a named vector graphic stored as inline MARKUP (not a URL) so it can be RECOLORED to the
+     *  brand palette when placed in an editor. Shared by Account + Campaign brand identity (BYO marks/graphics). */
+    export interface BrandSvg
+    {
+        name : string;   // display name
+        svg  : string;   // the raw <svg>…</svg> markup
+    }
+
     /** The account record as exposed by the API. */
     export interface Entity
     {
@@ -84,11 +102,15 @@ export namespace Account
         website?        : Type.Url;
         brandedDomain?  : string;             // whitelabel custom domain
         logoUrl?        : Type.Url;           // whitelabel logo
+        palette?        : Array<string>;      // brand color palette (ordered hex values) — content creation + image search
+        fonts?          : Array<BrandFont>;   // brand fonts (public web-font references) — content creation + image editor
+        svgs?           : Array<BrandSvg>;    // brand SVG graphics (inline markup, recolorable) — image editor
         timezone        : Type.TimeZone;      // IANA tz — the account default
         featureFlags    : FeatureFlags;       // per-account flag overrides
         joinCode        : string;             // shareable code to join this account
         address         : Type.Address;
         billingAddress? : Type.Address;
+        channels?       : Array<Contact.Channel>;   // outreach channels this account is allowed to use (undefined = all)
         createdAt       : Type.ISODateTime;
         modifiedAt      : Type.ISODateTime;
     }
@@ -105,8 +127,12 @@ export namespace Account
         poc?          : Poc;
         billingPoc?   : Poc;
         website?      : Type.Url;
+        palette?      : Array<string>;            // brand color palette (ordered hex values)
+        fonts?        : Array<BrandFont>;         // brand fonts (public web-font references)
+        svgs?         : Array<BrandSvg>;          // brand SVG graphics (inline markup, recolorable)
         timezone?     : Type.TimeZone;
         address?      : Type.Address;
+        channels?     : Array<Contact.Channel>;   // allowed outreach channels (account-determined)
     }
 
     /**
@@ -127,6 +153,10 @@ export namespace Account
         timezone:        "UTC" as Type.TimeZone,
         featureFlags:    {},
         address:         {} as Type.Address,
+        channels:        Object.values( Contact.Channel ),   // all channels allowed until narrowed
+        palette:         [],                                 // no brand colors until the account sets them
+        fonts:           [],                                 // no brand fonts until the account adds them
+        svgs:            [],                                 // no brand SVGs until the account adds them
     };
 
     /** A member's access status within an account. */
@@ -144,6 +174,7 @@ export namespace Account
         status       : MemberStatus;
         name?        : string;               // denormalized display name (captured on add)
         email?       : Type.Email;           // denormalized email (captured on add)
+        avatarAssetId? : string;             // denormalized avatar media guid — kept fresh by the media.asset (USER) event (media-23)
         owner?       : boolean;              // true = the account owner (can't be suspended / removed)
         createdAt    : Type.ISODateTime;     // when they were added
         lastLoginAt? : Type.ISODateTime;     // best-effort last-seen (optional)
@@ -217,11 +248,21 @@ export namespace Account
             website:         { type: "string", format: "uri" },
             brandedDomain:   { type: "string" },
             logoUrl:         { type: "string", format: "uri" },
+            palette:         { type: "array", items: { type: "string" } },   // ordered brand hex values
+            fonts:           { type: "array", items: {
+                type: "object", additionalProperties: false, required: [ "name", "href" ],
+                properties: { name: { type: "string" }, href: { type: "string" } },
+            } },
+            svgs:            { type: "array", items: {
+                type: "object", additionalProperties: false, required: [ "name", "svg" ],
+                properties: { name: { type: "string" }, svg: { type: "string" } },
+            } },
             timezone:        { type: "string" },          // IANA tz
             featureFlags:    { type: "object", additionalProperties: { type: [ "boolean", "string", "number" ] } },
             joinCode:        { type: "string" },
             address:         { type: "object" },          // Type.Address (owned by @repo/common)
             billingAddress:  { type: "object" },
+            channels:        { type: "array", items: { type: "string", enum: Object.values( Contact.Channel ) } },
             createdAt:       { type: "string", format: "date-time" },
             modifiedAt:      { type: "string", format: "date-time" },
         },

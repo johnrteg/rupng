@@ -20,7 +20,7 @@ import BusinessIcon         from '@mui/icons-material/Business';
 
 //
 import { EmailUtils, NetworkUtils } from "@repo/common";
-import { PostRegister, PostRegisterVerify, PostVerifyResend, ContactMethod } from "@repo/api";
+import { PostRegister, PostVerifyResend, ContactMethod } from "@repo/api";
 import { RestfulService } from "@repo/endpoint";
 
 //
@@ -87,13 +87,11 @@ export function Register( props : Register.Props ) : JSX.Element
     const [agreed,setAgreed]            = React.useState< boolean >( false );
     const [downloadingTos,setDownloadingTos] = React.useState< boolean >( false );
 
-    // VERIFY
-    const [code,setCode]                = React.useState< string >( "" );
-    const [codeExpiresAt,setCodeExpiresAt] = React.useState< number >( 0 );   // epoch ms the current code expires (0 = none yet)
-    const [resendAt,setResendAt]        = React.useState< number >( 0 );      // epoch ms the "Resend code" link re-enables
+    // VERIFY — a "check your email" screen; only the resend cooldown is tracked (the link's TTL lives on the action)
+    const [resendAt,setResendAt]        = React.useState< number >( 0 );      // epoch ms the "Resend link" re-enables
     const [now,setNow]                  = React.useState< number >( Date.now() );   // 1s ticker, only while on VERIFY
 
-    // server flow — the token from POST /register threaded into POST /register/verify; submitting gates buttons
+    // server flow — the registration token (the identifier) threaded into POST /verify/resend; submitting gates buttons
     const [registrationToken,setRegistrationToken] = React.useState< string >( "" );
     const [botToken,setBotToken]        = React.useState< string >( "" );       // anti-bot proof (stub until the widget is wired)
     const [submitting,setSubmitting]    = React.useState< boolean >( false );
@@ -114,9 +112,7 @@ export function Register( props : Register.Props ) : JSX.Element
     const passwordStepValid : boolean = passwordValid && confirmMatches;
     const termsValid      : boolean = agreed;   // ToS accepted on the final step
 
-    const codeValid : boolean = code.trim().length === Register.CODE_LENGTH;
-
-    // tick once a second while on the VERIFY step so the two countdowns (code expiry + resend cooldown) update.
+    // tick once a second while on the VERIFY step so the resend-cooldown countdown updates.
     React.useEffect( () =>
     {
         if( step !== Register.Step.VERIFY ) return;
@@ -124,10 +120,8 @@ export function Register( props : Register.Props ) : JSX.Element
         return () => clearInterval( id );
     }, [ step ] );
 
-    // derived countdowns (seconds remaining; 0 when elapsed / not yet started)
-    const codeRemainingSec   : number = codeExpiresAt > 0 ? Math.max( 0, Math.ceil( ( codeExpiresAt - now ) / 1000 ) ) : 0;
-    const resendRemainingSec : number = resendAt     > 0 ? Math.max( 0, Math.ceil( ( resendAt     - now ) / 1000 ) ) : 0;
-    const codeExpired   : boolean = codeExpiresAt > 0 && codeRemainingSec === 0;
+    // derived resend cooldown (seconds remaining; 0 when elapsed / not yet started)
+    const resendRemainingSec : number = resendAt > 0 ? Math.max( 0, Math.ceil( ( resendAt - now ) / 1000 ) ) : 0;
     const canResend     : boolean = resendRemainingSec === 0 && !submitting;
 
     // format a seconds count as "M:SS" (or "H:MM:SS" once it passes an hour) — used by both countdowns.
@@ -210,9 +204,10 @@ export function Register( props : Register.Props ) : JSX.Element
     const identifier : string = method === ContactMethod.EMAIL ? email : phone;
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // TERMS "Agree & Create Account" → create the account. POST /register creates the pending account
-    // (Cognito sign-up) AND triggers the email/SMS verification code; we then advance to VERIFY to
-    // confirm that code. Enumeration-neutral: an existing identifier returns OK with a token all the same.
+    // TERMS "Agree & Create Account" → create the account. POST /register creates the account (app-driven —
+    // no Cognito code) AND sends a BRANDED email-verification LINK; we then advance to VERIFY, which is a
+    // "check your email" screen (the link is confirmed out-of-band on the landing page). `origin` lets the
+    // link resolve to this exact host. Enumeration-neutral: an existing identifier returns OK all the same.
     async function onConfirmTerms() : Promise<void>
     {
         if( !termsValid || submitting ) return;
@@ -222,12 +217,12 @@ export function Register( props : Register.Props ) : JSX.Element
         try
         {
             const reply : RestfulService.Reply<PostRegister.Response> = await appmodel.server.fetch( new PostRegister( {
-                method, account: identifier, firstName, lastName, password, acceptedTerms: agreed, botToken,
+                method, account: identifier, firstName, lastName, password, acceptedTerms: agreed, botToken, origin: window.location.origin,
             } ) );
             if( reply.ok && reply.data?.registrationToken )
             {
                 setRegistrationToken( reply.data.registrationToken );
-                startCodeTimers( reply.data.codeExpiresInSec, reply.data.resendCooldownSec );
+                startResendCooldown( reply.data.resendCooldownSec );
                 setStep( Register.Step.VERIFY );
             }
             else if( reply.status === NetworkUtils.Status.CONFLICT )
@@ -250,46 +245,16 @@ export function Register( props : Register.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // VERIFY "Verify" → confirm the emailed/texted code (POST /register/verify). On success the account
-    // is activated → show the success panel.
-    async function onVerify() : Promise<void>
+    // Arm the resend cooldown from a server response (the verification link's own TTL lives on the landing
+    // action — we only track when "Resend link" re-enables here).
+    function startResendCooldown( resendCooldownSec : number ) : void
     {
-        if( !codeValid || submitting ) return;
-        setError( "" );
-        setSubmitting( true );
-        try
-        {
-            const reply : RestfulService.Reply<PostRegisterVerify.Response> = await appmodel.server.fetch(
-                new PostRegisterVerify( { registrationToken, code } ) );
-            if( reply.ok && reply.data?.complete )
-            {
-                setStep( Register.Step.SUCCESS );
-            }
-            else
-            {
-                setError( "That code isn't right or has expired. Please try again." );
-            }
-        }
-        catch( err )
-        {
-            appmodel.log.warn( "register.verify", err );
-            setError( "We couldn't verify that code. Please try again." );
-        }
-        finally { setSubmitting( false ); }
+        setResendAt( resendCooldownSec > 0 ? Date.now() + resendCooldownSec * 1000 : 0 );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // Arm the verify-screen countdowns from a server response: when the code expires + when resend re-enables.
-    function startCodeTimers( codeExpiresInSec : number, resendCooldownSec : number ) : void
-    {
-        const at : number = Date.now();
-        setCodeExpiresAt( codeExpiresInSec > 0 ? at + codeExpiresInSec * 1000 : 0 );
-        setResendAt( resendCooldownSec > 0 ? at + resendCooldownSec * 1000 : 0 );
-    }
-
-    ////////////////////////////////////////////////////////////////////////////////////////////
-    // Re-send the verification code (POST /api/auth/v1/verify/resend). Gated by the resend cooldown; on
-    // success a fresh code is sent and BOTH countdowns reset. Enumeration-neutral (always reports sent).
+    // Re-send the verification LINK (POST /api/auth/v1/verify/resend). Gated by the resend cooldown; on
+    // success a fresh branded link is sent and the cooldown resets. Enumeration-neutral (always reports sent).
     async function onResend() : Promise<void>
     {
         if( !canResend ) return;
@@ -298,18 +263,15 @@ export function Register( props : Register.Props ) : JSX.Element
         try
         {
             const reply : RestfulService.Reply<PostVerifyResend.Response> = await appmodel.server.fetch(
-                new PostVerifyResend( { registrationToken } ) );
+                new PostVerifyResend( { registrationToken, origin: window.location.origin } ) );
             if( reply.ok )
-            {
-                setCode( "" );
-                startCodeTimers( reply.data?.codeExpiresInSec ?? 0, reply.data?.resendCooldownSec ?? 0 );
-            }
-            else setError( "We couldn't resend the code. Please try again." );
+                startResendCooldown( reply.data?.resendCooldownSec ?? 0 );
+            else setError( "We couldn't resend the verification link. Please try again." );
         }
         catch( err )
         {
             appmodel.log.warn( "register.resend", err );
-            setError( "We couldn't resend the code. Please try again." );
+            setError( "We couldn't resend the verification link. Please try again." );
         }
         finally { setSubmitting( false ); }
     }
@@ -368,7 +330,7 @@ export function Register( props : Register.Props ) : JSX.Element
         else if( step === Register.Step.PASSWORD ) onContinuePassword();
         else if( step === Register.Step.BOT )      onContinueBot();
         else if( step === Register.Step.TERMS )    void onConfirmTerms();
-        else if( step === Register.Step.VERIFY )   void onVerify();
+        else if( step === Register.Step.VERIFY )   onComplete();
     }
 
 
@@ -471,25 +433,17 @@ export function Register( props : Register.Props ) : JSX.Element
                                         <Button type="submit" variant="contained" fullWidth>{"Continue"}</Button>
                                     </Show>
 
-                                    {/* STEP 5 — VERIFY the contact method */}
+                                    {/* STEP 5 — VERIFY: account created; a branded verification LINK was emailed (confirmed out-of-band) */}
                                     <Show show={ step === Register.Step.VERIFY }>
-                                        <TextLabel align="center"
-                                                value={ ( method === ContactMethod.EMAIL ? "We emailed a code to " : "We texted a code to " ) + identifierDisplay } />
-                                        <TextInput id="register-code"
-                                                    label={"Verification code"}
-                                                    value={ code }
-                                                    allNumeric
-                                                    maxLength={ Register.CODE_LENGTH }
-                                                    align="center"
-                                                    onChange={ ( value : string ) => { setCode( value ); if( error ) setError( "" ); } } />
-                                        <Button type="submit" variant="contained" fullWidth disabled={ !codeValid || submitting || codeExpired }>{ submitting ? "Verifying…" : "Verify" }</Button>
-                                        {/* code-expiry countdown — turns into a prompt to resend once it hits zero */}
-                                        <TextLabel align="center" color="secondary"
-                                                value={ codeExpired
-                                                            ? "Your code has expired — request a new one."
-                                                            : ( codeRemainingSec > 0 ? "Code expires in " + fmtClock( codeRemainingSec ) : "" ) } />
-                                        {/* resend, gated by the cooldown (shows the remaining wait while disabled) */}
-                                        <LinkButton label={ canResend ? "Resend code" : "Resend code in " + fmtClock( resendRemainingSec ) }
+                                        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1.5, py: 1 }}>
+                                            <CheckCircleOutlineOutlinedIcon color="success" sx={{ fontSize: 56 }} />
+                                            <TextLabel variant="h6" align="center" value={"Almost there — verify your email"} />
+                                            <TextLabel align="center" color="secondary"
+                                                    value={ "We emailed a verification link to " + identifierDisplay + ". Open it to verify your email address. Your account is ready — you can sign in now." } />
+                                        </Box>
+                                        <Button type="submit" variant="contained" fullWidth>{"Sign In"}</Button>
+                                        {/* resend the branded link, gated by the cooldown (shows the remaining wait while disabled) */}
+                                        <LinkButton label={ canResend ? "Resend verification link" : "Resend link in " + fmtClock( resendRemainingSec ) }
                                                 disabled={ !canResend }
                                                 onClick={ () => { void onResend(); } }
                                                 sx={{ width: "auto", alignSelf: "center" }} />

@@ -1,3 +1,4 @@
+import AppModel from "@model/AppModel";
 //
 import React from 'react';
 import { JSX } from "react";
@@ -5,12 +6,15 @@ import { JSX } from "react";
 
 //
 import ComboInput from './ComboInput';
+import ComboMultInput from './ComboMultInput';
 
 
 
 
 export function CountryInput( props: CountryInput.Props ) : JSX.Element
 {
+    // the account's allowed country set (bootstrap config) — the default limit when no explicit `only` is given
+    const appmodel : AppModel = AppModel.instance();
     const [value,setValue]          = React.useState< string | null >( props.value );
     const [disabled,setDisabled]    = React.useState< boolean >( props.disabled != undefined ? props.disabled : false );
     const countries                 = React.useRef< Array<ComboInput.Choice> >( [
@@ -260,18 +264,21 @@ export function CountryInput( props: CountryInput.Props ) : JSX.Element
 {label: "Zimbabwe (ZW)", value: "ZW"} 
     ] );
 
-    const choices : Array<ComboInput.Choice> = React.useMemo( onlyFilter, [ props.only ] );
+    // an explicit `only` wins; otherwise fall back to the account's bootstrap-configured country set
+    const limit : Array<string> = ( props.only && props.only.length > 0 ) ? props.only : ( appmodel.config.countries ?? [] );
+    const choices : Array<ComboInput.Choice> = React.useMemo( onlyFilter, [ props.only, limit.join( "," ) ] );
 
     React.useEffect( propsUpdated, [props.value] );
     React.useEffect( disabledChanged, [props.disabled] );
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////
+    // limit the full list to `limit` (explicit `only` or the bootstrap countries); empty limit = all countries
     function onlyFilter() : Array<ComboInput.Choice>
     {
         const all : Array<ComboInput.Choice> = countries.current;
-        if( !props.only || props.only.length === 0 )return all;
+        if( limit.length === 0 ) return all;
 
-        const allowed : Set<string> = new Set<string>( props.only.map( ( c : string ) => c.toUpperCase().trim() ).filter( ( c : string ) => c !== "" ) );
+        const allowed : Set<string> = new Set<string>( limit.map( ( code : string ) => code.toUpperCase().trim() ).filter( ( code : string ) => code !== "" ) );
 
         // Filter by value (expected to be the ISO country code)
         return all.filter( ( choice : ComboInput.Choice ) => allowed.has( String( choice.value ).toUpperCase() ) );
@@ -296,6 +303,16 @@ export function CountryInput( props: CountryInput.Props ) : JSX.Element
         if( props.onChange )props.onChange( new_value );
     }
 
+    // multi-select mode (chips) reuses the same (bootstrap-limited) choice list; single mode is unchanged
+    if( props.multiple )
+        return  <ComboMultInput id={ props.id }
+                                label={ props.label }
+                                disabled={ disabled }
+                                choices={ choices }
+                                value={ props.values ?? [] }
+                                size={ "small" }
+                                onChange={ props.onChangeMulti } />;
+
     return  <ComboInput id={ props.id }
                         label={ props.label }
                         disabled={ disabled }
@@ -314,6 +331,10 @@ export namespace CountryInput
         disabled?       : boolean;
         only?           : Array<string>;
         onChange?       : ( new_value : string | null ) => void;
+        // multi-select (chips) mode — parallel to the single API; `values`/`onChangeMulti` drive it
+        multiple?       : boolean;
+        values?         : Array<string>;
+        onChangeMulti?  : ( new_value : Array<string> ) => void;
     }
 }
 

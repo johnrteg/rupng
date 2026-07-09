@@ -77,6 +77,26 @@ export namespace Type
     export type Currency = string;
 
     //
+    // Money — amounts are stored as INTEGER minor units to avoid floating-point drift. Two precisions:
+    //
+    //   • {@link Cents}      — whole cents (1/100 of the currency unit). The default for BALANCES, budgets,
+    //                          caps, invoice lines — any settled amount. $12.34 → 1234.
+    //   • {@link MilliCents} — thousandths of a cent (1/100000 of the currency unit). For per-unit RATES that
+    //                          are FRACTIONAL cents — e.g. $0.025 (2.5¢) per SMS segment → 2500 milliCents.
+    //                          1 cent = 1000 milliCents. Keeps sub-cent pricing exact; convert to Cents (with
+    //                          explicit rounding) only when settling a total. See `CurrencyUtils`.
+    //
+    // Rule of thumb: a stored/settled amount is `Cents`; a rate you multiply by a quantity is `MilliCents`.
+    // Never do money math in floats or dollars — stay in integer minor units and convert at the edges.
+    //
+
+    /** Whole cents — integer minor units (1/100 of the currency unit). $12.34 → 1234. */
+    export type Cents = number;
+
+    /** Thousandths of a cent — integer (1/100000 of the currency unit). 2.5¢ → 2500. For fractional-cent rates. */
+    export type MilliCents = number;
+
+    //
     // JSON — a precise, recursive type for "any JSON value", as an alternative to `any`
     // (which disables checking) and `object` (which excludes primitives + arrays). Use it
     // for payloads that are JSON by contract: API bodies, event/message payloads, stored

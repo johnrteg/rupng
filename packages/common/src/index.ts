@@ -10,6 +10,7 @@ export type { Type } from './Types';
 // exported/public fucntion
 //
 export { default as NumberUtils } from './utils/NumberUtils';
+export { default as CurrencyUtils } from './utils/CurrencyUtils';
 export { default as StringUtils } from './utils/StringUtils';
 export { default as ByteUtils } from './utils/ByteUtils';
 export { default as ObjectUtils } from './utils/ObjectUtils';

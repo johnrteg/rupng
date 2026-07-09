@@ -1,10 +1,11 @@
 //
 import { JSX } from "react";
 
-import { Badge, IconButton, Tooltip } from '@mui/material';
+import { Badge } from '@mui/material';
 import NotificationsNoneOutlinedIcon from '@mui/icons-material/NotificationsNoneOutlined';
 
 import AppModel from '@model/AppModel';
+import ButtonIcon from '@widgets/core/ButtonIcon';
 
 //
 // NotificationButton — top-bar bell with an unread-count badge. Stubbed at 3 for now; clicking is a TODO
@@ -22,13 +23,11 @@ export function NotificationButton( props : NotificationButton.Props ) : JSX.Ele
         appmodel.log.info( "notifications (stub)", { count } );
     }
 
-    return  <Tooltip title="Notifications">
-                <IconButton color="inherit" onClick={ onClick }>
-                    <Badge badgeContent={ count } color="error" overlap="circular">
-                        <NotificationsNoneOutlinedIcon />
-                    </Badge>
-                </IconButton>
-            </Tooltip>;
+    return  <ButtonIcon id="notifications" label="Notifications" color="inherit"
+                        icon={ <Badge badgeContent={ count } color="error" overlap="circular">
+                                   <NotificationsNoneOutlinedIcon />
+                               </Badge> }
+                        onClick={ onClick } />;
 }
 
 export namespace NotificationButton

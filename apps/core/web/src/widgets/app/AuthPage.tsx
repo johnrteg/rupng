@@ -6,13 +6,14 @@ import { Box, Divider, Stack, Typography } from '@mui/material';
 
 //
 import AppModel         from '@model/AppModel';
-import Page             from '../../pages/common/Page';
 import { Access }       from '@repo/system';
+
+import Page             from '../../pages/common/Page';
 import NavigationBar    from './navigation/NavigationBar';
 import ChatPanel        from './ChatPanel';
-import ImageInput from '../core/ImageInput';
-import SearchInput from '../core/SearchInput';
-import UserMenu from './UserMenu';
+import ImageInput       from '../core/ImageInput';
+import SearchInput      from '../core/SearchInput';
+import UserMenu         from './UserMenu';
 import NotificationButton from './NotificationButton';
 
 export function AuthPage( props : AuthPage.Props ) : JSX.Element

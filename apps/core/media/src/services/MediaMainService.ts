@@ -2,18 +2,22 @@
 import { RequestContext, Sqs } from "@repo/services";
 import type { Type } from "@repo/common";
 import type { Message } from "@aws-sdk/client-sqs";
+import { MediaConfig } from "@repo/api";
 
 import MediaService from "./MediaService";
 import { MediaPipeline } from "../pipeline/MediaPipeline";
 
 import PostUploadImpl from "../endpoints/PostUploadImpl";
 import PostUploadCompleteImpl from "../endpoints/PostUploadCompleteImpl";
+import PostAssetReplaceImpl from "../endpoints/PostAssetReplaceImpl";
 import GetAssetsImpl from "../endpoints/GetAssetsImpl";
 import GetAssetImpl from "../endpoints/GetAssetImpl";
 import GetAssetStatusImpl from "../endpoints/GetAssetStatusImpl";
 import PatchAssetImpl from "../endpoints/PatchAssetImpl";
+import PostAvatarImpl from "../endpoints/PostAvatarImpl";
 import PostAssetVariantsImpl from "../endpoints/PostAssetVariantsImpl";
 import PostAssetRescanImpl from "../endpoints/PostAssetRescanImpl";
+import PostAssetScanImpl from "../endpoints/PostAssetScanImpl";
 import PostAssetDuplicateImpl from "../endpoints/PostAssetDuplicateImpl";
 import PostAssetPosterImpl from "../endpoints/PostAssetPosterImpl";
 import DeleteAssetImpl from "../endpoints/DeleteAssetImpl";
@@ -25,7 +29,11 @@ import GetDensitiesImpl from "../endpoints/GetDensitiesImpl";
 import PostAssetDensityImpl from "../endpoints/PostAssetDensityImpl";
 import GetVariantSpecsImpl from "../endpoints/GetVariantSpecsImpl";
 import PostAiGenerateImpl from "../endpoints/PostAiGenerateImpl";
+import GetGenerateBatchImpl from "../endpoints/GetGenerateBatchImpl";
+import PostGeneratePromoteImpl from "../endpoints/PostGeneratePromoteImpl";
+import DeleteGenerateBatchImpl from "../endpoints/DeleteGenerateBatchImpl";
 import PostAssetTranscribeImpl from "../endpoints/PostAssetTranscribeImpl";
+import PostAssetExtractAudioImpl from "../endpoints/PostAssetExtractAudioImpl";
 import PostAssetCompressImpl from "../endpoints/PostAssetCompressImpl";
 import PostAssetArchiveImpl from "../endpoints/PostAssetArchiveImpl";
 import GetArchivesImpl from "../endpoints/GetArchivesImpl";
@@ -34,6 +42,13 @@ import DeleteArchiveImpl from "../endpoints/DeleteArchiveImpl";
 import PostVoiceCloneImpl from "../endpoints/PostVoiceCloneImpl";
 import GetVoicesImpl from "../endpoints/GetVoicesImpl";
 import DeleteVoiceImpl from "../endpoints/DeleteVoiceImpl";
+import GetStudioProjectsImpl from "../endpoints/GetStudioProjectsImpl";
+import PostStudioProjectImpl from "../endpoints/PostStudioProjectImpl";
+import PatchStudioProjectImpl from "../endpoints/PatchStudioProjectImpl";
+import DeleteStudioProjectImpl from "../endpoints/DeleteStudioProjectImpl";
+import GetStudioCanvasImpl from "../endpoints/GetStudioCanvasImpl";
+import PutStudioCanvasImpl from "../endpoints/PutStudioCanvasImpl";
+import PostStudioRenderImpl from "../endpoints/PostStudioRenderImpl";
 
 //
 // MAIN role — the /media/* API. Also DRAINS the ingest queues locally (scan → process) so the pipeline works
@@ -54,6 +69,8 @@ export class MediaMainService extends MediaService
         void this.startTranscribeConsumer();
         void this.startArchiveConsumer();
         void this.startVideoConsumer();
+        void this.startStudioRenderConsumer();
+        void this.startStudioRenderRemotionConsumer();
     }
 
     /////////////////////////////////////////////////////////////////////
@@ -62,12 +79,15 @@ export class MediaMainService extends MediaService
         await super.registerEndpoints();          // keeps /health + /version
         this.register( new PostUploadImpl( this ) );
         this.register( new PostUploadCompleteImpl( this ) );
+        this.register( new PostAssetReplaceImpl( this ) );
         this.register( new GetAssetsImpl( this ) );
         this.register( new GetAssetImpl( this ) );
         this.register( new GetAssetStatusImpl( this ) );
         this.register( new PatchAssetImpl( this ) );
+        this.register( new PostAvatarImpl( this ) );
         this.register( new PostAssetVariantsImpl( this ) );
         this.register( new PostAssetRescanImpl( this ) );
+        this.register( new PostAssetScanImpl( this ) );
         this.register( new PostAssetDuplicateImpl( this ) );
         this.register( new PostAssetPosterImpl( this ) );
         this.register( new DeleteAssetImpl( this ) );
@@ -79,7 +99,11 @@ export class MediaMainService extends MediaService
         this.register( new PostAssetDensityImpl( this ) );
         this.register( new GetVariantSpecsImpl( this ) );
         this.register( new PostAiGenerateImpl( this ) );
+        this.register( new GetGenerateBatchImpl( this ) );
+        this.register( new PostGeneratePromoteImpl( this ) );
+        this.register( new DeleteGenerateBatchImpl( this ) );
         this.register( new PostAssetTranscribeImpl( this ) );
+        this.register( new PostAssetExtractAudioImpl( this ) );
         this.register( new PostAssetCompressImpl( this ) );
         this.register( new PostAssetArchiveImpl( this ) );
         this.register( new GetArchivesImpl( this ) );
@@ -88,6 +112,13 @@ export class MediaMainService extends MediaService
         this.register( new PostVoiceCloneImpl( this ) );
         this.register( new GetVoicesImpl( this ) );
         this.register( new DeleteVoiceImpl( this ) );
+        this.register( new GetStudioProjectsImpl( this ) );
+        this.register( new PostStudioProjectImpl( this ) );
+        this.register( new PatchStudioProjectImpl( this ) );
+        this.register( new DeleteStudioProjectImpl( this ) );
+        this.register( new GetStudioCanvasImpl( this ) );
+        this.register( new PutStudioCanvasImpl( this ) );
+        this.register( new PostStudioRenderImpl( this ) );
     }
 
     /////////////////////////////////////////////////////////////////////
@@ -171,7 +202,7 @@ export class MediaMainService extends MediaService
                         try
                         {
                             const job = JSON.parse( message.Body ?? "{}" ) as MediaService.GenerateJob;
-                            if( job.accountId && Array.isArray( job.guids ) && job.guids.length ) await this.runGenerate( job );
+                            if( job.accountId && Array.isArray( job.candidates ) && job.candidates.length ) await this.runGenerate( job );
                             if( message.ReceiptHandle ) await this.sqs.delete( "media-generate", message.ReceiptHandle );
                         }
                         catch( err ) { this.log.warn( "media generate failed (will redeliver)", { error: String( err ) } ); }
@@ -199,8 +230,10 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
-                            const req = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string; userId? : string };
-                            if( req.accountId && req.guid ) await this.runTranscribe( req.accountId, req.guid, req.userId );
+                            const req = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string; userId? : string; op? : string };
+                            // the queue carries both jobs (op discriminator): "extract" = audio-track only, else transcribe
+                            if( req.accountId && req.guid && req.op === "extract" ) await this.runExtractAudio( req.accountId, req.guid, req.userId );
+                            else if( req.accountId && req.guid ) await this.runTranscribe( req.accountId, req.guid, req.userId );
                             if( message.ReceiptHandle ) await this.sqs.delete( "media-transcribe", message.ReceiptHandle );
                         }
                         catch( err ) { this.log.warn( "media transcribe failed (will redeliver)", { error: String( err ) } ); }
@@ -209,6 +242,65 @@ export class MediaMainService extends MediaService
             catch( error ) { this.log.warn( "media transcribe receive failed — backing off", { error: String( error ) } ); await this.delay( 5000 ); }
         }
         this.log.info( "media transcribe consumer stopped" );
+    }
+
+    /////////////////////////////////////////////////////////////////////
+    // SQS studio-render poll loop (dev drain of the Studio video-render Job, media-21) — composite the project
+    // timeline to an mp4 with ffmpeg off the request path; emits media.job stage events. MAIN drains locally.
+    private async startStudioRenderConsumer() : Promise<void>
+    {
+        this.log.info( "studio render consumer started (SQS studio-render)" );
+        while( !this.stopping )
+        {
+            try
+            {
+                const received : Type.Result<Array<Message>> = await this.sqs.receive( "studio-render", 2, 10 );
+                if( !received.ok ) { await this.delay( 5000 ); continue; }
+                for( const message of received.data )
+                    await RequestContext.run( { transactionId: Sqs.transactionId( message ) }, async () : Promise<void> =>
+                    {
+                        try
+                        {
+                            const req = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; projectId? : string; userId? : string };
+                            if( req.accountId && req.projectId ) await this.runStudioRender( req.accountId, req.projectId, req.userId );
+                            if( message.ReceiptHandle ) await this.sqs.delete( "studio-render", message.ReceiptHandle );
+                        }
+                        catch( err ) { this.log.warn( "studio render failed (will redeliver)", { error: String( err ) } ); }
+                    } );
+            }
+            catch( error ) { this.log.warn( "studio render receive failed — backing off", { error: String( error ) } ); await this.delay( 5000 ); }
+        }
+        this.log.info( "studio render consumer stopped" );
+    }
+
+    /////////////////////////////////////////////////////////////////////
+    // SQS studio-render-remotion poll loop (media-21.18) — the Chromium/Remotion render engine. Same job payload
+    // as the ffmpeg queue; the endpoint routes here when MediaConfig.render.engine === REMOTION. Runs the render
+    // with the REMOTION engine (exact preview==output via headless Chromium). MAIN drains locally.
+    private async startStudioRenderRemotionConsumer() : Promise<void>
+    {
+        this.log.info( "studio render (remotion) consumer started (SQS studio-render-remotion)" );
+        while( !this.stopping )
+        {
+            try
+            {
+                const received : Type.Result<Array<Message>> = await this.sqs.receive( "studio-render-remotion", 2, 10 );
+                if( !received.ok ) { await this.delay( 5000 ); continue; }
+                for( const message of received.data )
+                    await RequestContext.run( { transactionId: Sqs.transactionId( message ) }, async () : Promise<void> =>
+                    {
+                        try
+                        {
+                            const req = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; projectId? : string; userId? : string };
+                            if( req.accountId && req.projectId ) await this.runStudioRender( req.accountId, req.projectId, req.userId, MediaConfig.RenderEngine.REMOTION );
+                            if( message.ReceiptHandle ) await this.sqs.delete( "studio-render-remotion", message.ReceiptHandle );
+                        }
+                        catch( err ) { this.log.warn( "studio render (remotion) failed (will redeliver)", { error: String( err ) } ); }
+                    } );
+            }
+            catch( error ) { this.log.warn( "studio render (remotion) receive failed — backing off", { error: String( error ) } ); await this.delay( 5000 ); }
+        }
+        this.log.info( "studio render (remotion) consumer stopped" );
     }
 
     /////////////////////////////////////////////////////////////////////

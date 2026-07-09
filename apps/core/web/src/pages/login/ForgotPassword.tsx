@@ -11,7 +11,8 @@ import ArrowBackIcon        from '@mui/icons-material/ArrowBack';
 
 //
 import { EmailUtils } from "@repo/common";
-import { ContactMethod } from "@repo/api";
+import { ContactMethod, PostPasswordForgot } from "@repo/api";
+import { RestfulService } from "@repo/endpoint";
 
 //
 import AppModel             from "@model/AppModel";
@@ -31,9 +32,10 @@ import Show                 from "@widgets/core/Show";
 
 
 //
-// Forgot PASSWORD — request a reset link/code for a known identifier. Enumeration-neutral: the
-// confirmation is the same whether or not the contact exists. The actual reset (entering a new
-// password from a token) is a separate page. STUBBED — see apps/core/auth/specs/ACCESS-FLOWS.md.
+// Forgot PASSWORD — request a reset for a known identifier. EMAIL is wired to the app-driven flow (a branded
+// reset LINK sent via the email service); the new password is set on the no-auth /reset landing page. PHONE
+// stays informational until the SMS rail is live. Enumeration-neutral: the confirmation is the same whether or
+// not the contact exists.
 //
 export function ForgotPassword( props : ForgotPassword.Props ) : JSX.Element
 {
@@ -50,9 +52,22 @@ export function ForgotPassword( props : ForgotPassword.Props ) : JSX.Element
     function onSubmit( event : React.FormEvent<HTMLFormElement> ) : void
     {
         event.preventDefault();
+        void submit();
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Request the reset. EMAIL uses the app-driven flow (POST /password/forgot → a branded reset LINK via the
+    // email service; `origin` resolves the link to this host). PHONE stays informational until the SMS rail is
+    // live. Enumeration-neutral: the confirmation is identical regardless of whether the contact exists.
+    async function submit() : Promise<void>
+    {
         if( !valid ) return;
-        // TODO: POST /api/auth/v1/recover/password — send a reset link/code; user then sets a new password.
-        appmodel.log.info( "forgot-password", { method, email, phone } );
+        if( method === ContactMethod.EMAIL )
+        {
+            const reply : RestfulService.Reply<PostPasswordForgot.Response> = await appmodel.server.fetch(
+                new PostPasswordForgot( { account: email, origin: window.location.origin } ) );
+            void reply;   // neutral — always show the same confirmation
+        }
         setSent( true );
     }
 

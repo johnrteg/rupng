@@ -1,5 +1,5 @@
 //
-import { GetAssets, Media } from '@repo/api';
+import { GetAssets, Media, Paging } from '@repo/api';
 import { NetworkUtils, ObjectUtils, type Type } from '@repo/common';
 import { RestfulEndpoint } from '@repo/endpoint';
 import MediaService from '../services/MediaService';
@@ -37,7 +37,8 @@ export class GetAssetsImpl extends GetAssets
                 && ( !q.campaignId || ( a.campaignIds ?? [] ).includes( q.campaignId ) ) )   // campaign = filter, not ownership
             .sort( ( a, b ) => String( b.createdAt ?? "" ).localeCompare( String( a.createdAt ?? "" ) ) );   // newest first
 
-        return { status: NetworkUtils.Status.OK, data: { assets } };
+        const paged : Paging.Result<Media.Asset> = Paging.paginate( assets, q );
+        return { status: NetworkUtils.Status.OK, data: paged };
     }
 }
 

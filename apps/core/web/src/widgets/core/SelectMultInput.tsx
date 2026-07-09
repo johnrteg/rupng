@@ -4,7 +4,7 @@ import { JSX } from "react";
 
 
 //
-import { InputLabel, MenuItem, FormHelperText, FormControl, ListItemIcon, ListSubheader, Divider, Chip } from '@mui/material';
+import { Box, InputLabel, MenuItem, FormHelperText, FormControl, ListItemIcon, ListSubheader, Divider, Chip } from '@mui/material';
 import { Select } from '@mui/material';
 import { ValueUtils } from '@repo/common';
 
@@ -68,20 +68,33 @@ export function SelectMultInput( props: SelectMultInput.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // remove one selected value (the chip's delete). Guarded by readOnly.
+    function removeValue( target : string ) : void
+    {
+        setValue( value.filter( ( entry : string ) : boolean => entry !== target ) );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // one selected value as a deletable chip. `onMouseDown` stops the click from opening the Select's menu.
+    function chipFor( val : string ) : JSX.Element | null
+    {
+        const option : SelectMultInput.Choice | undefined = props.choices.find( ( choice : SelectMultInput.Choice ) : boolean => choice.value === val );
+        if( !option ) return null;
+        return  <Chip key={ option.value }
+                      variant="outlined"
+                      label={ option.label }
+                      size={ props.dense ? "small" : "medium" }
+                      onMouseDown={ ( event : React.MouseEvent ) : void => event.stopPropagation() }
+                      onDelete={ props.readOnly ? undefined : () : void => removeValue( val ) } />;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // render the selected values as a wrapping row of chips (gap-spaced — no ad-hoc chip padding)
     function onRenderValue( selected : Array<string> ) : React.ReactNode
     {
-        return selected.map((val, idx) => {
-        const option : SelectMultInput.Choice | undefined = props.choices.find(choice => choice.value === val);
-        return option ? (
-                <Chip
-                    key={option.value}
-                    variant="outlined"
-                    label={option.label}
-                    sx={ { pt : 0.5 } }
-                    size={props.dense ? "small" : "medium"}
-                />
-            ) : null;
-        });
+        return  <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                    { selected.map( ( val : string ) : JSX.Element | null => chipFor( val ) ) }
+                </Box>;
     }
 
     // ===============================================================================================

@@ -3,15 +3,17 @@ import AppModel from "@model/AppModel";
 import React from 'react';
 import { JSX } from "react";
 
-import { Box, Button, Card, CardContent, CardHeader, Chip, CircularProgress, Divider, FormControlLabel, Slider, Stack, Switch, Tab, Tabs, Typography } from "@mui/material";
+import { Box, Button, Card, CardContent, CardHeader, Checkbox, Chip, CircularProgress, Divider, FormControlLabel, Slider, Stack, Switch, Tab, Tabs, Typography } from "@mui/material";
 import ImageOutlinedIcon        from '@mui/icons-material/ImageOutlined';
 import MovieOutlinedIcon        from '@mui/icons-material/MovieOutlined';
 import RecordVoiceOverOutlinedIcon from '@mui/icons-material/RecordVoiceOverOutlined';
 import GraphicEqOutlinedIcon    from '@mui/icons-material/GraphicEqOutlined';
 import AutoAwesomeOutlinedIcon  from '@mui/icons-material/AutoAwesomeOutlined';
+import LibraryAddOutlinedIcon   from '@mui/icons-material/LibraryAddOutlined';
 
 import { Access } from '@repo/system';
-import { AiRouting, AiGen, Media, PostAiGenerate, DeleteAsset, GetAsset, GetMediaUrl, GetVoices } from '@repo/api';
+import { AiRouting, AiGen, Media, PostAiGenerate, GetGenerateBatch, PostGeneratePromote, DeleteGenerateBatch, GetVoices } from '@repo/api';
+import CampaignSelect from '@widgets/app/CampaignSelect';
 import { RestfulService } from '@repo/endpoint';
 
 import AuthPage    from '@widgets/app/AuthPage';
@@ -20,7 +22,6 @@ import SelectInput from '@widgets/core/SelectInput';
 import AudioInput  from '@widgets/core/AudioInput';
 import SnackAlert  from '@widgets/core/SnackAlert';
 import AccountChange from '@widgets/app/AccountChange';
-import AiGenSaveDialog from '@pages/media/dialogs/AiGenSaveDialog';
 
 /** One generative surface (a tab) mapped to its AiRouting modality. */
 interface TabDef { label : string; icon : JSX.Element; modality : AiRouting.Modality; }
@@ -37,10 +38,10 @@ const TABS : Array<TabDef> =
 const PROVIDER_AUTO : string = "";   // "" = use the account's config/ai route for the modality
 
 //
-// Media : AI Gen — create NEW assets from prompts (distinct from Browse, which acquires EXISTING assets).
-// One tab per generative modality; each renders the normalized provider attributes (AiGen.attributesFor) as a
-// dynamic form, generates a preview via PostAiGenerate, and lets the user name + tag it before saving to the
-// Library (or discarding). Provider is the account default (config/ai) unless overridden per generation.
+// Media : AI Gen — create NEW assets from prompts (distinct from Browse, which acquires EXISTING assets). One
+// tab per generative modality; each renders the normalized provider attributes (AiGen.attributesFor) as a
+// dynamic form. Generation STAGES candidates (media-18) — they're produced into a staging bucket, NOT the
+// library; the user reviews them, multi-selects, and adds the chosen ones to the library (or discards).
 //
 export function MediaAiGen( props : MediaAiGen.Props ) : JSX.Element
 {
@@ -53,23 +54,22 @@ export function MediaAiGen( props : MediaAiGen.Props ) : JSX.Element
     const [count,setCount]       = React.useState< number >( 1 );
 
     const [generating,setGenerating] = React.useState< boolean >( false );
+    const [promoting,setPromoting]   = React.useState< boolean >( false );
     const [batch,setBatch]           = React.useState< { batchId : string; provider : string; model? : string } | null >( null );
-    const [candidates,setCandidates]           = React.useState< Array<MediaAiGen.Candidate> >( [] );
-    const [picked,setPicked]         = React.useState< AiGen.Candidate | null >( null );
+    const [candidates,setCandidates] = React.useState< Array<AiGen.Candidate> >( [] );
+    const [selected,setSelected]     = React.useState< Set<string> >( new Set() );
+    const [acceptCampaigns,setAcceptCampaigns] = React.useState< Array<string> >( [] );   // campaigns to file accepted images into
     const [voices,setVoices]         = React.useState< Array<Media.Voice> >( [] );
-    const [saveOpen,setSaveOpen]     = React.useState< boolean >( false );
     const [snack,setSnack]           = React.useState< { message : string; severity : SnackAlert.Severity } | null >( null );
 
     const modality : AiRouting.Modality = TABS[ tabIndex ].modality;
     const attributes : Array<AiGen.Param> = AiGen.attributesFor( modality );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // provider choices for this modality: "Auto" (account default) + every catalogued provider that serves it
+    // provider choices for this modality — a provider MUST be picked (no "Auto"); the list is every catalogued
+    // provider that serves the modality
     const providerChoices : Array<SelectInput.Choice> =
-    [
-        { value: PROVIDER_AUTO, label: "Auto (account default)" },
-        ...AiRouting.providersFor( modality ).map( ( info : AiRouting.ProviderInfo ) : SelectInput.Choice => ( { value: info.provider, label: info.label } ) ),
-    ];
+        AiRouting.providersFor( modality ).map( ( info : AiRouting.ProviderInfo ) : SelectInput.Choice => ( { value: info.provider, label: info.label } ) );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // how many solutions this modality can yield: the chosen provider's range, else the range across all
@@ -79,16 +79,18 @@ export function MediaAiGen( props : MediaAiGen.Props ) : JSX.Element
         : AiRouting.candidateRangeFor( modality, AiRouting.providersFor( modality ).map( ( info : AiRouting.ProviderInfo ) : AiRouting.Provider => info.provider ) );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // switching modality resets the transient form (provider/params/count/preview) to that modality's defaults
+    // switching modality resets the transient form (provider/params/count/staged solutions) to defaults
     function selectTab( index : number ) : void
     {
         setTabIndex( index );
         setProvider( PROVIDER_AUTO );
         setParams( {} );
         setCount( 1 );
-        setBatch( null );
-        setCandidates( [] );
+        reset();
     }
+
+    // clear the staged batch + selection
+    function reset() : void { setBatch( null ); setCandidates( [] ); setSelected( new Set() ); setAcceptCampaigns( [] ); }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // load the account's cloned voices once — they populate the Voice tab's voice picker
@@ -152,14 +154,13 @@ export function MediaAiGen( props : MediaAiGen.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // start an async generation (media-19): PostAiGenerate enqueues the job + returns pending candidate
-    // placeholders; the poll effect resolves each preview as the media-generate Job produces the bytes.
+    // start an async generation (media-18): PostAiGenerate enqueues the job + returns the staging batch with
+    // pending candidate placeholders; the poll effect resolves each preview as the Job stages the bytes.
     async function generate() : Promise<void>
     {
         if( prompt.trim() === "" ) return;
         setGenerating( true );
-        setBatch( null );
-        setCandidates( [] );
+        reset();
         // fill unset attributes with their declared defaults so the provider gets a complete param set
         const merged : Record<string, unknown> = {};
         for( const param of attributes )
@@ -174,7 +175,7 @@ export function MediaAiGen( props : MediaAiGen.Props ) : JSX.Element
         if( reply.ok && reply.data )
         {
             setBatch( { batchId: reply.data.batchId, provider: reply.data.provider, model: reply.data.model } );
-            setCandidates( reply.data.candidates.map( ( candidate : AiGen.Pending ) : MediaAiGen.Candidate => ( { guid: candidate.guid, kind: candidate.kind, ready: false, failed: false } ) ) );
+            setCandidates( reply.data.candidates.map( ( candidate : AiGen.Pending ) : AiGen.Candidate => ( { id: candidate.id, kind: candidate.kind, status: AiGen.CandidateStatus.PENDING } ) ) );
             return;
         }
         const message : string = reply.status === 501
@@ -184,102 +185,92 @@ export function MediaAiGen( props : MediaAiGen.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // resolve ONE pending candidate: GetAsset for status, then GetMediaUrl for a preview once bytes exist.
-    async function resolveCandidate( candidate : MediaAiGen.Candidate ) : Promise<MediaAiGen.Candidate>
-    {
-        if( candidate.ready || candidate.failed ) return candidate;
-        const got : RestfulService.Reply<GetAsset.Response> = await appmodel.server.fetch( new GetAsset( candidate.guid ) );
-        const status : Media.Status | undefined = got.ok && got.data ? got.data.asset.status : undefined;
-        if( status === Media.Status.FAILED ) return { ...candidate, failed: true };
-        if( status === Media.Status.UPLOADING || status === undefined ) return candidate;   // bytes not produced yet
-        const url : RestfulService.Reply<GetMediaUrl.Response> = await appmodel.server.fetch( new GetMediaUrl( candidate.guid ) );
-        return url.ok && url.data ? { ...candidate, ready: true, previewUrl: url.data.url } : candidate;
-    }
-
-    ////////////////////////////////////////////////////////////////////////////////////////////
-    // poll pending candidates until the Job has produced their bytes. Runs while any candidate is neither
-    // ready nor failed. (Websockets replace this later.)
+    // poll the staging batch until every candidate resolves (READY / FAILED). (Websockets replace this later.)
     React.useEffect( () : ( () => void ) | void =>
     {
-        if( candidates.length === 0 || candidates.every( ( candidate : MediaAiGen.Candidate ) : boolean => candidate.ready || candidate.failed ) ) return;
+        if( !batch || candidates.length === 0 ) return;
+        if( candidates.every( ( candidate : AiGen.Candidate ) : boolean => candidate.status !== AiGen.CandidateStatus.PENDING ) ) return;
         let live : boolean = true;
         const timer : ReturnType<typeof setTimeout> = setTimeout( () : void => void poll(), 2500 );
 
         async function poll() : Promise<void>
         {
-            const next : Array<MediaAiGen.Candidate> = await Promise.all( candidates.map( resolveCandidate ) );
-            if( live ) setCandidates( next );
+            const reply : RestfulService.Reply<GetGenerateBatch.Response> = await appmodel.server.fetch( new GetGenerateBatch( batch!.batchId ) );
+            if( live && reply.ok && reply.data ) setCandidates( reply.data.batch.candidates );
         }
 
         return () : void => { live = false; clearTimeout( timer ); };
-    }, [ candidates ] );
+    }, [ batch, candidates ] );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // delete a set of candidate assets (discard) — best-effort
-    async function deleteCandidates( guids : Array<string> ) : Promise<void>
+    // toggle a candidate in the multi-select set
+    function toggleSelect( id : string ) : void
     {
-        await Promise.all( guids.map( ( guid : string ) : Promise<RestfulService.Reply<DeleteAsset.Response>> => appmodel.server.fetch( new DeleteAsset( guid ) ) ) );
+        setSelected( ( prior : Set<string> ) : Set<string> =>
+        {
+            const next : Set<string> = new Set( prior );
+            ( next.has( id ) ? next.delete( id ) : next.add( id ) );
+            return next;
+        } );
     }
 
-    // discard every current candidate without keeping any
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // add the selected staged candidates to the library (promote) — discards the rest of the batch on success
+    async function addSelected() : Promise<void>
+    {
+        if( !batch || selected.size === 0 ) return;
+        setPromoting( true );
+        const reply : RestfulService.Reply<PostGeneratePromote.Response> = await appmodel.server.fetch(
+            new PostGeneratePromote( batch.batchId, { candidateIds: [ ...selected ], campaignIds: acceptCampaigns } ) );
+        setPromoting( false );
+        if( reply.ok && reply.data )
+        {
+            setSnack( { message: `Added ${ reply.data.assets.length } to your library.`, severity: "success" } );
+            reset();
+            return;
+        }
+        setSnack( { message: RestfulService.error( reply, "Could not add to library" ), severity: "error" } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // discard the whole staged batch (delete staging bytes) — best-effort
     async function discardAll() : Promise<void>
     {
-        await deleteCandidates( candidates.map( ( candidate : MediaAiGen.Candidate ) : string => candidate.guid ) );
-        setBatch( null );
-        setCandidates( [] );
-    }
-
-    // keep one candidate: open the name/tag dialog for it; on save, the other candidates are discarded
-    function keep( candidate : MediaAiGen.Candidate ) : void
-    {
-        setPicked( { guid: candidate.guid, kind: candidate.kind, mime: "", previewUrl: candidate.previewUrl ?? "" } );
-        setSaveOpen( true );
+        if( batch ) await appmodel.server.fetch( new DeleteGenerateBatch( batch.batchId ) );
+        reset();
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // the picked candidate was saved: discard the ones the user didn't keep, snack, and reset the batch
-    function onCandidateSaved( ok : boolean ) : boolean
-    {
-        if( ok && picked )
-        {
-            const others : Array<string> = candidates.filter( ( candidate : MediaAiGen.Candidate ) : boolean => candidate.guid !== picked.guid ).map( ( candidate : MediaAiGen.Candidate ) : string => candidate.guid );
-            void deleteCandidates( others );
-            setSnack( { message: "Saved to your library.", severity: "success" } );
-            setBatch( null );
-            setCandidates( [] );
-        }
-        closeSave();
-        return true;
-    }
-
-    // close the save dialog + clear the pick
-    function closeSave() : void { setSaveOpen( false ); setPicked( null ); }
-
     // account switched/refreshed: drop the transient generation state
-    function onAccountCleared() : void { setBatch( null ); setCandidates( [] ); setPrompt( "" ); }
-    function onAccountRefreshed() : void { setBatch( null ); setCandidates( [] ); }
+    function onAccountCleared() : void { reset(); setPrompt( "" ); }
+    function onAccountRefreshed() : void { reset(); }
+
+    // true while any candidate is still being produced — the Generate button stays disabled until all resolve
+    const pending : boolean = candidates.some( ( candidate : AiGen.Candidate ) : boolean => candidate.status === AiGen.CandidateStatus.PENDING );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // preview one candidate solution — spinner while the Job runs, the media once ready, or a failed note.
-    // Fills its grid cell (width 100%) so the solutions tile responsively in the right-hand image list.
-    function candidateCard( candidate : MediaAiGen.Candidate ) : JSX.Element
+    // preview one staged candidate — spinner while pending, the media once ready (with a select checkbox), or a
+    // failed note. Fills its grid cell (width 100%) so the solutions tile responsively in the right-hand list.
+    function candidateCard( candidate : AiGen.Candidate ) : JSX.Element
     {
-        return  <Stack key={ candidate.guid } spacing={ 1 } sx={{ p: 1, border: "1px solid", borderColor: "divider", borderRadius: 1, width: "100%" }}>
-                    { candidate.failed
-                        ? <Box sx={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center" }}><Typography variant="body2" sx={{ color: "error.main" }}>{"Generation failed"}</Typography></Box>
-                      : !candidate.ready
+        const ready : boolean = candidate.status === AiGen.CandidateStatus.READY;
+        return  <Stack key={ candidate.id } spacing={ 1 } sx={{ p: 1, border: "1px solid", borderColor: selected.has( candidate.id ) ? "primary.main" : "divider", borderRadius: 1, width: "100%" }}>
+                    { candidate.status === AiGen.CandidateStatus.FAILED
+                        ? <Box sx={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", p: 1 }}><Typography variant="caption" sx={{ color: "error.main" }}>{ candidate.error ?? "Generation failed" }</Typography></Box>
+                      : !ready
                         ? <Box sx={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", bgcolor: "action.hover", borderRadius: 1 }}><CircularProgress size={ 22 } /></Box>
                       : candidate.kind === Media.Kind.IMAGE
                         ? <Box component="img" src={ candidate.previewUrl } alt="candidate" sx={{ width: "100%", height: 200, objectFit: "contain", borderRadius: 1, bgcolor: "action.hover" }} />
                       : candidate.kind === Media.Kind.AUDIO
-                        ? <Box sx={{ height: 200, display: "flex", alignItems: "center" }}><AudioInput id={ `aigen-audio-${ candidate.guid }` } value={ candidate.previewUrl ?? "" } width="100%" /></Box>
+                        ? <Box sx={{ height: 200, display: "flex", alignItems: "center" }}><AudioInput id={ `aigen-audio-${ candidate.id }` } value={ candidate.previewUrl ?? "" } width="100%" /></Box>
                         : null }
-                    <Button variant="contained" size="small" disabled={ !candidate.ready } onClick={ () : void => keep( candidate ) }>{"Keep"}</Button>
+                    { ready &&
+                        <FormControlLabel control={ <Checkbox checked={ selected.has( candidate.id ) } onChange={ () : void => toggleSelect( candidate.id ) } /> } label={"Select"} /> }
                 </Stack>;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // the RIGHT pane — the candidate solutions as an image list (a responsive grid), with a header + discard.
+    // the RIGHT pane — the staged candidates as an image list (a responsive grid), with a header + actions.
     // Shows a spinner while starting and a placeholder when there's nothing yet, so the pane never reads blank.
     function solutionsPane() : JSX.Element
     {
@@ -287,16 +278,22 @@ export function MediaAiGen( props : MediaAiGen.Props ) : JSX.Element
             return <Stack direction="row" spacing={ 1 } sx={{ alignItems: "center", p: 2 }}><CircularProgress size={ 18 } /><Typography variant="body2" sx={{ color: "text.secondary" }}>{"Starting…"}</Typography></Stack>;
         if( candidates.length === 0 )
             return <Stack sx={{ alignItems: "center", justifyContent: "center", height: "100%", minHeight: 260, border: "1px dashed", borderColor: "divider", borderRadius: 1 }}>
-                       <Typography variant="body2" sx={{ color: "text.secondary" }}>{"Your generated solutions will appear here."}</Typography>
+                       <Typography variant="body2" sx={{ color: "text.secondary" }}>{"Your generated solutions will appear here. They aren't added to your library until you select and add them."}</Typography>
                    </Stack>;
         return  <Stack spacing={ 2 }>
-                    <Stack direction="row" spacing={ 1 } sx={{ alignItems: "center" }}>
+                    <Stack direction="row" spacing={ 1 } sx={{ alignItems: "center", flexWrap: "wrap" }}>
                         <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                            { candidates.length > 1 ? `${ candidates.length } solutions — keep the one you want` : "Keep it or discard" }
+                            { candidates.length > 1 ? `${ candidates.length } solutions — select the ones to keep` : "Select it to keep, or discard" }
                         </Typography>
                         { batch && <Chip size="small" variant="outlined" label={ `${ batch.provider }${ batch.model ? " · " + batch.model : "" }` } /> }
+                        <Box sx={{ minWidth: 240 }}>
+                            <CampaignSelect value={ acceptCampaigns } onChange={ setAcceptCampaigns } label={"Add to campaigns (optional)"} />
+                        </Box>
                         <Box sx={{ flexGrow: 1 }} />
-                        <Button variant="text" color="inherit" onClick={ () : void => void discardAll() }>{"Discard all"}</Button>
+                        <Button variant="text" color="inherit" disabled={ promoting } onClick={ () : void => void discardAll() }>{"Discard all"}</Button>
+                        <Button variant="contained" startIcon={ <LibraryAddOutlinedIcon /> } disabled={ promoting || selected.size === 0 } onClick={ () : void => void addSelected() }>
+                            { promoting ? "Adding…" : selected.size > 0 ? `Add ${ selected.size } to library` : "Add to library" }
+                        </Button>
                     </Stack>
                     <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 2 }}>
                         { candidates.map( candidateCard ) }
@@ -315,8 +312,7 @@ export function MediaAiGen( props : MediaAiGen.Props ) : JSX.Element
                         </Tabs>
                         <Divider />
                         <CardContent>
-                            {/* two-pane: the filters/controls in a LEFT column, the generated solutions as an
-                                image list on the RIGHT (row Stack spacing 1; the controls column is spacing 2) */}
+                            {/* two-pane: the filters/controls in a LEFT column, the staged solutions on the RIGHT */}
                             <Stack direction="row" spacing={ 1 } sx={{ alignItems: "flex-start" }}>
                                 <Stack spacing={ 2 } sx={{ width: 340, flexShrink: 0 }}>
                                     <TextInput  id="aigen-prompt"
@@ -347,9 +343,9 @@ export function MediaAiGen( props : MediaAiGen.Props ) : JSX.Element
 
                                     <Button variant="contained"
                                             startIcon={ <AutoAwesomeOutlinedIcon /> }
-                                            disabled={ generating || prompt.trim() === "" }
+                                            disabled={ generating || pending || prompt.trim() === "" || provider === "" }
                                             onClick={ () : void => void generate() }>
-                                        { generating ? "Generating…" : "Generate" }
+                                        { generating || pending ? "Generating…" : "Generate" }
                                     </Button>
                                 </Stack>
 
@@ -361,12 +357,6 @@ export function MediaAiGen( props : MediaAiGen.Props ) : JSX.Element
                     </Card>
                 </Box>
 
-                { saveOpen && picked &&
-                    <AiGenSaveDialog candidate={ picked }
-                                     defaultName={ `${ TABS[ tabIndex ].label } — ${ prompt.trim().slice( 0, 40 ) }` }
-                                     onSaved={ onCandidateSaved }
-                                     onClose={ closeSave } /> }
-
                 <AccountChange onClear={ onAccountCleared } onRefresh={ onAccountRefreshed } />
 
                 { snack && <SnackAlert message={ snack.message } severity={ snack.severity } onClose={ () : void => setSnack( null ) } /> }
@@ -376,10 +366,6 @@ export function MediaAiGen( props : MediaAiGen.Props ) : JSX.Element
 export namespace MediaAiGen
 {
     export interface Props {}
-
-    /** A candidate solution in the UI as the media-generate Job produces it: pending → ready (previewUrl) or
-     *  failed. Resolved by polling GetAsset (status) + GetMediaUrl (preview). */
-    export interface Candidate { guid : string; kind : string; previewUrl? : string; ready : boolean; failed : boolean; }
 }
 
 export default MediaAiGen;

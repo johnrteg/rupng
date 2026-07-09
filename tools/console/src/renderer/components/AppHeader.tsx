@@ -16,6 +16,8 @@ import TerminalIcon from "@mui/icons-material/Terminal";
 import InsightsIcon from "@mui/icons-material/Insights";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
+import ScienceIcon from "@mui/icons-material/Science";
+import PendingActionsIcon from "@mui/icons-material/PendingActions";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import VolumeUpIcon from "@mui/icons-material/VolumeUp";
 import VolumeOffIcon from "@mui/icons-material/VolumeOff";
@@ -26,7 +28,7 @@ import { api } from "../api";
 import { metricsStore, useMetrics, type Breach, type MetricsSnapshot } from "../metricsStore";
 import { SettingsDialog } from "./SettingsDialog";
 
-export type AppView = "develop" | "monitor" | "repo" | "deploy";
+export type AppView = "develop" | "monitor" | "repo" | "deploy" | "fake" | "actions";
 
 //
 // Top-level application header: product title, the Develop / Monitor tab switcher, and the shared
@@ -69,6 +71,8 @@ export function AppHeader(
                 <Tab value="monitor" icon={<InsightsIcon fontSize="small" />} iconPosition="start" label="Monitor" />
                 <Tab value="repo" icon={<AccountTreeIcon fontSize="small" />} iconPosition="start" label="Repo" />
                 <Tab value="deploy" icon={<RocketLaunchIcon fontSize="small" />} iconPosition="start" label="Deploy" />
+                <Tab value="fake" icon={<ScienceIcon fontSize="small" />} iconPosition="start" label="Simulators" />
+                <Tab value="actions" icon={<PendingActionsIcon fontSize="small" />} iconPosition="start" label="Actions" />
             </Tabs>
 
             <Box sx={{ flexGrow: 1 }} />

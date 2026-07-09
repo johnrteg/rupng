@@ -66,6 +66,7 @@ export namespace Media
         PLATFORM   = "platform",     // a platform-specific rendition (profile = instagram/tiktok/youtube/…)
         GENERATED  = "generated",    // an AI-generated derivative within the envelope (e.g. image → AI video)
         RENDER     = "render",       // a Studio-produced output (profile = lowres/highres/…)
+        AVATAR     = "avatar",       // a square, cropped profile-photo rendition (profile = xl/lg/md/sm/xs)
     }
 
     /** How an envelope entered the library (media-15). `upload` = from a computer; `provider` = a Browse
@@ -97,8 +98,8 @@ export namespace Media
         url?               : string;      // link to the full license terms
     }
 
-    /** Free or priced. `amount` is minor units (cents) in `currency` when priced. */
-    export interface Cost { free : boolean; amount? : number; currency? : string; }
+    /** Free or priced. `amount` is whole cents (minor units) in `currency` when priced. */
+    export interface Cost { free : boolean; amount? : Type.Cents; currency? : Type.Currency; }
 
     /** Where the ENVELOPE came from (media-1.7) — the object's ORIGIN. For a GENERATED original the AI context
      *  (provider/model/prompt/params) is retained here so the source can be reproduced / re-tweaked. */
@@ -287,6 +288,26 @@ export namespace Media
         quality?  : number;
     }
 
+    /** A normalized crop rectangle — fractions (0..1) of the source width/height. Used to frame a square avatar
+     *  from its original photo (pan/zoom under a circular overlay); stored so the framing is re-editable and the
+     *  variants are reproducible. */
+    export interface CropRect { x : number; y : number; w : number; h : number; }
+
+    /** The avatar variant sizes (profile keys), largest → smallest. A closed set → the widget's `size` prop. */
+    export enum AvatarSize { XL = "xl", LG = "lg", MD = "md", SM = "sm", XS = "xs" }
+
+    /** The result of a malware scan on an envelope's ORIGINAL bytes (media-5) — persisted so the UI can show
+     *  what was scanned, by which engine, when, and the outcome (clean / threat / advanced-unscanned). */
+    export interface ScanResult
+    {
+        clean      : boolean;              // true = no threat detected (or fail-open advanced it unscanned)
+        provider   : string;              // the scan provider id (MediaConfig.ScanProvider — e.g. "clamav" / "none")
+        engine?    : string;              // engine / signature-db detail reported by the scanner
+        threat?    : string;              // the detected threat name (when !clean)
+        failOpen?  : boolean;             // true = the engine was unavailable and config let it advance UNSCANNED
+        scannedAt  : Type.ISODateTime;    // when the scan ran
+    }
+
     /** The media ENVELOPE (DynamoDB `media`: PK accountId, SK guid) — the library object + its items. */
     export interface Asset
     {
@@ -298,8 +319,10 @@ export namespace Media
         accessRole   : Access.Role;         // minimum role to access a protected/private envelope
         status       : Status;             // rollup — the original's readiness gates delivery
         scanThreat?  : string;             // the detected threat name when status is QUARANTINED (media-5)
+        scan?        : ScanResult;         // the last malware-scan result on the ORIGINAL bytes (media-5) — shown in Info
         scope        : Scope;              // ACCOUNT (library) | USER (avatar) — the OWNER
         scopeId?     : Type.UUID;          // the userId, for a USER/avatar envelope
+        avatarCrop?  : CropRect;           // the framing (normalized) the AVATAR variants are cropped to (USER scope)
         campaignIds  : Array<string>;      // 0..N campaigns using this — a denormalized FILTER (SoT = campaign)
         tags         : Array<string>;
         source?      : Source;             // the envelope's ORIGIN provenance (upload | provider | generated)
@@ -365,6 +388,17 @@ export namespace Media
         { mime: "image/*", label: "mobile",  width: 640 },
         { mime: "image/*", label: "tablet",  width: 1024 },
         { mime: "image/*", label: "desktop", width: 1600 },
+    ];
+
+    /** The square AVATAR profiles the processor derives from the (cropped) original — large → very small.
+     *  `label` = the {@link AvatarSize} profile key; both dims set + cover so every rendition is a square. */
+    export const AVATAR_VARIANTS : ReadonlyArray<VariantSpec> =
+    [
+        { mime: "image/*", label: AvatarSize.XL, width: 512, height: 512, fit: "cover", format: "png" },
+        { mime: "image/*", label: AvatarSize.LG, width: 256, height: 256, fit: "cover", format: "png" },
+        { mime: "image/*", label: AvatarSize.MD, width: 128, height: 128, fit: "cover", format: "png" },
+        { mime: "image/*", label: AvatarSize.SM, width: 64,  height: 64,  fit: "cover", format: "png" },
+        { mime: "image/*", label: AvatarSize.XS, width: 32,  height: 32,  fit: "cover", format: "png" },
     ];
 
     // ── Read-time DEFAULT (schema tolerance) — safe baseline; identity fields omitted ────────────────

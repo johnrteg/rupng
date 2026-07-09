@@ -69,6 +69,14 @@ export namespace Ports
     // ── realtime / collaboration ─────────────────────────────────────────────
     export namespace REALTIME     { export const MAIN = 8310; }
     export namespace COLLAB       { export const MAIN = 8320; }
+
+    // ── fake providers (simulated external vendors — DEV ONLY) ─────────────────
+    // A separate 9100+ grouping, deliberately FAR from the 8100–8320 platform blocks (and clear of the
+    // 9000 webhook-ingress convention). One block per faked channel; these leaf services never run in prod.
+    export namespace FAKE_EMAIL   { export const MAIN = 9100; }
+    export namespace FAKE_TEXT    { export const MAIN = 9110; }   // planned
+    export namespace FAKE_PRINT   { export const MAIN = 9120; }   // planned
+    export namespace FAKE_SOCIAL  { export const MAIN = 9130; }   // planned
 }
 
 export default Ports;

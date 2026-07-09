@@ -86,58 +86,90 @@ export function SecretsPanel( { service } : { service : string } )
         setBusy( ( b ) => ( { ...b, [ secret.arn ]: true } ) );
         const result = await api.secretsClear( secret.arn );
         setBusy( ( b ) => ( { ...b, [ secret.arn ]: false } ) );
-        setStatus( ( s ) => ( { ...s, [ secret.arn ]: result.ok ? "cleared ✓" : ( result.error ?? "clear failed" ) } ) );
+        setStatus( ( s ) => ( { ...s, [ secret.arn ]: result.ok ? "deleted ✓" : ( result.error ?? "delete failed" ) } ) );
         if( result.ok ) { setDraft( ( d ) => ( { ...d, [ secret.arn ]: "" } ) ); void load(); }
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // one secret row — name/scope/description, reveal toggle, editable value, save
+    // read one field of a multi-field (JSON) secret out of the draft
+    function fieldValue( arn : string, name : string ) : string
+    {
+        try { const obj : Record<string, unknown> = JSON.parse( draft[ arn ] ?? "{}" ) as Record<string, unknown>; return String( obj?.[ name ] ?? "" ); }
+        catch { return ""; }
+    }
+
+    // update one field of a multi-field (JSON) secret in the draft (re-serializing the object)
+    function setField( arn : string, name : string, val : string ) : void
+    {
+        setDraft( ( d ) =>
+        {
+            let obj : Record<string, unknown> = {};
+            try { obj = JSON.parse( d[ arn ] ?? "{}" ) as Record<string, unknown>; } catch { obj = {}; }
+            return { ...d, [ arn ]: JSON.stringify( { ...obj, [ name ]: val } ) };
+        } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // one provider/secret row — label + key, status, reveal/delete, and the value editor (single or per-field)
     function row( secret : SecretSummary ) : ReactElement
     {
         const isShown : boolean = shown[ secret.arn ] ?? false;
         const value : string = draft[ secret.arn ] ?? "";
         const isBusy : boolean = busy[ secret.arn ] ?? false;
         const note : string = status[ secret.arn ] ?? "";
-        const multiline : boolean = value.trim().startsWith( "{" );
 
         return  <Box key={ secret.arn } sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 1.5, mb: 1 }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-                        <Typography sx={{ fontFamily: MONO, fontSize: 13, fontWeight: 600 }}>{ secret.key }</Typography>
-                        <Chip size="small" variant="outlined" color={ secret.scope === "platform" ? "secondary" : "default" }
-                              label={ secret.scope === "platform" ? "platform" : service } />
-                        { secret.hasValue
+                        <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{ secret.label ?? secret.key }</Typography>
+                        <Typography sx={{ fontFamily: MONO, fontSize: 11, color: "text.disabled" }}>{ secret.key }</Typography>
+                        { !secret.exists
+                            ? <Chip size="small" color="warning" variant="outlined" label="no key yet" />
+                          : secret.hasValue
                             ? <Chip size="small" color="success" variant="outlined" label="set" />
                             : <Chip size="small" color="warning" variant="outlined" label="not set" /> }
                         <Box sx={{ flexGrow: 1 }} />
-                        <Tooltip title={ isShown ? "Hide value" : "Reveal value" }>
-                            <span><IconButton size="small" onClick={ () => void toggleReveal( secret ) } disabled={ isBusy }>
-                                { isShown ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" /> }
-                            </IconButton></span>
-                        </Tooltip>
-                        <Tooltip title={ secret.hasValue ? "Clear value (unset)" : "Nothing to clear" }>
-                            <span><IconButton size="small" color="error" onClick={ () => void clear( secret ) } disabled={ readOnly || isBusy || !secret.hasValue }>
+                        { secret.exists &&
+                            <Tooltip title={ isShown ? "Hide value" : "Reveal / edit value" }>
+                                <span><IconButton size="small" onClick={ () => void toggleReveal( secret ) } disabled={ isBusy }>
+                                    { isShown ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" /> }
+                                </IconButton></span>
+                            </Tooltip> }
+                        <Tooltip title={ secret.hasValue ? "Delete secret" : "Nothing to delete" }>
+                            <span><IconButton size="small" color="error" onClick={ () => void clear( secret ) } disabled={ readOnly || isBusy || !secret.exists || !secret.hasValue }>
                                 <DeleteOutlineIcon fontSize="small" />
                             </IconButton></span>
                         </Tooltip>
                     </Box>
 
-                    { secret.description &&
-                        <Typography variant="caption" sx={{ color: "text.secondary" }}>{ secret.description }</Typography> }
+                    { secret.keyHint &&
+                        <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>{ secret.keyHint }</Typography> }
+                    { secret.docsUrl &&
+                        <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: MONO, display: "block" }}>{ `Get key: ${ secret.docsUrl }` }</Typography> }
 
-                    { isShown &&
+                    {/* the value editor — shown for a not-yet-created secret (add its key) or a revealed one.
+                        Multi-field providers (Twilio SID+token, Unsplash, Stripe) render one input per field
+                        and store a JSON object; single-key providers render one input. */}
+                    { ( isShown || !secret.exists ) &&
                         <Box sx={{ mt: 1 }}>
-                            <TextField
-                                value={ value }
-                                onChange={ ( e ) => setDraft( ( d ) => ( { ...d, [ secret.arn ]: e.target.value } ) ) }
-                                fullWidth multiline={ multiline } minRows={ multiline ? 4 : 1 } size="small"
-                                disabled={ readOnly || isBusy }
-                                slotProps={{ input: { sx: { fontFamily: MONO, fontSize: 12 } } }}
-                                placeholder={ multiline ? '{ "appId": "…", "accessKey": "…" }' : "secret value" }
-                            />
+                            { secret.fields
+                                ? secret.fields.map( ( field ) => (
+                                    <TextField key={ field.name } label={ field.label }
+                                               value={ fieldValue( secret.arn, field.name ) }
+                                               onChange={ ( e ) => setField( secret.arn, field.name, e.target.value ) }
+                                               fullWidth size="small" sx={{ mb: 1 }} disabled={ readOnly || isBusy }
+                                               slotProps={{ input: { sx: { fontFamily: MONO, fontSize: 12 } } }} />
+                                  ) )
+                                : <TextField
+                                      value={ value }
+                                      onChange={ ( e ) => setDraft( ( d ) => ( { ...d, [ secret.arn ]: e.target.value } ) ) }
+                                      fullWidth size="small" disabled={ readOnly || isBusy }
+                                      slotProps={{ input: { sx: { fontFamily: MONO, fontSize: 12 } } }}
+                                      placeholder={ secret.keyHint ?? "secret value" }
+                                  /> }
                             <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
                                 <Button size="small" variant="contained" startIcon={ <SaveIcon /> }
-                                        disabled={ readOnly || isBusy } onClick={ () => void save( secret ) }>
-                                    { isBusy ? "Saving…" : "Save" }
+                                        disabled={ readOnly || isBusy || value.trim() === "" } onClick={ () => void save( secret ) }>
+                                    { isBusy ? "Saving…" : secret.exists ? "Save" : "Add key" }
                                 </Button>
                                 { note && <Typography variant="caption" sx={{ color: note.includes( "✓" ) ? "success.main" : "error.main" }}>{ note }</Typography> }
                             </Box>
@@ -149,12 +181,24 @@ export function SecretsPanel( { service } : { service : string } )
     if( loading ) return <Box sx={{ p: 2 }}><CircularProgress size={ 20 } /></Box>;
 
     const secrets : Array<SecretSummary> = list?.secrets ?? [];
-    const platform : Array<SecretSummary> = secrets.filter( ( s ) => s.scope === "platform" );
-    const owned : Array<SecretSummary> = secrets.filter( ( s ) => s.scope === "service" );
+
+    // group by PROVIDER CATEGORY (from the registry); uncatalogued secrets fall under "other"
+    const CATEGORY_LABELS : Record<string, string> =
+        { ai: "AI providers (platform)", browse: "Browse / stock media", email: "Email providers", texting: "Texting / SMS", payments: "Payments", other: "Other secrets" };
+    const CATEGORY_ORDER : Array<string> = [ "ai", "browse", "email", "texting", "payments", "other" ];
+    const byCategory : Map<string, Array<SecretSummary>> = new Map<string, Array<SecretSummary>>();
+    for( const secret of secrets )
+    {
+        const category : string = secret.category ?? "other";
+        const bucket : Array<SecretSummary> = byCategory.get( category ) ?? [];
+        bucket.push( secret );
+        byCategory.set( category, bucket );
+    }
+    const categories : Array<string> = CATEGORY_ORDER.filter( ( category ) => byCategory.has( category ) );
 
     return  <Box sx={{ height: "100%", overflow: "auto", p: 1.5 }}>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
-                    <Typography variant="subtitle2">{"Secrets Manager"}</Typography>
+                    <Typography variant="subtitle2">{"Providers & keys"}</Typography>
                     <Box sx={{ flexGrow: 1 }} />
                     { readOnly && <Chip size="small" color="warning" variant="outlined" label="read-only (AWS target)" /> }
                     <Tooltip title="Reload"><IconButton size="small" onClick={ () => void load() }><RefreshIcon fontSize="small" /></IconButton></Tooltip>
@@ -164,20 +208,15 @@ export function SecretsPanel( { service } : { service : string } )
 
                 { secrets.length === 0 && !list?.error &&
                     <Typography variant="body2" sx={{ color: "text.secondary", p: 1 }}>
-                        {"No secrets — deploy the service (its secret shells are created by the /cloud build)."}
+                        {"No providers declared for this service."}
                     </Typography> }
 
-                { owned.length > 0 &&
-                    <Box sx={{ mb: 2 }}>
-                        <Typography variant="caption" sx={{ color: "text.disabled", textTransform: "uppercase", letterSpacing: 0.5 }}>{"Service secrets"}</Typography>
-                        <Box sx={{ mt: 0.5 }}>{ owned.map( row ) }</Box>
-                    </Box> }
-
-                { platform.length > 0 &&
-                    <Box>
-                        <Divider sx={{ mb: 1 }} />
-                        <Typography variant="caption" sx={{ color: "text.disabled", textTransform: "uppercase", letterSpacing: 0.5 }}>{"Platform-shared AI keys (all services)"}</Typography>
-                        <Box sx={{ mt: 0.5 }}>{ platform.map( row ) }</Box>
-                    </Box> }
+                { categories.map( ( category : string, index : number ) => (
+                    <Box key={ category } sx={{ mb: 2 }}>
+                        { index > 0 && <Divider sx={{ mb: 1 }} /> }
+                        <Typography variant="caption" sx={{ color: "text.disabled", textTransform: "uppercase", letterSpacing: 0.5 }}>{ CATEGORY_LABELS[ category ] ?? category }</Typography>
+                        <Box sx={{ mt: 0.5 }}>{ byCategory.get( category )!.map( row ) }</Box>
+                    </Box>
+                ) ) }
             </Box>;
 }

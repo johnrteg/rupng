@@ -1,5 +1,5 @@
 //
-import { GetMembers, Account } from '@repo/api';
+import { GetMembers, Account, Paging } from '@repo/api';
 import { NetworkUtils } from '@repo/common';
 import { RestfulEndpoint, Access } from '@repo/endpoint';
 import AccountService from '../services/AccountService';
@@ -63,7 +63,7 @@ export class GetMembersImpl extends GetMembers
             lastLoginAt: ( row.lastLoginAt as Account.Member[ "lastLoginAt" ] ) || undefined,
         } ) );
 
-        const reply : GetMembers.Response = { members };
+        const reply : GetMembers.Response = Paging.paginate( members, this.query ?? {} );
         return { status: NetworkUtils.Status.OK, data: reply };
     }
 

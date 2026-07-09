@@ -3,7 +3,7 @@ import AppModel from "@model/AppModel";
 import React from 'react';
 import { JSX } from "react";
 
-import { Avatar, Box, Button, Card, CardContent, CardHeader, Chip, Divider, Stack, Typography } from "@mui/material";
+import { Box, Button, Card, CardContent, CardHeader, Chip, Divider, Stack, Typography } from "@mui/material";
 import CheckCircleOutlineIcon    from '@mui/icons-material/CheckCircleOutlined';
 import ErrorOutlineIcon          from '@mui/icons-material/ErrorOutlineOutlined';
 import SaveOutlinedIcon          from '@mui/icons-material/SaveOutlined';
@@ -11,7 +11,8 @@ import RestartAltOutlinedIcon    from '@mui/icons-material/RestartAltOutlined';
 import PhotoCameraOutlinedIcon   from '@mui/icons-material/PhotoCameraOutlined';
 
 import { Access }   from '@repo/system';
-import { User }     from '@repo/api';
+import { RestfulService } from '@repo/endpoint';
+import { User, Media, PostVerifyResend } from '@repo/api';
 
 import LocaleService   from '@model/service/LocaleService';
 import AuthPage        from '@widgets/app/AuthPage';
@@ -19,6 +20,8 @@ import TextInput       from '@widgets/core/TextInput';
 import EmailInput      from '@widgets/core/EmailInput';
 import TelephoneInput  from '@widgets/core/TelephoneInput';
 import TimezoneInput   from '@widgets/core/TimezoneInput';
+import UserAvatar      from '@widgets/app/UserAvatar';
+import AvatarCropDialog from '@pages/profile/dialogs/AvatarCropDialog';
 
 //
 // Profile : Details — the signed-in user's identity + contact + regional attributes, grouped into cards
@@ -35,6 +38,8 @@ export function ProfileDetails( props : ProfileDetails.Props ) : JSX.Element
     const [original,setOriginal] = React.useState< ProfileDetails.Form >( () => formFrom( appmodel.auth.user ) );
     const [saving,setSaving]     = React.useState< boolean >( false );
     const [status,setStatus]     = React.useState< string >( "" );
+    const [cropOpen,setCropOpen] = React.useState< boolean >( false );              // the pan/zoom cropper (owns Replace/upload)
+    const [avatarAssetId,setAvatarAssetId] = React.useState< string | undefined >( appmodel.auth.user?.avatarAssetId );
 
     const user : User.Entity | null = appmodel.auth.user;
     const dirty : boolean = JSON.stringify( form ) !== JSON.stringify( original );
@@ -105,10 +110,16 @@ export function ProfileDetails( props : ProfileDetails.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // placeholder for the (future) avatar upload flow
-    function onEditPhoto() : void
+    // open the pan/zoom cropper — re-frames the existing original (kept), or prompts to choose one via Replace…
+    function onEditPhoto() : void { setCropOpen( true ); }
+
+    // the cropper saved — reflect the new avatar immediately (the media→auth event syncs the session shortly)
+    function onAvatarSaved( assetGuid : string ) : void
     {
-        setStatus( "Photo upload is coming soon." );
+        setAvatarAssetId( assetGuid );
+        setCropOpen( false );
+        if( appmodel.auth.user ) appmodel.auth.setUser( { ...appmodel.auth.user, avatarAssetId: assetGuid } as User.Entity );
+        setStatus( "Profile photo updated." );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -116,15 +127,6 @@ export function ProfileDetails( props : ProfileDetails.Props ) : JSX.Element
     function displayDate( iso? : string ) : string
     {
         return appmodel.ui.locale.dateTime( iso ? new Date( iso ) : null, LocaleService.Format.LONG ) || "—";
-    }
-
-    ////////////////////////////////////////////////////////////////////////////////////////////
-    function initials() : string
-    {
-        const firstInitial : string = ( form.firstName || "" ).trim().charAt( 0 );
-        const lastInitial  : string = ( form.lastName  || "" ).trim().charAt( 0 );
-        const combined : string = ( firstInitial + lastInitial ).toUpperCase();
-        return combined || ( form.email || "?" ).trim().charAt( 0 ).toUpperCase();
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -137,16 +139,27 @@ export function ProfileDetails( props : ProfileDetails.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // placeholder: (re)send a verification message for an unverified channel — wired to the real
-    // resend endpoint later. Shown only while the channel is unverified.
-    function onResendVerify( channel : "email" | "phone" ) : void
+    // (re)send a verification message for an unverified channel. Email is wired to the app-driven resend
+    // (POST /verify/resend → a fresh branded EMAIL_VERIFICATION link via the email service); SMS stays
+    // informational until the texting rail is live. Shown only while the channel is unverified.
+    async function onResendVerify( channel : "email" | "phone" ) : Promise<void>
     {
-        setStatus( channel === "email" ? "Verification email sent." : "Verification code sent to your phone." );
+        if( channel === "phone" )
+        {
+            setStatus( "Verification code sent to your phone." );
+            return;
+        }
+        const account : string = user?.email ?? "";
+        if( account === "" ) return;
+        // the registration token IS the identifier (the email) for the app-driven resend
+        const reply : RestfulService.Reply<PostVerifyResend.Response> = await appmodel.server.fetch(
+            new PostVerifyResend( { registrationToken: account, origin: window.location.origin } ) );
+        setStatus( reply.ok ? "Verification email sent — check your inbox." : "We couldn't send the verification email. Please try again." );
     }
 
     function resendButton( channel : "email" | "phone" ) : JSX.Element
     {
-        return  <Button size="small" variant="outlined" onClick={ () => onResendVerify( channel ) }>
+        return  <Button size="small" variant="outlined" onClick={ () => void onResendVerify( channel ) }>
                     {"Resend"}
                 </Button>;
     }
@@ -171,11 +184,11 @@ export function ProfileDetails( props : ProfileDetails.Props ) : JSX.Element
                             <Divider />
                             <CardContent>
                                 <Stack direction="row" spacing={ 3 } sx={{ alignItems: "flex-start" }}>
-                                    {/* avatar + Edit (photo upload lands here later) */}
+                                    {/* avatar + Edit — pan/zoom cropper sets the photo (media-23) */}
                                     <Stack spacing={ 1 } sx={{ alignItems: "center" }}>
-                                        <Avatar src={ user?.avatarUrl } sx={{ width: 64, height: 64, fontSize: 22 }}>{ initials() }</Avatar>
+                                        <UserAvatar assetId={ avatarAssetId } name={ `${ form.firstName } ${ form.lastName }`.trim() } size={ Media.AvatarSize.LG } px={ 64 } />
                                         <Button size="small" variant="outlined" startIcon={ <PhotoCameraOutlinedIcon /> } onClick={ onEditPhoto }>
-                                            {"Edit"}
+                                            { avatarAssetId ? "Edit" : "Add photo" }
                                         </Button>
                                     </Stack>
                                     <Box sx={{ flexGrow: 1 }}>
@@ -259,6 +272,9 @@ export function ProfileDetails( props : ProfileDetails.Props ) : JSX.Element
                         </Button>
                     </Stack>
                 </Box>
+
+                { cropOpen && user &&
+                    <AvatarCropDialog userId={ user.id } assetId={ avatarAssetId } name={ `${ form.firstName } ${ form.lastName }`.trim() } onSaved={ onAvatarSaved } onClose={ () : void => setCropOpen( false ) } /> }
             </AuthPage>;
 }
 

@@ -99,6 +99,9 @@ export function AssetInfoDialog( props : AssetInfoDialog.Props ) : JSX.Element
                             { row( "Tags", ( asset.tags ?? [] ).join( ", " ) ) }
                             { row( "Uploaded", when( asset.createdAt ) ) }
                             { row( "Modified", when( asset.modifiedAt ) ) }
+                            {/* storage keys (media-4) — DDB row (table media: PK accountId, SK guid) + S3 object prefix */}
+                            { row( "DDB key", `media · ${ asset.accountId } / ${ asset.guid }` ) }
+                            { row( "S3 key", `acct/${ asset.accountId }/media/${ asset.guid }/${ original ? `${ Media.itemKey( original.usage, original.profile ) }.${ original.extension ?? "" }` : "" }` ) }
                         </Box>
                     </Box>
 
