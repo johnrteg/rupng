@@ -36,11 +36,12 @@ function rawColor( level : "out" | "err" | "sys", text : string ) : string
 /** The structured levels we filter on (matches Trace's labels). */
 export const LEVELS = [ "INFO", "WARN", "ERROR" ] as const;
 
-interface TraceRecord { level : string; time? : string; name? : string; id? : string; message? : string; args? : unknown[]; }
+interface TraceRecord { level : string; time? : string; name? : string; id? : string; message? : string; args? : Array<unknown>; }
 interface Parsed { prefix? : string; record? : TraceRecord; raw : string; }
 
 const parseCache = new WeakMap<LogLine, Parsed>();
 
+/** Parse a log line into an optional compose prefix + structured Trace record + raw text, memoized per line. */
 export function parseLine( line : LogLine ) : Parsed
 {
     const hit : Parsed | undefined = parseCache.get( line );
@@ -61,12 +62,12 @@ export function parseLine( line : LogLine ) : Parsed
     }
 
     let record : TraceRecord | undefined;
-    const t : string = body.trim();
-    if ( t.startsWith( "{" ) && t.endsWith( "}" ) )
+    const trimmedBody : string = body.trim();
+    if ( trimmedBody.startsWith( "{" ) && trimmedBody.endsWith( "}" ) )
     {
         try
         {
-            const obj : Record<string, unknown> = JSON.parse( t ) as Record<string, unknown>;
+            const obj : Record<string, unknown> = JSON.parse( trimmedBody ) as Record<string, unknown>;
             if ( obj && typeof obj.level === "string" && "message" in obj ) record = obj as unknown as TraceRecord;
         }
         catch { /* not a Trace record — leave as raw */ }
@@ -85,6 +86,7 @@ function fmtTime( iso? : string ) : string
     return m ? m[ 1 ] : iso;
 }
 
+/** Map a Trace level string to its display color (errors red, warnings amber, info green, …). */
 export function recLevelColor( level : string ) : string
 {
     switch ( level.toUpperCase() )
@@ -102,16 +104,17 @@ export function recLevelColor( level : string ) : string
 export function LogRow( { line, hideId } : { line : LogLine; hideId? : boolean } )
 {
     const [ open, setOpen ] = useState<boolean>( false );
-    const p : Parsed = parseLine( line );
+    const parsed : Parsed = parseLine( line );
 
-    if ( !p.record )
+    // no structured record → render the raw text, error-colored only when it reads like an error
+    if ( !parsed.record )
         return (
-            <Box component="pre" sx={{ m: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", color: rawColor( line.level, p.raw ) }}>
-                {p.raw}
+            <Box component="pre" sx={{ m: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", color: rawColor( line.level, parsed.raw ) }}>
+                {parsed.raw}
             </Box>
         );
 
-    const rec : TraceRecord = p.record;
+    const rec : TraceRecord = parsed.record;
     const color : string = recLevelColor( rec.level );
     const data : unknown = Array.isArray( rec.args ) ? ( rec.args.length === 1 ? rec.args[ 0 ] : rec.args ) : rec.args;
     const hasData : boolean = data !== undefined && !( Array.isArray( data ) && data.length === 0 );
@@ -146,22 +149,23 @@ export function LogRow( { line, hideId } : { line : LogLine; hideId? : boolean }
 // A self-contained log pane: text filter + level filter (shown when structured records are present) +
 // autoscroll, over the formatted rows. Hand it a growing `lines` array; it handles the rest.
 //
-export function LogView( { lines, empty = "no output", hideId, onClear } : { lines : LogLine[]; empty? : string; hideId? : boolean; onClear? : () => void } )
+export function LogView( { lines, empty = "no output", hideId, onClear } : { lines : Array<LogLine>; empty? : string; hideId? : boolean; onClear? : () => void } )
 {
     const [ filter, setFilter ]           = useState<string>( "" );
-    const [ levelFilter, setLevelFilter ] = useState<string[]>( [] );
+    const [ levelFilter, setLevelFilter ] = useState<Array<string>>( [] );
     const [ autoscroll, setAuto ]         = useState<boolean>( true );
     const endRef = useRef<HTMLDivElement | null>( null );
 
-    const hasRecords : boolean = useMemo<boolean>( () => lines.some( ( l ) => parseLine( l ).record !== undefined ), [ lines ] );
+    const hasRecords : boolean = useMemo<boolean>( () => lines.some( ( line ) => parseLine( line ).record !== undefined ), [ lines ] );
 
-    const shown : LogLine[] = useMemo<LogLine[]>( () =>
+    const shown : Array<LogLine> = useMemo<Array<LogLine>>( () =>
     {
-        let out = lines;
+        let out : Array<LogLine> = lines;
+        // level filter only applies to structured Trace records; raw lines always pass
         if ( levelFilter.length > 0 )
-            out = out.filter( ( l ) => { const r = parseLine( l ).record; return !r || levelFilter.includes( r.level.toUpperCase() ); } );
+            out = out.filter( ( line ) => { const record = parseLine( line ).record; return !record || levelFilter.includes( record.level.toUpperCase() ); } );
         if ( filter )
-            out = out.filter( ( l ) => l.text.toLowerCase().includes( filter.toLowerCase() ) );
+            out = out.filter( ( line ) => line.text.toLowerCase().includes( filter.toLowerCase() ) );
         return out;
     }, [ lines, filter, levelFilter ] );
 
@@ -178,10 +182,10 @@ export function LogView( { lines, empty = "no output", hideId, onClear } : { lin
                 {hasRecords && (
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                         <Typography variant="caption" sx={{ color: "text.disabled" }}>level</Typography>
-                        <ToggleButtonGroup size="small" value={levelFilter} onChange={( _e, next : string[] ) => setLevelFilter( next )}>
-                            {LEVELS.map( ( lv ) => (
-                                <ToggleButton key={lv} value={lv} sx={{ px: 1.25, py: 0.2, fontFamily: MONO, fontSize: 11, color: recLevelColor( lv ), "&.Mui-selected": { color: recLevelColor( lv ), fontWeight: 700 } }}>
-                                    {lv}
+                        <ToggleButtonGroup size="small" value={levelFilter} onChange={( _e, next : Array<string> ) => setLevelFilter( next )}>
+                            {LEVELS.map( ( level ) => (
+                                <ToggleButton key={level} value={level} sx={{ px: 1.25, py: 0.2, fontFamily: MONO, fontSize: 11, color: recLevelColor( level ), "&.Mui-selected": { color: recLevelColor( level ), fontWeight: 700 } }}>
+                                    {level}
                                 </ToggleButton>
                             ) )}
                         </ToggleButtonGroup>
@@ -201,7 +205,7 @@ export function LogView( { lines, empty = "no output", hideId, onClear } : { lin
                        "&::-webkit-scrollbar": { width: 10 }, "&::-webkit-scrollbar-thumb": { background: "#30363d", borderRadius: 5 } }}>
                 {shown.length === 0
                     ? <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: MONO }}>{filter || levelFilter.length > 0 ? "no lines match the filter" : empty}</Typography>
-                    : shown.map( ( l ) => <LogRow key={`${l.stream}-${l.seq}`} line={l} hideId={hideId} /> )}
+                    : shown.map( ( line ) => <LogRow key={`${line.stream}-${line.seq}`} line={line} hideId={hideId} /> )}
                 <div ref={endRef} />
             </Box>
         </Box>

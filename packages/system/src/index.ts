@@ -9,4 +9,5 @@
 export { default as Register } from "./Register";   // canonical service registry — Register.Service.*
 export { default as Access } from "./Access";
 export { default as Events } from "./Events";
+export { default as Providers } from "./Providers";   // credential-backed external providers (secrets registry)
 export * as Payloads from "./payloads";   // the central entity-representation repository (event `data` + API GET responses)

@@ -18,13 +18,13 @@ export function HelpButton( props: HelpButton.Props ) : JSX.Element
     //////////////////////////////////////////////////////////////////////////////////////
     function onHelp() : void
     {
-        appmodel.pubsub.publish( PubSubService.Type.HELP, props.url );
+        appmodel.pubsub.publish( PubSubService.Type.HELP, props.value );
     }
 
     //
     //
     //
-    return  <ButtonIcon id={ props.id } icon={ <HelpOutlineOutlinedIcon /> } label={ appmodel.ui.locale.label('common.button.help', {ellipse:true} ) } onClick={ onHelp } />;
+    return  <ButtonIcon id={ "help" } icon={ <HelpOutlineOutlinedIcon /> } label={ appmodel.label('common.button.help', {ellipse:true} ) } onClick={ onHelp } />;
 }
 
 /**
@@ -37,8 +37,8 @@ export namespace HelpButton
 {
     export interface Props
     {
-        id  : string;
-        url : string;
+        id? : string;
+        value : string;
     }
 }
 

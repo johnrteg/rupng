@@ -42,6 +42,11 @@ export class RestfulService
 
     private callback_monitor  : RestfulService.CallHandle | null;
 
+    // optional 401 recovery hook: invoked once on an Unauthorized response; if it resolves true (e.g. the
+    // caller refreshed the access token), the original request is retried once. Lets a session transparently
+    // survive access-token expiry without every call having to handle it.
+    private unauthorizedHandler : ( () => Promise<boolean> ) | null = null;
+
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
     constructor( base_url       : string,
                 default_headers : any = {},
@@ -71,6 +76,10 @@ export class RestfulService
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** The API base URL this client targets (e.g. for a docs "Try It" that calls the real edge with a dev key). */
+    public get baseUrl() : string { return this.base_url; }
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////
     public passHeaders( headers: any, names : Array<string> ) : void
     {
         let i : number;
@@ -81,6 +90,13 @@ export class RestfulService
                 this.setHeader( names[i], headers[ names[i] ] );
             }
         }
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** Register the 401-recovery hook (see {@link unauthorizedHandler}). Pass null to clear. */
+    public setUnauthorizedHandler( handler : ( () => Promise<boolean> ) | null ) : void
+    {
+        this.unauthorizedHandler = handler;
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -300,6 +316,21 @@ export class RestfulService
         return await this.request( NetworkUtils.Method.DELETE, url, parameters, data, headers, timeout );
     }
 
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+    * Send an encapsulated, shared RestfulEndpoint and get back a typed reply. The endpoint marshals
+    * itself (method, URI, query, body, headers) so the same class the server fulfills and the /cloud
+    * build maps to a gateway route also drives the request — no per-call URL/verb wiring. The reply's
+    * `data` is typed as the endpoint's Response (declare its Response as the 3rd generic of
+    * RestfulEndpoint to get it, e.g. `class GetBootstrap extends RestfulEndpoint<Q, B, GetBootstrap.Response>`;
+    * otherwise it falls back to `any`). Sits alongside the traditional get/post/put/delete helpers.
+    */
+    public async fetch<R = any>( endpoint : RestfulEndpoint<any, any, R>, timeout : number | null = null ) : Promise<RestfulService.Reply<R>>
+    {
+        const transport : RestfulEndpoint.ClientTransport = endpoint.marshalClient();   // url already carries the query string
+        return await this.request( endpoint.method, transport.url, null, transport.body ?? null, transport.headers, timeout ) as RestfulService.Reply<R>;
+    }
+
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////
     public static queryString( parameters : any ) : string
     {
@@ -327,15 +358,43 @@ export class RestfulService
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Ambient transaction-id source (optional). On a SERVER, the runtime wires this to the current request's
+    // RequestContext so an S2S call FORWARDS the caller's transaction id (one id across the whole chain). In the
+    // BROWSER no provider is set, so each request mints its own. An explicit `x-transactionid` header still wins.
+    private static contextProvider? : () => string | undefined;
+
+    /** Install the ambient transaction-id source (the server runtime does this once). */
+    public static setContextProvider( provider : () => string | undefined ) : void
+    {
+        RestfulService.contextProvider = provider;
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** Mint a per-request transaction id (`crypto.randomUUID` when available; a compact fallback otherwise).
+     *  Sent as `x-transactionid` so a single call can be traced across services / logs / X-Ray. */
+    private static newTransactionId() : string
+    {
+        const global : { crypto? : { randomUUID? : () => string } } = globalThis as unknown as { crypto? : { randomUUID? : () => string } };
+        if( global.crypto?.randomUUID ) return global.crypto.randomUUID();
+        return `txn-${ Date.now().toString( 36 ) }-${ Math.random().toString( 36 ).slice( 2, 10 ) }`;
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////
     private async request(  method      : NetworkUtils.Method,
                             url         : string,
                             parameters  : any | null = null,
                             data        : any | null = null,
                             headers     : any | null = null,
                             timeout     : number | null = null,
-                            onProgress? : RestfulService.ProgressCallback ) : Promise<RestfulService.Reply>
+                            onProgress? : RestfulService.ProgressCallback,
+                            isRetry     : boolean = false ) : Promise<RestfulService.Reply>
     {
-        let reply : RestfulService.Reply = { ok: true, duration: 0, status: NetworkUtils.Status.OK };
+        // a per-request transaction id for end-to-end tracing — sent as `x-transactionid` (the server echoes
+        // it back + threads it through logs/monitor/X-Ray). Reuse a caller-supplied id if present, else mint one.
+        // Surfaced on the Reply so a developer can grab it (also visible as the request/response header in devtools).
+        const transactionId : string = ( headers?.[ RestfulEndpoint.RestfulHeaders.TRANSACTION_ID ] as string ) || RestfulService.contextProvider?.() || RestfulService.newTransactionId();
+
+        let reply : RestfulService.Reply = { ok: true, duration: 0, status: NetworkUtils.Status.OK, transactionId };
         let start : number = Date.now();
 
         try
@@ -345,14 +404,16 @@ export class RestfulService
             //console.log('args', args, url );
             if( args.length > 0 )full_url += ( '?' + args );
 
-            //console.log(">>>>>>>> REQUEST", method, url, ObjectUtils.merge( this.default_headers, headers ) );
-            const response : any = await this.client.request( { 
+            const requestHeaders : any = { ...ObjectUtils.merge( this.default_headers, headers ), [ RestfulEndpoint.RestfulHeaders.TRANSACTION_ID ]: transactionId };
+
+            //console.log(">>>>>>>> REQUEST", method, url, requestHeaders );
+            const response : any = await this.client.request( {
                                                                 url     : full_url,
                                                                 method  : method.toLowerCase(),
                                                                 data    : data,
-                                                                headers : ObjectUtils.merge( this.default_headers, headers ),
+                                                                headers : requestHeaders,
                                                                 timeout : timeout ?? this.default_timeout,
-                                                                onUploadProgress: onProgress 
+                                                                onUploadProgress: onProgress
                                                             } );
             //console.log( 'resp', response );
 
@@ -388,7 +449,8 @@ export class RestfulService
             //
             // setup reply
             //
-            reply.ok       = response.status === 200;
+            // any 2xx is success — 200 OK, 201 Created, 202 Accepted (async/provisional), 204 No Content, …
+            reply.ok       = response.status >= 200 && response.status < 300;
             reply.status   = response.status;
             reply.headers  = { ...response.headers };
             reply.data     = response.data;
@@ -403,6 +465,14 @@ export class RestfulService
             //console.error( 'exception', err );
 
             const error        : AxiosError = err;
+
+            // 401 recovery: give the registered hook ONE chance to recover (e.g. refresh the access token),
+            // then retry the original request once. Guarded by isRetry so a still-401 retry can't loop.
+            if( error.response?.status === NetworkUtils.Status.UNAUTHORIZED && this.unauthorizedHandler !== null && !isRetry )
+            {
+                const recovered : boolean = await this.unauthorizedHandler();
+                if( recovered ) return await this.request( method, url, parameters, data, headers, timeout, onProgress, true );
+            }
 
             // default
             let error_code     : string = 'EXCEPTION';
@@ -476,14 +546,15 @@ export namespace RestfulService
         data?       : any;      // optioan raw data of the error
     }
 
-    export interface Reply
+    export interface Reply<T = any>
     {
-        ok       : boolean;
-        data?    : any;
-        status   : NetworkUtils.Status;
-        headers? : any;
-        error?   : Error;
-        duration : number;
+        ok            : boolean;
+        data?         : T;
+        status        : NetworkUtils.Status;
+        headers?      : any;
+        error?        : Error;
+        duration      : number;
+        transactionId? : string;   // the x-transactionid sent with the request (echoed by the server) — for tracing a call end-to-end
     }
 
     export interface Options

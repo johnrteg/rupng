@@ -3,6 +3,7 @@
 import { Context } from 'aws-lambda';
 
 import { Application } from './Application';
+import { RequestContext } from './RequestContext';
 import type { Register } from '@repo/system';
 /*
 Jobs are short run functions that might be called from:
@@ -83,7 +84,31 @@ export abstract class Job<TEvent = any, TResult = any> extends Application
             throw err;
         }
 
-        return this.handler( event, context );
+        // a Job started FROM a queue/event inherits that message's transaction id (SQS attribute / event
+        // detail), so the whole chain — the request that enqueued it, this job, and anything it fans out — stays
+        // correlated. Best-effort extraction; mints nothing (a job with no upstream id simply runs without one).
+        return RequestContext.run( { transactionId: Job.transactionIdOf( event ) }, () => this.handler( event, context ) );
+    }
+
+    ////////////////////////////////////////////////////////////////////////
+    // Best-effort read of the transaction id off a Lambda trigger payload: SQS record message attribute,
+    // EventBridge `detail`, or a top-level field. Returns undefined when the trigger carries none.
+    private static transactionIdOf( event : unknown ) : string | undefined
+    {
+        const e = event as {
+            Records?      : Array<{ messageAttributes? : Record<string, { stringValue? : string; StringValue? : string }> }>;
+            detail?       : { transactionId? : string; source? : { transactionId? : string } };
+            transactionId? : string;
+        } | null | undefined;
+        if( !e ) return undefined;
+
+        const attr = e.Records?.[ 0 ]?.messageAttributes?.transactionId;
+        if( attr?.stringValue ) return attr.stringValue;
+        if( attr?.StringValue ) return attr.StringValue;
+        if( e.detail?.source?.transactionId ) return e.detail.source.transactionId;
+        if( e.detail?.transactionId ) return e.detail.transactionId;
+        if( e.transactionId ) return e.transactionId;
+        return undefined;
     }
 
     ////////////////////////////////////////////////////////////////////////

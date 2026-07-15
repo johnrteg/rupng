@@ -14,7 +14,7 @@ import TextInput, { TextInputHandle } from "./TextInput";
 export function PasscodeInput( props : PasscodeInput.Props ) : JSX.Element
 {
     const inputRefs                     = React.useRef< Array< TextInputHandle | null > >([]);
-    const passcode                      = React.useRef<string[]>( Array(props.digits).fill("") );
+    const passcode                      = React.useRef<Array<string>>( Array(props.digits).fill("") );
     const [disabled,setDisabled]        = React.useState< boolean >( props.disabled != undefined ? props.disabled : false );
 
     //

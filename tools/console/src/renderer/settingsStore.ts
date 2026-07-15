@@ -16,6 +16,7 @@ export interface Settings
 const KEY = "rupconsole.settings";
 const DEFAULTS : Settings = { histogramWindowMin: 30 };
 
+/** Read settings from localStorage, validating the window value and falling back to defaults. */
 function load() : Settings
 {
     try
@@ -47,12 +48,13 @@ class SettingsStore
     {
         this.snapshot = next;
         try { localStorage.setItem( KEY, JSON.stringify( next ) ); } catch { /* ignore */ }
-        for ( const l of this.listeners ) l();
+        for ( const listener of this.listeners ) listener();
     }
 }
 
 export const settingsStore = new SettingsStore();
 
+/** Hook: subscribe to the current persisted settings (re-renders when they change). */
 export function useSettings() : Settings
 {
     return useSyncExternalStore( settingsStore.subscribe, settingsStore.getSnapshot );

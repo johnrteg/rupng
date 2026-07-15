@@ -33,52 +33,55 @@ const LS_KEY = "rup.proxy.routing";
 
 interface Routing { env : string; modes : Record<string, RouteMode>; port : number; }
 
+/** Read the per-dev routing choices from localStorage, falling back to local defaults. */
 export function loadRouting() : Routing
 {
-    try { const r = JSON.parse( localStorage.getItem( LS_KEY ) ?? "" ) as Routing; return { env: r.env ?? "local", modes: r.modes ?? {}, port: r.port ?? PROXY_DEFAULT_PORT }; }
+    try { const saved = JSON.parse( localStorage.getItem( LS_KEY ) ?? "" ) as Routing; return { env: saved.env ?? "local", modes: saved.modes ?? {}, port: saved.port ?? PROXY_DEFAULT_PORT }; }
     catch { return { env: "local", modes: {}, port: PROXY_DEFAULT_PORT }; }
 }
-function saveRouting( r : Routing ) : void { localStorage.setItem( LS_KEY, JSON.stringify( r ) ); }
+/** Persist the routing choices for this developer. */
+function saveRouting( routing : Routing ) : void { localStorage.setItem( LS_KEY, JSON.stringify( routing ) ); }
 
 /** Outside = local container, Inside = deployed cloud. Resolve each upstream's effective target. */
-function targetFor( u : ProxyUpstream, mode : RouteMode ) : string
+function targetFor( upstream : ProxyUpstream, mode : RouteMode ) : string
 {
-    const outside : string = u.outside ?? u.target;
-    return mode === "inside" ? ( u.inside ?? u.target ) : outside;
+    const outside : string = upstream.outside ?? upstream.target;
+    return mode === "inside" ? ( upstream.inside ?? upstream.target ) : outside;
 }
 
 /** The discovered gateway URL for an upstream — only when all its prefixes resolve to the SAME API. */
-function gatewayFor( u : ProxyUpstream, gw : Record<string, string> ) : string | undefined
+function gatewayFor( upstream : ProxyUpstream, gateways : Record<string, string> ) : string | undefined
 {
-    const urls : Set<string> = new Set( u.prefixes.map( ( p ) => gw[ p ] ).filter( Boolean ) as string[] );
+    const urls : Set<string> = new Set( upstream.prefixes.map( ( prefix ) => gateways[ prefix ] ).filter( Boolean ) as Array<string> );
     return urls.size === 1 ? [ ...urls ][ 0 ] : undefined;
 }
 
 /** Fill each upstream's `inside` candidate from discovered gateway targets (keeps any explicit value). */
-function withGateways( base : ProxyConfig, gw : Record<string, string> ) : ProxyConfig
+function withGateways( base : ProxyConfig, gateways : Record<string, string> ) : ProxyConfig
 {
-    return { web: base.web, upstreams: base.upstreams.map( ( u ) => ( { ...u, inside: u.inside ?? gatewayFor( u, gw ) } ) ) };
+    return { web: base.web, upstreams: base.upstreams.map( ( upstream ) => ( { ...upstream, inside: upstream.inside ?? gatewayFor( upstream, gateways ) } ) ) };
 }
 
 /** Build the config the proxy actually runs with from the env's base config + per-service modes. */
 function effective( base : ProxyConfig, isLocal : boolean, modes : Record<string, RouteMode> ) : ProxyConfig
 {
     if ( !isLocal ) return base;   // remote: every service is Inside — targets are the committed remote ones
-    return { web: base.web, upstreams: base.upstreams.map( ( u ) => ( { ...u, target: targetFor( u, modes[ u.name ] ?? "outside" ) } ) ) };
+    return { web: base.web, upstreams: base.upstreams.map( ( upstream ) => ( { ...upstream, target: targetFor( upstream, modes[ upstream.name ] ?? "outside" ) } ) ) };
 }
 
+/** The Web → Proxy sub-tab: pick the backend env + per-service Outside/Inside routing, then start/restart the edge. */
 export function ProxyPanel()
 {
     const initial : Routing = loadRouting();
     const [ env, setEnv ]     = useState<string>( initial.env );
     const [ modes, setModes ] = useState<Record<string, RouteMode>>( initial.modes );
     const [ port, setPort ]   = useState<number>( initial.port );
-    const [ envs, setEnvs ]   = useState<string[]>( [] );
+    const [ envs, setEnvs ]   = useState<Array<string>>( [] );
     const [ base, setBase ]   = useState<ProxyConfig | null>( null );
     const [ gw, setGw ]       = useState<Record<string, string>>( {} );
     const [ running, setRunning ] = useState<boolean>( false );
     const [ err, setErr ]     = useState<string | undefined>();
-    const [ lines, setLines ] = useState<LogLine[]>( [] );
+    const [ lines, setLines ] = useState<Array<LogLine>>( [] );
 
     const isLocal : boolean = env === "local";
     const cfg : ProxyConfig | null = base ? withGateways( base, gw ) : null;   // base + discovered Inside targets
@@ -95,8 +98,8 @@ export function ProxyPanel()
     // load the selected env's base config + discover gateway (Inside) targets
     useEffect( () =>
     {
-        void api.proxyConfigGet( env ).then( ( r ) => { setBase( r.config ?? null ); setErr( r.error ); } );
-        void api.proxyGatewayTargets().then( ( r ) => setGw( r.prefixes ) );
+        void api.proxyConfigGet( env ).then( ( res ) => { setBase( res.config ?? null ); setErr( res.error ); } );
+        void api.proxyGatewayTargets().then( ( res ) => setGw( res.prefixes ) );
         saveRouting( { env, modes, port } );
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [ env ] );
@@ -105,7 +108,7 @@ export function ProxyPanel()
     useEffect( () =>
     {
         let active : boolean = true;
-        void api.getLog( WEBPROXY_ID, "runtime" ).then( ( hist : LogLine[] ) => { if ( active ) setLines( hist ); } );
+        void api.getLog( WEBPROXY_ID, "runtime" ).then( ( hist : Array<LogLine> ) => { if ( active ) setLines( hist ); } );
         const off : () => void = api.onLog( ( line : LogLine ) =>
         {
             if ( line.service === WEBPROXY_ID && line.stream === "runtime" )
@@ -114,6 +117,7 @@ export function ProxyPanel()
         return () => { active = false; off(); };
     }, [] );
 
+    /** Set one service's Outside/Inside mode and persist the routing. */
     const setMode = ( name : string, mode : RouteMode ) : void =>
     {
         const next : Record<string, RouteMode> = { ...modes, [ name ]: mode };
@@ -121,15 +125,21 @@ export function ProxyPanel()
         saveRouting( { env, modes: next, port } );
     };
 
-    const changePort = ( p : number ) : void => { setPort( p ); saveRouting( { env, modes, port: p } ); };
+    /** Change the edge listen port and persist it. */
+    const changePort = ( nextPort : number ) : void => { setPort( nextPort ); saveRouting( { env, modes, port: nextPort } ); };
 
+    /** Require explicit confirmation before routing the local SPA at the live production cloud. */
     const guard = () : boolean => env !== "production" || window.confirm( "Route to PRODUCTION? Your local SPA will hit live production APIs." );
 
     /** Write the derived config (.active) and (re)start the edge with it. */
     const apply = async ( restart : boolean ) : Promise<void> =>
     {
         if ( !cfg || !guard() ) return;
-        const r = await api.proxyApply( effective( cfg, isLocal, modes ) );
+        const built : ProxyConfig = effective( cfg, isLocal, modes );
+        // LOCAL: generate the per-endpoint route table from the endpoint→role bindings so /api/{service}
+        // dispatches to the right role port (mirrors the gateway). REMOTE: cloud does the dispatch.
+        if ( isLocal ) built.routes = await api.proxyLocalRoutes();
+        const r = await api.proxyApply( built );
         if ( !r.ok ) { setErr( r.error ); return; }
         if ( restart ) void api.proxyRestart( port ); else void api.proxyStart( port );
     };
@@ -141,7 +151,7 @@ export function ProxyPanel()
                 <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Edge → backend</Typography>
                 <Tooltip title="Which cloud the proxy routes APIs to">
                     <Select size="small" value={env} onChange={( e ) => setEnv( e.target.value )} sx={{ minWidth: 150 }}>
-                        {envs.map( ( c ) => <MenuItem key={c} value={c}>{c}</MenuItem> )}
+                        {envs.map( ( name ) => <MenuItem key={name} value={name}>{name}</MenuItem> )}
                     </Select>
                 </Tooltip>
                 {env === "production" && <Chip size="small" color="warning" label="LIVE" />}
@@ -175,8 +185,8 @@ export function ProxyPanel()
                         <Typography variant="caption" sx={{ color: "text.secondary" }}>
                             Remote env — web is served locally; every service routes to the <b>{env}</b> cloud:
                             <Box component="span" sx={{ display: "block", mt: 0.5 }}>
-                                {cfg.upstreams.map( ( u ) => (
-                                    <Box key={u.name} sx={{ fontFamily: MONO, fontSize: 12, color: "text.disabled" }}>{u.prefixes.join( " " )} ({u.name}) → {u.inside ?? u.target}</Box>
+                                {cfg.upstreams.map( ( upstream ) => (
+                                    <Box key={upstream.name} sx={{ fontFamily: MONO, fontSize: 12, color: "text.disabled" }}>{upstream.prefixes.join( " " )} ({upstream.name}) → {upstream.inside ?? upstream.target}</Box>
                                 ) )}
                             </Box>
                         </Typography>
@@ -187,23 +197,27 @@ export function ProxyPanel()
                             <Typography variant="caption" sx={{ color: "text.disabled", display: "block", mb: 0.75 }}>
                                 Per service: <b>Outside</b> = run it locally · <b>Inside</b> = leave it deployed in LocalStack
                             </Typography>
-                            {cfg.upstreams.map( ( u ) =>
+                            <Typography variant="caption" sx={{ color: "text.disabled", display: "block", mb: 0.75 }}>
+                                <b>/api</b> is auto-dispatched per endpoint to the role-service that owns it (generated from the
+                                endpoint→role bindings on Apply) — so a service can split into more roles without changing any URL.
+                            </Typography>
+                            {cfg.upstreams.map( ( upstream ) =>
                             {
-                                const mode : RouteMode = modes[ u.name ] ?? "outside";
-                                const insideDisabled : boolean = !u.inside;
+                                const mode : RouteMode = modes[ upstream.name ] ?? "outside";
+                                const insideDisabled : boolean = !upstream.inside;
                                 return (
-                                    <Box key={u.name} sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.75 }}>
+                                    <Box key={upstream.name} sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.75 }}>
                                         <Box sx={{ width: 170, flexShrink: 0, fontFamily: MONO, fontSize: 13 }}>
-                                            <Box component="span">{u.prefixes.join( " " )}</Box>{" "}
-                                            <Box component="span" sx={{ color: "text.disabled" }}>({u.name})</Box>
+                                            <Box component="span">{upstream.prefixes.join( " " )}</Box>{" "}
+                                            <Box component="span" sx={{ color: "text.disabled" }}>({upstream.name})</Box>
                                         </Box>
-                                        <ToggleButtonGroup size="small" exclusive value={mode} onChange={( _e, v : RouteMode | null ) => v && setMode( u.name, v )}>
+                                        <ToggleButtonGroup size="small" exclusive value={mode} onChange={( _e, next : RouteMode | null ) => next && setMode( upstream.name, next )}>
                                             <ToggleButton value="outside" sx={{ px: 1.5, py: 0.2 }}>Outside</ToggleButton>
                                             <Tooltip title={insideDisabled ? "no gateway URL yet (pending the LocalStack API Gateway data-path fix)" : "route to the deployed service"}>
                                                 <span><ToggleButton value="inside" disabled={insideDisabled} sx={{ px: 1.5, py: 0.2 }}>Inside</ToggleButton></span>
                                             </Tooltip>
                                         </ToggleButtonGroup>
-                                        <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: MONO, flexGrow: 1, wordBreak: "break-all" }}>→ {targetFor( u, mode )}</Typography>
+                                        <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: MONO, flexGrow: 1, wordBreak: "break-all" }}>→ {targetFor( upstream, mode )}</Typography>
                                     </Box>
                                 );
                             } )}

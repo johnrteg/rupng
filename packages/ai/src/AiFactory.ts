@@ -7,7 +7,12 @@ import type { AdapterOptions } from "./adapters/BaseAdapter";
 import { BedrockAdapter } from "./adapters/BedrockAdapter";
 import { AnthropicAdapter } from "./adapters/AnthropicAdapter";
 import { OpenAiAdapter } from "./adapters/OpenAiAdapter";
-import { KmsKeyProvider } from "./KeyProvider";
+import { FishAdapter } from "./adapters/FishAdapter";
+import { ElevenLabsAdapter } from "./adapters/ElevenLabsAdapter";
+import { MagnificAdapter } from "./adapters/MagnificAdapter";
+import { GeminiAdapter } from "./adapters/GeminiAdapter";
+import { AwsTranscribeAdapter } from "./adapters/AwsTranscribeAdapter";
+import { KmsKeyProvider, SecretsKeyProvider } from "./KeyProvider";
 import type { KeyProvider } from "./KeyProvider";
 
 /** Builds an `Ai` client from adapter options — one per provider in the registry. */
@@ -20,6 +25,11 @@ export class AiFactory
         [ Ai.Provider.BEDROCK,   ( options ) => new BedrockAdapter( options ) ],
         [ Ai.Provider.ANTHROPIC, ( options ) => new AnthropicAdapter( options ) ],
         [ Ai.Provider.OPENAI,    ( options ) => new OpenAiAdapter( options ) ],
+        [ Ai.Provider.FISH,       ( options ) => new FishAdapter( options ) ],
+        [ Ai.Provider.ELEVENLABS, ( options ) => new ElevenLabsAdapter( options ) ],
+        [ Ai.Provider.MAGNIFIC,   ( options ) => new MagnificAdapter( options ) ],
+        [ Ai.Provider.GEMINI,     ( options ) => new GeminiAdapter( options ) ],
+        [ Ai.Provider.AWS_TRANSCRIBE, ( options ) => new AwsTranscribeAdapter( options ) ],
     ] );
 
     /** Global defaults applied to every {@link AiFactory.create} call (set via {@link AiFactory.configure}). */
@@ -27,6 +37,23 @@ export class AiFactory
 
     /** Set global defaults: default provider, a shared KeyProvider, a usage sink, an account resolver. */
     static configure( config : AiFactory.Config ) : void { AiFactory.config = { ...AiFactory.config, ...config }; }
+
+    /**
+     * Wire the platform key source (media-17): resolve every provider's key from Secrets Manager via the
+     * ARN the CDK injects as `SECRET_AI_<PROVIDER>`. Called once at service boot (base `Application`) so any
+     * service's `AiFactory.create({ provider })` resolves the shared key with no per-call keyRef.
+     */
+    static usePlatformSecrets( region? : string ) : void
+    {
+        AiFactory.configure( {
+            keyProvider : new SecretsKeyProvider( region ),
+            keyRef      : ( provider : Ai.Provider ) => AiFactory.platformKeyRef( provider ),
+        } );
+    }
+
+    /** The env var name the CDK injects for a provider's platform secret ARN (matches `envVarName(SECRET,
+     *  "ai-<provider>")` → `SECRET_AI_<PROVIDER>`); the `SecretsKeyProvider` reads it to find the secret. */
+    static platformKeyRef( provider : Ai.Provider ) : string { return `SECRET_AI_${ provider.toUpperCase() }`; }
 
     /** Register (or replace) an engine adapter — add a new provider without editing the factory. */
     static register( provider : Ai.Provider, make : AdapterFactory ) : void { AiFactory.registry.set( provider, make ); }
@@ -45,13 +72,18 @@ export class AiFactory
 
         const keyProvider : KeyProvider = opts.keyProvider ?? AiFactory.config.keyProvider ?? new KmsKeyProvider( opts.region );
 
+        // keyRef precedence: explicit → the configured per-provider resolver (platform secrets) → none.
+        const keyRef : string | undefined = opts.keyRef ?? AiFactory.config.keyRef?.( provider );
+
         return make( {
-            model       : opts.model,
-            keyRef      : opts.keyRef,
+            model            : opts.model,
+            keyRef,
             keyProvider,
-            region      : opts.region,
-            maxAttempts : opts.maxAttempts,
-            onUsage     : opts.onUsage ?? AiFactory.config.onUsage,
+            region           : opts.region,
+            maxAttempts      : opts.maxAttempts,
+            videoBucket      : opts.videoBucket,        // Bedrock Nova Reel async output bucket
+            transcribeBucket : opts.transcribeBucket,   // Amazon Transcribe audio staging bucket
+            onUsage          : opts.onUsage ?? AiFactory.config.onUsage,
         } );
     }
 
@@ -85,6 +117,9 @@ export namespace AiFactory
     {
         defaultProvider? : Ai.Provider;
         keyProvider?     : KeyProvider;
+        // Default key reference per provider when `create()` gets no explicit `keyRef` — the platform wiring
+        // sets this to `platformKeyRef` (the `SECRET_AI_<PROVIDER>` env the CDK injects).
+        keyRef?          : ( provider : Ai.Provider ) => string | undefined;
         onUsage?         : AdapterOptions[ "onUsage" ];
         accountConfig?   : ( accountId : string ) => Promise<AccountConfig | undefined>;
     }

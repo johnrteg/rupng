@@ -2,14 +2,17 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 //
-// Dev API target (LocalStack / local servers by default). Override per environment, e.g.
+// Dev API target — the local webproxy front door. The console runs the webproxy on :9000
+// (PROXY_DEFAULT_PORT), so `npm run web` (Vite dev, HMR on :5173) proxies /api there and reaches the
+// same backend the console-served SPA does. Override per environment, e.g.
 //   VITE_API_TARGET=https://dev.api.rumbleup.com npm run web
-// Mirrors the webproxy `local` upstream so `npm run web` (Vite dev, HMR) reaches the same backend.
+// (Standalone `npm run proxy` with no console binds :8080 — set VITE_API_TARGET=http://localhost:8080 then.)
 //
-const API_TARGET : string = process.env.VITE_API_TARGET ?? 'http://localhost:8000';
+const API_TARGET : string = process.env.VITE_API_TARGET ?? 'http://localhost:9000';
 
-// the service prefixes the backend owns (kept in sync with webproxy src/config/local.json `prefixes`)
-const API_PREFIXES : Array<string> = [ '/rup', '/auth', '/account', '/passkey', '/login', '/verify', '/vcf', '/optin', '/uc' ];
+// the backend API namespace (kept in sync with webproxy src/config/local.json `prefixes`). Everything
+// under /api/{service}/v{N}/… is proxied to the backend; the SPA owns every other route.
+const API_PREFIXES : Array<string> = [ '/api' ];
 
 // build the dev proxy table: WS first (more specific than /account), then the REST prefixes
 const proxy : Record<string, { target: string; ws?: boolean; changeOrigin?: boolean }> = {
@@ -58,6 +61,9 @@ export default defineConfig({
                     if( id.includes( 'codemirror' ) )                                        return 'editor';   // heavy; only loaded where used
                     if( id.includes( 'emoji-picker-react' ) )                                return 'emoji';
                     if( id.includes( 'react' ) || id.includes( 'scheduler' ) )               return 'react';
+                    // PDF stack (html2pdf + jsPDF + html2canvas) — keep OUT of vendor so it stays an
+                    // on-demand chunk loaded only when a user downloads a PDF (it's ~1MB).
+                    if( id.includes( 'html2pdf' ) || id.includes( 'jspdf' ) || id.includes( 'html2canvas' ) ) return undefined;
                     return 'vendor';                                                          // everything else
                 },
             },

@@ -18,7 +18,7 @@ import { RestfulEndpoint, Access } from "@repo/endpoint";
     // respond
     const RestfulEndpoint.Response : resp = await GetHeath.execute( auth );
 */
-export class GetHealth extends RestfulEndpoint<GetHealth.Query, undefined>
+export class GetHealth extends RestfulEndpoint<GetHealth.Query, undefined, GetHealth.Response>
 {
     public readonly uri      : string = "/health";
     public readonly method   : NetworkUtils.Method = NetworkUtils.Method.GET;
@@ -35,19 +35,13 @@ export class GetHealth extends RestfulEndpoint<GetHealth.Query, undefined>
     ////////////////////////////////////////////////////////////////////////////////////////////
     public getMappings(): Array<RestfulEndpoint.FieldMap>
     {
-        return [ { field : "foo", location: RestfulEndpoint.AttrLocation.QUERY_PARAM } ];
+        return [];
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     public getQuerySchema(): RestfulEndpoint.SchemaFor<GetHealth.Query> | null
     {
-        // foo is optional - a health check must succeed without any input
-        return {
-            type: 'object',
-            properties: { foo: { type: 'string', nullable: true } },
-            required: [],
-            additionalProperties: false
-        };
+        return null;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -62,12 +56,12 @@ export namespace GetHealth
 {
     export interface Query extends RestfulEndpoint.NonAuthRequest
     {
-        foo? : string;
     }
 
     export interface Response
     {
         ok : boolean;
+        version : string;
     }
 
     // possible error type

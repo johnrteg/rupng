@@ -1,110 +1,206 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Checkbox from "@mui/material/Checkbox";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import Typography from "@mui/material/Typography";
+import Tooltip from "@mui/material/Tooltip";
+import IconButton from "@mui/material/IconButton";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
-import ButtonGroup from "@mui/material/ButtonGroup";
-import Select from "@mui/material/Select";
-import MenuItem from "@mui/material/MenuItem";
-import Tooltip from "@mui/material/Tooltip";
 import CircularProgress from "@mui/material/CircularProgress";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
-import ReplayIcon from "@mui/icons-material/Replay";
+import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
 import StopIcon from "@mui/icons-material/Stop";
-import LayersClearIcon from "@mui/icons-material/LayersClear";
+import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 
-import {
-    STAGE_ORDER,
-    type DeployTarget, type ServiceInfo, type StageId
-} from "../../shared/types";
+import { autoSteps, deployPrereqMet, type BuildSettings, type BuildTarget, type ServiceInfo, type StageId } from "../../shared/types";
+import { api } from "../api";
+import { loadBuildSettings, saveBuildSettings, BUILD_SETTINGS_EVENT } from "../buildSettings";
 
 //
-// The per-service pipeline controls. Pick any subset of stages (Build → Docker image → Deploy); the
-// run executes them in order and HALTS on first failure. "Resume" re-runs but skips stages that
-// already succeeded (no rolling back to the start). Each stage shows its live status.
+// The per-service run/build controls, driven by a TARGET (where the service runs):
+//   • Local      — Build, then run it locally (npm run dev). Auto-Build rebuilds on change and the
+//                  orchestrator (re)starts the local process. The Run/Deploy dot = it's running locally.
+//   • LocalStack — Build → Docker image → Deploy (cdklocal). The Run/Deploy dot = it's deployed.
+// Each Auto checkbox persists. The LocalStack chain CASCADES (Docker needs Build; Deploy needs Docker
+// for backends / Build for frontends). "Run now" forces the current target's auto-on steps immediately.
 //
 
-const STAGE_LABEL : Record<StageId, string> = { build: "Build", image: "Docker image", deploy: "Deploy" };
+// the LocalStack build→deploy chain (Local target only auto-builds, then the orchestrator runs it)
+const STEPS : { step : StageId; key : keyof BuildSettings; label : string }[] =
+[
+    { step: "image",  key: "docker", label: "Docker" },
+    { step: "deploy", key: "deploy", label: "Deploy" }
+];
 
 export function ActionToolbar(
-    { service, busy, anyRunning, onRun, onStop, onComposeDown } :
+    { service, busy, anyRunning, localRunning, onStop } :
     {
         service : ServiceInfo;
         busy : boolean;
         anyRunning : boolean;
-        onRun : ( selected : StageId[], target : DeployTarget, resume : boolean ) => void;
+        localRunning : boolean;   // a console-managed local dev process (runtime stream) is up
         onStop : () => void;
-        onComposeDown : () => void;
     }
 )
 {
     const caps : ServiceInfo[ "capabilities" ] = service.capabilities;
+    const frontend : boolean = caps.isFrontend;
 
-    // a stage is selectable only if the service can do it
-    const canStage = ( s : StageId ) : boolean =>
-        s === "build" ? caps.canBuild : s === "image" ? caps.canImage : ( caps.canCompose || caps.scaffolded );
+    const [ settings, setSettings ] = useState<BuildSettings>( () => loadBuildSettings( service.id ) );
 
-    const defaultSelection : StageId[] = useMemo<StageId[]>( () => STAGE_ORDER.filter( canStage ), [ service.id ] );
+    // reflect persisted settings on service change AND when changed elsewhere (e.g. the API tab's
+    // target toggle writes the same setting + fires this event) — so the toggles never drift.
+    useEffect( () =>
+    {
+        const reload = () : void => setSettings( loadBuildSettings( service.id ) );
+        reload();
+        window.addEventListener( BUILD_SETTINGS_EVENT, reload );
+        return () => window.removeEventListener( BUILD_SETTINGS_EVENT, reload );
+    }, [ service.id ] );
 
-    const [ selected, setSelected ] = useState<StageId[]>( defaultSelection );
-    const [ target, setTarget ]     = useState<DeployTarget>( caps.canCompose ? "compose" : "cdklocal" );
+    // manifest drift: warn when CloudManifest.ts changed since the last LocalStack deploy (→ redeploy).
+    // Re-checked after every build/deploy (a manifest edit triggers a build; a deploy clears the drift).
+    const [ drifted, setDrifted ] = useState<boolean>( false );
+    useEffect( () =>
+    {
+        // guard against a late async resolve writing state after unmount / service change
+        let active : boolean = true;
+        const check = () : void => { void api.manifestDrift( service.id ).then( ( result ) => { if ( active ) setDrifted( result.drifted ); } ); };
+        check();
+        const off = api.onBuildQueue( () => check() );
+        return () => { active = false; off(); };
+    }, [ service.id ] );
 
-    const deploySelected : boolean = selected.includes( "deploy" );
-    const canRun         : boolean = selected.length > 0 && !busy;
+    const localStack : boolean = settings.target === "localstack";
+
+    // LocalStack-chain steps that apply to this service (Docker only for backends that can image)
+    const steps : typeof STEPS = STEPS.filter( ( entry ) => entry.step !== "image" || ( !frontend && caps.canImage ) );
+
+    // whether a given chain step's checkbox is actionable for this service
+    const enabled = ( step : StageId ) : boolean =>
+        step === "image" ? settings.build
+        : deployPrereqMet( settings, frontend ) && caps.canDeploy;   // deploy
+
+    // tooltip explaining why a step is disabled (empty string when the step is enabled)
+    const disabledHint = ( step : StageId ) : string =>
+        step === "deploy" && !caps.canDeploy ? "No cloud stack for this service — add src/CloudManifest.ts and register it in cloud/src/app.ts"
+        : step === "image" && !settings.build ? "Enable Build first"
+        : step === "deploy" && !deployPrereqMet( settings, frontend ) ? ( frontend ? "Enable Build first" : "Enable Build + Docker first" )
+        : "";
+
+    // merge a partial change into the persisted build settings
+    const update = ( patch : Partial<BuildSettings> ) : void =>
+    {
+        const next : BuildSettings = { ...settings, ...patch };
+        setSettings( next );
+        saveBuildSettings( service.id, next );   // persists + fires the event → DevelopView re-pushes config
+    };
+
+    const setTarget = ( target : BuildTarget ) : void => update( { target } );
+
+    const canRunNow : boolean = autoSteps( settings, frontend, caps.canDeploy ).length > 0 && !busy;
 
     return (
-        <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
-            {/* stage selection */}
-            <ToggleButtonGroup
-                size="small"
-                value={selected}
-                onChange={( _e, next : StageId[] ) => setSelected( STAGE_ORDER.filter( ( s ) => next.includes( s ) ) )}
-            >
-                {STAGE_ORDER.map( ( s ) => (
-                    <ToggleButton key={s} value={s} disabled={!canStage( s )} sx={{ px: 1.5 }}>
-                        {STAGE_LABEL[ s ]}
-                    </ToggleButton>
-                ) )}
+        <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1.25 }}>
+            {/* where this service runs */}
+            <ToggleButtonGroup size="small" exclusive value={settings.target} onChange={( _event, nextTarget : BuildTarget | null ) => nextTarget && setTarget( nextTarget )}>
+                <ToggleButton value="local" sx={{ px: 1.25, py: 0.2 }}>Local</ToggleButton>
+                <ToggleButton value="localstack" sx={{ px: 1.25, py: 0.2 }}>LocalStack</ToggleButton>
             </ToggleButtonGroup>
 
-            {/* deploy target */}
-            <Tooltip title={deploySelected ? "Local deploy mechanism" : "Select Deploy to choose a target"}>
-                <Select
-                    size="small"
-                    value={target}
-                    disabled={!deploySelected}
-                    onChange={( e ) => setTarget( e.target.value as DeployTarget )}
-                    sx={{ minWidth: 150 }}
-                >
-                    <MenuItem value="compose" disabled={!caps.canCompose}>docker compose</MenuItem>
-                    <MenuItem value="cdklocal">{caps.isFrontend ? "cdklocal deploy (S3 + CloudFront)" : "cdklocal deploy"}</MenuItem>
-                </Select>
+            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700, ml: 0.5 }}>Auto:</Typography>
+
+            {/* Build applies to both targets */}
+            <FormControlLabel
+                sx={{ mr: 0 }}
+                control={<Checkbox size="small" checked={settings.build} onChange={( event ) => update( { build: event.target.checked } )} sx={{ p: 0.5 }} />}
+                label={<Typography variant="caption">Build</Typography>}
+            />
+
+            {/* Local target: run this service automatically (in sequence) when the Console starts */}
+            {!localStack && !frontend && (
+                <Tooltip title="Run this service locally when the Console starts (auto-run services start in sequence)">
+                    <FormControlLabel
+                        sx={{ mr: 0 }}
+                        control={<Checkbox size="small" checked={settings.autoRun} onChange={( event ) => update( { autoRun: event.target.checked } )} sx={{ p: 0.5 }} />}
+                        label={<Typography variant="caption">Run on start</Typography>}
+                    />
+                </Tooltip>
+            )}
+
+            {/* Docker + Deploy only when targeting LocalStack */}
+            {localStack && steps.map( ( { step, key, label } ) =>
+            {
+                const on : boolean = enabled( step );
+                const checked : boolean = settings[ key ] === true && on;
+                const showPlay : boolean = on && !checked;
+                const hint : string = disabledHint( step );
+                const control = (
+                    <FormControlLabel
+                        sx={{ mr: 0.25 }}
+                        control={<Checkbox size="small" checked={checked} disabled={!on} onChange={( event ) => update( { [ key ]: event.target.checked } )} sx={{ p: 0.5 }} />}
+                        label={<Typography variant="caption" sx={{ color: on ? "text.primary" : "text.disabled" }}>{label}</Typography>}
+                    />
+                );
+                return (
+                    <Box key={step} sx={{ display: "flex", alignItems: "center" }}>
+                        {hint ? <Tooltip title={hint}><span>{control}</span></Tooltip> : control}
+                        {showPlay && (
+                            <Tooltip title={`Run ${label} once now`}>
+                                <span>
+                                    <IconButton size="small" disabled={busy} onClick={() => void api.buildRunStep( service.id, step )} sx={{ p: 0.25 }}>
+                                        <PlayArrowIcon sx={{ fontSize: 16 }} />
+                                    </IconButton>
+                                </span>
+                            </Tooltip>
+                        )}
+                    </Box>
+                );
+            } )}
+
+            <Tooltip title={localStack ? "Run the auto-on steps now (build → docker → deploy)" : "Build now (the local process auto-(re)starts on success)"}>
+                <span>
+                    <Button
+                        size="small"
+                        variant="contained"
+                        color="success"
+                        disabled={!canRunNow}
+                        startIcon={busy ? <CircularProgress size={14} color="inherit" /> : <PlayCircleOutlineIcon />}
+                        onClick={() => void api.buildRunNow( service.id )}
+                        sx={{ ml: 0.5 }}
+                    >
+                        Run
+                    </Button>
+                </span>
             </Tooltip>
 
-            {/* run / resume */}
-            <ButtonGroup variant="contained" disabled={!canRun}>
-                <Button
-                    startIcon={busy ? <CircularProgress size={14} color="inherit" /> : <PlayArrowIcon />}
-                    onClick={() => onRun( selected, target, false )}
-                >
-                    Run
-                </Button>
-                <Tooltip title="Re-run selected stages, skipping ones that already succeeded">
-                    <Button color="secondary" startIcon={<ReplayIcon />} onClick={() => onRun( selected, target, true )}>
-                        Resume
+            {/* Local target: start the local process by hand (it also auto-(re)starts on build) */}
+            {!localStack && !frontend && !localRunning && (
+                <Tooltip title="Run this service locally now (npm run dev)">
+                    <Button size="small" variant="outlined" startIcon={<PlayArrowIcon />} onClick={() => void api.devStart( service.id )}>
+                        Run local
                     </Button>
                 </Tooltip>
-            </ButtonGroup>
+            )}
 
-            <Button color="error" variant="outlined" startIcon={<StopIcon />} disabled={!anyRunning} onClick={onStop}>
+            <Button size="small" color="error" variant="outlined" startIcon={<StopIcon />} disabled={!anyRunning} onClick={onStop}>
                 Stop
             </Button>
 
-            {caps.canCompose && (
-                <Tooltip title="docker compose down — stop & remove this service's containers">
-                    <Button variant="outlined" startIcon={<LayersClearIcon />} onClick={onComposeDown}>
-                        Compose down
-                    </Button>
+            {/* manifest changed since the last LocalStack deploy → its AWS footprint is stale (new
+                resources won't resolve until redeployed). Offer a one-click redeploy. Disabled while a
+                build/deploy is already running so we never stack a second cdklocal deploy on top. */}
+            {drifted && (
+                <Tooltip title={busy ? "Deploying…" : "CloudManifest changed since the last LocalStack deploy — redeploy to create/apply its AWS resources (code changes don't need this; manifest/footprint changes do)"}>
+                    <span>
+                        <Button size="small" color="warning" variant="contained" disabled={busy}
+                                startIcon={busy ? <CircularProgress size={14} color="inherit" /> : <WarningAmberIcon />}
+                                onClick={() => void api.buildRunStep( service.id, "deploy" )}>
+                            {busy ? "Redeploying…" : "Redeploy"}
+                        </Button>
+                    </span>
                 </Tooltip>
             )}
         </Box>

@@ -269,6 +269,64 @@ long-idle resume, weak-factor escalation.
 * **Logout / revoke** — blacklist the `jti` / session; the **revocation epoch** invalidates cached authorizer
   allows immediately (no waiting on the JWT TTL).
 
+## JWT management & lifecycle *(decided)*
+
+Cognito is the token authority; we never mint our own JWTs. Sign-in (`POST /login`, or the staged
+`/login/challenge`) returns the Cognito token set, which we use as follows.
+
+**Token types — use the right one.**
+
+| Token | Carries | Used by |
+| --- | --- | --- |
+| **access** | `sub`, `username`, `scope`, `client_id`, `exp` | **The API bearer.** Sent on every request; the server authenticates from it. |
+| **id** | profile claims (`email`, `given_name`, …) | **Client-only** — display name/email. **Never** sent to APIs. |
+| **refresh** | opaque | Exchanged for a new access token when it expires (rotation; see below). |
+
+**Client handling.**
+* On sign-in, persist the **access** token (survives reload) and send it as `Authorization: Bearer <access>`
+  on every request (the API client sets it as a default header; it is re-applied from the cache on boot).
+* The client **decodes** the access token's claims (base64url payload) to know who is signed in and the
+  expiry — **decode-only, never signature-verify on the client**. `validSession()` is true until `exp`;
+  an expired cached token is treated as signed-out → land on sign-in.
+* On sign-out, drop the cached token + the bearer header and clear the decoded session.
+
+**Server acceptance.**
+* **Prod:** an API Gateway **Cognito JWT authorizer verifies the signature (JWKS)**, issuer, audience and
+  expiry, then forwards the claims. Individual services do **not** verify signatures — the gateway is the
+  trust boundary.
+* **Dev / LocalStack:** no authorizer in front, so the service reads `Authorization: Bearer <jwt>`, **decodes
+  the payload without verifying** (`Service.authFromRequest`), and lifts `sub → userId`, username, and the
+  raw `claims` into the endpoint's `Authentication`. Secured endpoints require `userId` (else **401**).
+* This means the SAME server code path consumes claims in both environments — only the *verification* moves
+  to the edge in prod.
+
+**Lifecycle.** `issue` (login) → `use` (bearer on each call) → `expire` (access TTL, ~1h) →
+`refresh` (exchange the refresh token via `REFRESH_TOKEN_AUTH`, with family rotation) → `revoke`
+(logout / forced reset → blacklist `jti` + bump the revocation epoch so cached authorizer allows die
+immediately). A refresh **rotates** the refresh token; reuse of a retired one revokes the whole family
+(theft signal).
+
+**Authorization vs authentication — the JWT is identity-only.** Per the decided design (above: *"The JWT is
+identity-only — roles/permissions resolve per request by the authorizer from DynamoDB"*), the token proves
+*identity* (`sub`) and does **not** carry the per-account **role** — that role lives in the account service's
+`members` table and is resolved **per request**. So a bare Cognito token authenticates *who* you are; the
+acting **account + role** (`≤ maxRole`) is established alongside it (`Auth.Context`) and re-resolved on each
+call, never trusted from a client-supplied claim. The current dev fallback (`Service.roleFromClaims`)
+defaults an authenticated caller to `USER` until that per-request membership lookup is wired through.
+
+**Implementation state (2026-06):**
+* Access token cached + re-applied + decoded on boot; server-side decode (dev) / authorizer (prod); JWT
+  kept identity-only.
+* **Refresh rotation — wired (auth-flow-7.2):** the refresh token is cached on sign-in; a 401 transparently
+  triggers a refresh + retry (RestfulService `unauthorizedHandler` → `AppModel.refreshSession`), and boot
+  proactively refreshes an expired access token — so a session survives the ~1h access TTL + page reloads.
+* **Per-request role — seam wired:** authorization no longer reads the role from a claim; `Service.resolveRole`
+  resolves it per request (written back onto the auth context). The **account service** (which owns `members`)
+  overrides it to return the caller's real account-ladder role + acting `accountId`.
+* **TODO:** make membership readable to the OTHER services (auth/app) — via a shared read grant or an
+  account-service authz lookup — so their role-gated endpoints enforce the real role instead of the `USER`
+  default. Multi-account acting-account selection (pick which membership when a user has several).
+
 # Identity linking *(authoritative here)*
 
 A user accumulates methods over time, and we **link, never fork**:
@@ -370,6 +428,26 @@ drive the whole flow end-to-end with **nothing actually delivered**:
 * **Phone verify** required before any live send. **High-risk** signups divert to `pending_review` (see [risk](RISK.md)).
 
 # Data model (sketch)
+
+> **Migrated.** The public **user profile** contract is now in **`@repo/api` → `User`**
+> ([`packages/api/src/auth/User.ts`](../../../../packages/api/src/auth/User.ts)) — `User.Entity` (**no
+> secrets**) + `User.Status`/`User.MfaMethod`/`User.Membership`. The contract **splits fields by source**
+> so reads/writes route without duplicating Cognito:
+> * **`User.CognitoProfile`** — Cognito-owned (email/phone + verified, name, picture, locale, zoneinfo,
+>   MFA). Source of truth is **Cognito**; not copied into our store.
+> * **`User.Augmented`** — DynamoDB-only metadata (status, `resetPassword`, icon, timestamps); the
+>   public projection of the internal SoT **`Auth.UserProfile`** ([AuthModel.ts](../src/models/AuthModel.ts)).
+> * `User.Entity` = `CognitoProfile ⊕ Augmented`, and `User.Update` is grouped (`cognito` → Cognito
+>   AdminUpdateUserAttributes · `augmented` → the DynamoDB row). So **GET composes both stores; POST
+>   routes each part** — password/MFA never travel these attribute writes.
+>
+> **Status / reset:** `User.Status` mirrors the internal `Auth.UserStatus` 1:1 (incl. `RESET_REQUIRED`);
+> `User.Entity.resetPassword` is just the projection of `status === RESET_REQUIRED`.
+>
+> The credential/identity-link storage (password in Cognito; SSO `UserIdentity`/`AuthMethod`;
+> `SsoConnection`; sessions) stays **auth-internal** — see *Security posture* below +
+> [SPECS.md](SPECS.md#identity--accounts). The `Registration` record below stays here (auth-internal
+> funnel/abuse analytics, not part of the API).
 
 Sign-up produces an **`Auth.UserProfile`** (+ Cognito user) and an **Account**; it also persists a registration
 record for funnel analytics + abuse review:

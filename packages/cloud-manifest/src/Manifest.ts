@@ -18,6 +18,21 @@ import { Sizing } from "./Sizing";
 // Per-service manifest
 // ────────────────────────────────────────────────────────────────────────────
 
+/**
+ * A managed AWS AI/ML service the task role + job Lambdas may CALL (no resource to create — only IAM). The
+ * CDK maps each to a curated least-privilege action set (see ServiceStack) attached to every grantee. These
+ * are the AI providers reached over IAM rather than an API key (Bedrock is the {@link AiFactory} default;
+ * Transcribe/Polly/Comprehend/Rekognition are the AWS-native modality services).
+ */
+export enum ManagedAiService
+{
+    BEDROCK     = "bedrock",       // foundation models (chat / image / async video)
+    TRANSCRIBE  = "transcribe",    // speech-to-text (async, S3-staged)
+    POLLY       = "polly",         // text-to-speech
+    COMPREHEND  = "comprehend",    // NLP (entities / sentiment / key phrases)
+    REKOGNITION = "rekognition",   // image / video analysis
+}
+
 /** Resources a service OWNS (creates). One service owns each resource. */
 export interface OwnedResources
 {
@@ -65,6 +80,10 @@ export interface ResourceManifest
 
     owns         : OwnedResources;
     uses?        : Array<ResourceRef>;       // resources owned by OTHER services + access intent
+
+    // Managed AWS AI/ML services this service's compute (task role + job Lambdas) is allowed to CALL over IAM
+    // (no resource is created — only the IAM actions are granted). e.g. media declares [BEDROCK, TRANSCRIBE].
+    aiServices?  : Array<ManagedAiService>;
 
     // Kafka pub/sub against the shared cluster (topics may be owned here or external)
     publishes?   : Array<KafkaBindingSpec>;
@@ -120,5 +139,10 @@ export interface PlatformManifest
     sharedEventBus? : EventBusSpec;          // the platform-wide event bus
     cloudTrail?     : CloudTrailSpec;
     hostedZones?    : Array<string>;         // Route 53 zones managed by the platform
+    // Platform-shared secrets granted to EVERY service (not owned by any one service) — the AI provider
+    // API keys (OpenAI, Anthropic, …). Each ServiceStack is granted read + gets the ARN injected as
+    // `SECRET_<KEY>`, so any service's AiFactory can resolve them. Service-specific keys stay in that
+    // service's `owns.secrets`.
+    secrets?        : Array<SecretSpec>;
     tags?           : Tags;
 }

@@ -15,6 +15,9 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import TerminalIcon from "@mui/icons-material/Terminal";
 import InsightsIcon from "@mui/icons-material/Insights";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
+import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
+import ScienceIcon from "@mui/icons-material/Science";
+import PendingActionsIcon from "@mui/icons-material/PendingActions";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import VolumeUpIcon from "@mui/icons-material/VolumeUp";
 import VolumeOffIcon from "@mui/icons-material/VolumeOff";
@@ -25,7 +28,7 @@ import { api } from "../api";
 import { metricsStore, useMetrics, type Breach, type MetricsSnapshot } from "../metricsStore";
 import { SettingsDialog } from "./SettingsDialog";
 
-export type AppView = "develop" | "monitor" | "repo";
+export type AppView = "develop" | "monitor" | "repo" | "deploy" | "fake" | "actions";
 
 //
 // Top-level application header: product title, the Develop / Monitor tab switcher, and the shared
@@ -41,17 +44,19 @@ export function AppHeader(
 
     // live container metrics (recorded continuously by the singleton) → threshold alert + sound toggle
     const metrics : MetricsSnapshot = useMetrics();
-    const breaches : Breach[] = metrics.breaches;
+    const breaches : Array<Breach> = metrics.breaches;
     const breachTitle : string = breaches.length > 0
-        ? breaches.map( ( b : Breach ) => `${b.name} — ${b.metric} ${b.value.toFixed( 0 )}%` ).join( "\n" )
+        ? breaches.map( ( breach : Breach ) => `${breach.name} — ${breach.metric} ${breach.value.toFixed( 0 )}%` ).join( "\n" )
         : "";
 
+    // chip color tracks the LocalStack lifecycle: green up · grey down · amber transitional
     const color : "success" | "default" | "warning" = localstack.status === "running" ? "success" : localstack.status === "stopped" ? "default" : "warning";
 
-    const run = async ( which : "up" | "down" | "status", fn : () => Promise<LocalStackState> ) : Promise<void> =>
+    // run a LocalStack lifecycle action, flagging the matching button busy until it resolves
+    const run = async ( which : "up" | "down" | "status", action : () => Promise<LocalStackState> ) : Promise<void> =>
     {
         setBusy( which );
-        try { onLocalStack( await fn() ); }
+        try { onLocalStack( await action() ); }
         finally { setBusy( null ); }
     };
 
@@ -61,10 +66,13 @@ export function AppHeader(
                 RumbleUp <Box component="span" sx={{ color: "primary.main" }}>Console</Box>
             </Typography>
 
-            <Tabs value={view} onChange={( _e, v : AppView ) => onView( v )} sx={{ minHeight: 52, "& .MuiTab-root": { minHeight: 52 } }}>
+            <Tabs value={view} onChange={( _event, nextView : AppView ) => onView( nextView )} sx={{ minHeight: 52, "& .MuiTab-root": { minHeight: 52 } }}>
                 <Tab value="develop" icon={<TerminalIcon fontSize="small" />} iconPosition="start" label="Develop" />
                 <Tab value="monitor" icon={<InsightsIcon fontSize="small" />} iconPosition="start" label="Monitor" />
                 <Tab value="repo" icon={<AccountTreeIcon fontSize="small" />} iconPosition="start" label="Repo" />
+                <Tab value="deploy" icon={<RocketLaunchIcon fontSize="small" />} iconPosition="start" label="Deploy" />
+                <Tab value="fake" icon={<ScienceIcon fontSize="small" />} iconPosition="start" label="Simulators" />
+                <Tab value="actions" icon={<PendingActionsIcon fontSize="small" />} iconPosition="start" label="Actions" />
             </Tabs>
 
             <Box sx={{ flexGrow: 1 }} />

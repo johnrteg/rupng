@@ -11,6 +11,7 @@ import { Accordion, AccordionDetails, AccordionSummary, Avatar, Typography } fro
 import ExpandMoreIcon   from '@mui/icons-material/ExpandMore';
 
 import BrowserUtils from '@utils/BrowserUtils';
+import { useIsDesktop } from '../../utils/useBreakpoint';
 
 //import Analytics        from '../utils/Analytics';
 
@@ -22,6 +23,7 @@ export function AccordionSection( props: AccordionSection.Props ) : JSX.Element
 
     const [selected,setSelected]   = React.useState< string | null >( props.selected );
     const theme : Theme = useTheme();
+    const isDesktop : boolean = useIsDesktop();
 
     //
     React.useEffect( propsSelectedChanged, [props.selected] );
@@ -73,12 +75,12 @@ export function AccordionSection( props: AccordionSection.Props ) : JSX.Element
                         { props.primary }
                     </Typography>
           
-                    { props.secondary && BrowserUtils.isDesktop ?
+                    { props.secondary && isDesktop ?
                     <Typography component="span" sx={{ width: props.tiercery !== undefined ? '33%' : '66%', flexShrink: 0, color: 'text.secondary' }}>
                         { props.secondary }
                     </Typography> : null }
 
-                    { props.tiercery && BrowserUtils.isDesktop ?
+                    { props.tiercery && isDesktop ?
                     <Typography component="span" sx={{ color: 'text.secondary' }}>
                         { props.tiercery }
                     </Typography> : null }

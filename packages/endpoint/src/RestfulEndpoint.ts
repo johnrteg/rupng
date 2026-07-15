@@ -12,8 +12,13 @@ const ajvQuery : Ajv = new Ajv({ allErrors: true, coerceTypes: true });
 // genuine type errors, so body validation is a pure check.
 const ajvBody : Ajv = new Ajv({ allErrors: true, coerceTypes: false });
 
-export abstract class RestfulEndpoint<Q extends object = any, B extends object | undefined = any>
+export abstract class RestfulEndpoint<Q extends object = any, B extends object | undefined = any, R = any>
 {
+    // Phantom type carrier — has NO runtime value (`declare`), it only makes the endpoint's Response
+    // type (the 3rd generic) structurally present so `RestfulService.fetch( endpoint )` can INFER it
+    // and return `RestfulService.Reply<Response>`. An unused generic alone isn't inferable.
+    declare readonly _response: R;
+
     // 1. Core Infrastructure Properties
     public abstract readonly uri: string;
     public abstract readonly method: NetworkUtils.Method;
@@ -205,6 +210,11 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
             const responseSchema : Schema | null   = endpoint.getResponseSchema();
             const secured        : boolean         = endpoint.access !== undefined;
 
+            // the endpoint's declared error responses (status → description), merged into the standard set
+            const declaredErrors : Record<string, { description : string }> = {};
+            for( const [ status, description ] of Object.entries( ( endpoint.docs?.errors ?? {} ) as Record<string, string> ) )
+                declaredErrors[ status ] = { description };
+
             const operation : Record<string, unknown> = {
                 operationId : endpoint.docs?.operationId ?? endpoint.constructor.name,
                 summary     : endpoint.docs?.summary,
@@ -217,8 +227,12 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
                     "200": { description: "Success", ...( responseSchema ? { content: { "application/json": { schema: responseSchema } } } : {} ) },
                     "400": { description: "Validation error" },
                     ...( secured ? { "401": { description: "Unauthenticated" }, "403": { description: "Forbidden" } } : {} ),
+                    ...declaredErrors,   // endpoint-specific errors (e.g. 404 Not found) from docs.errors
                 },
-                security    : secured ? [ { devKey: [] }, { bearer: [] } ] : [],
+                security    : secured ? [ { bearer: [] } ] : [],
+                // vendor extension: the RBAC minimum role a caller needs (drives the docs' auth/role chips).
+                // Absent when the endpoint is unauthenticated (access === undefined).
+                ...( secured ? { "x-min-role": endpoint.access } : {} ),
             };
 
             ( paths[ path ] ??= {} )[ endpoint.method.toLowerCase() ] = operation;
@@ -229,9 +243,10 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
             info,
             paths,
             components : {
+                // ONE scheme: the developer API key is a bearer token `Authorization: Bearer rup_<keyId>.<secret>`
+                // (not a JWT — same header the platform Authorizer verifies). See auth ApiKey / Authorizer.verifyApiKey.
                 securitySchemes : {
-                    devKey : { type: "apiKey", in: "header", name: RestfulEndpoint.RestfulHeaders.DEVKEY },
-                    bearer : { type: "http", scheme: "bearer", bearerFormat: "JWT" },
+                    bearer : { type: "http", scheme: "bearer", description: "Developer API key — `Authorization: Bearer rup_<keyId>.<secret>` (create one under Settings → API)." },
                 },
             },
         };
@@ -503,6 +518,10 @@ export namespace RestfulEndpoint
         operationId? : string;                    // stable id for SDK codegen (default: the class name)
         deprecated?  : boolean;
         examples?    : Record<string, unknown>;   // example request/response payloads
+        errors?      : Record<number, string>;    // endpoint-specific error responses: HTTP status → description
+                                                  // (e.g. `{ 404: "Project not found" }`) — merged into the docs
+                                                  // responses on top of the standard 400/401/403. Mirror the
+                                                  // namespace `Error` enum here so the spec lists real failures.
     }
 
     // Route metadata extracted from an endpoint definition (see RestfulEndpoint.toRoutes).
@@ -596,13 +615,21 @@ export namespace RestfulEndpoint
     }
 
     //
-    // for AuthRequest, this information is passed along
+    // Resolved caller context, passed to execute(). Populated by the service from the request's
+    // bearer token (and, in production, the Lambda authorizer). Empty when unauthenticated.
     //
     export interface Authentication
     {
-        //userId?    : string;
-        //devToken?  : string;
-        //sessionId? : string;
+        userId?    : string;                   // the caller's stable id (Cognito sub)
+        username?  : string;                   // the caller's username / login
+        token?     : string;                   // the raw bearer access token (for downstream calls e.g. GlobalSignOut)
+        claims?    : Record<string, unknown>;  // decoded token claims (sub, email, roles, …)
+        transactionId? : string;               // this request's correlation id (echoed as x-transactionid; carried in RequestContext)
+        // Resolved per request (the JWT is identity-only — role/account are NOT trusted from claims):
+        accountId? : string;                   // the acting account the caller is operating in
+        role?      : string;                   // the caller's resolved Access role within that account
+        apiKey?    : boolean;                  // true when authenticated via a developer API key (rup_<keyId>.<secret>) —
+                                               // userId/accountId/role are ADOPTED from the key; membership is NOT re-resolved
     }
 
 

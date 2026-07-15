@@ -1,5 +1,5 @@
 //
-import { RestfulEndpoint, Access } from "@repo/endpoint";
+import { RestfulEndpoint, Access, apiPath } from "@repo/endpoint";
 import { NetworkUtils } from "@repo/common";
 
 /*
@@ -14,7 +14,7 @@ import { NetworkUtils } from "@repo/common";
     // respond
     const RestfulEndpoint.Response : resp = await PostLogin.execute( auth );
 */
-export class PostLogin extends RestfulEndpoint<{}, PostLogin.Body>
+export class PostLogin extends RestfulEndpoint<{}, PostLogin.Body, PostLogin.Response>
 {
     public readonly uri      : string = PostLogin.URI;
     public readonly method   : NetworkUtils.Method = NetworkUtils.Method.POST;
@@ -46,8 +46,8 @@ export class PostLogin extends RestfulEndpoint<{}, PostLogin.Body>
         return {
             type: 'object',
             properties: {
-                account:  { type: 'string' },
-                password: { type: 'string' }
+                account:  { type: 'string', minLength: 3 },
+                password: { type: 'string', minLength: 1 }
             },
             required: ['account', 'password'],
             additionalProperties: false
@@ -58,22 +58,30 @@ export class PostLogin extends RestfulEndpoint<{}, PostLogin.Body>
 
 export namespace PostLogin
 {
-    export const URI : string = "/login";
+    export const URI : string = apiPath( "auth", 1, "/login" );   // /api/auth/v1/login
 
     export interface Body extends RestfulEndpoint.NonAuthRequest
     {
-        account : string;
+        account  : string;      // email or phone (E.164)
         password : string;
     }
 
     export interface Response
     {
+        complete      : boolean;        // true → fully authenticated; false → a challenge remains
+        sessionToken? : string;         // the access token (Bearer) — present when complete
+        idToken?      : string;
+        refreshToken? : string;
+        expiresIn?    : number;         // seconds
+        challenge?    : string;         // the remaining challenge when not complete (e.g. Login.ChallengeType.TOTP)
+        challengeToken? : string;       // opaque handle to answer `challenge` via /login/challenge (MFA continuation)
     }
 
     // possible error type
     export enum Error
     {
-        BAD_REQUEST = NetworkUtils.Status.BAD_REQUEST,
+        BAD_REQUEST           = NetworkUtils.Status.BAD_REQUEST,
+        UNAUTHORIZED          = NetworkUtils.Status.UNAUTHORIZED,
         INTERNAL_SERVER_ERROR = NetworkUtils.Status.INTERNAL_SERVER_ERROR,
     }
 

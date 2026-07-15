@@ -52,10 +52,12 @@ export const manifest : ResourceManifest =
             { key: "telemetry", maxReceiveCount: 3, dlq: true, visibilityTimeoutSec: 30 },   // -> AppTelemetryJob
         ],
 
-        // Runtime config + feature flags (app-1 bootstrap / app-2 flags).
+        // Runtime config + feature flags (app-1 bootstrap / app-2 flags). The "web" profile is the PUBLIC
+        // bootstrap blob (GetBootstrap.Config) served by the public role; "settings"/"flags" are the
+        // (separate) authed AppService config + flag set, wired later.
         appConfig:
         [
-            { key: "config", application: "app", profiles: [ { key: "settings" }, { key: "flags", type: "feature_flags" } ] },
+            { key: "config", application: "app", profiles: [ { key: "settings" }, { key: "flags", type: "feature_flags" }, { key: "web" } ] },
         ],
 
         // Web real-user monitoring (app-5 telemetry / RUM).
@@ -133,6 +135,15 @@ export const manifest : ResourceManifest =
             cors       : true,
             throttle   : {  default: { rateLimit: 100, burstLimit: 200 },
                             production: { rateLimit: 1000, burstLimit: 2000 } },
+            // Public, unauthenticated edge routes. /version (and /health) are inherited by every
+            // service from the shared framework; declaring them here gives them a gateway route so
+            // the deploy console can read the live version per environment. (Authed app routes will
+            // be generated from the public RestfulEndpoint defs once that wiring lands.)
+            endpoints  :
+            [
+                { method: "GET", path: "/version", public: true, authRequired: false },
+                { method: "GET", path: "/health",  public: true, authRequired: false },
+            ],
         },
     },
 
@@ -141,7 +152,12 @@ export const manifest : ResourceManifest =
     //   • subscribe to the SPECIFIC entity topics whose changes bust app caches → AppCacheInvalidationJob.
     //     (e.g. media.asset for cached assets; add the help/content entity topic when that service lands.)
     publishes:  [ { topic: Events.Stream.BEHAVIOR } ],
-    subscribes: [ { topic: Events.Object.MEDIA_ASSET, consumerGroup: "app-cache-invalidation" } ],
+    subscribes: [
+        { topic: Events.Object.MEDIA_ASSET,     consumerGroup: "app-cache-invalidation" },
+        // BFF read-model warming — the tail of the sign-up chain (account provisioned, new identity).
+        { topic: Events.Object.ACCOUNT_ACCOUNT, consumerGroup: "app-readmodel" },
+        { topic: Events.Object.AUTH_USER,       consumerGroup: "app-readmodel" },
+    ],
 
     tags: { domain: "core", tier: "bff" },
 };

@@ -81,7 +81,8 @@ export namespace PubSubService
         PAYMENT = "payment",
         LOGIN = "login",
         ACCOUNT = "account",
-        NOTICES = "notices"
+        NOTICES = "notices",
+        CHAT = "chat"                   // toggle the right-side chat panel (open ⇄ closed)
     }
 }
 

@@ -4,7 +4,12 @@ import { JSX } from "react";
 
 //
 import { InputAdornment, TextField } from '@mui/material';
+import MicNoneOutlinedIcon from '@mui/icons-material/MicNoneOutlined';
+import MicOffOutlinedIcon  from '@mui/icons-material/MicOffOutlined';
 import { StringUtils, ValueUtils } from '@repo/common';
+
+import ButtonIcon  from './ButtonIcon';
+import VoiceToText from '@utils/VoiceToText';
 
 
 //
@@ -19,11 +24,20 @@ function TextInput( props : TextInput.Props, ref : React.Ref<TextInputHandle> ) 
 {
     const [text,setText]            = React.useState<string>( props.value ? props.value : "" );
     const [disabled,setDisabled]    = React.useState< boolean | undefined >( props.disabled );
+    const [listening,setListening]  = React.useState<boolean>( false );   // voice-to-text mic active
     const inputRef                  = React.useRef<HTMLInputElement | null>( null );
+
+    // voice-to-text — refs kept fresh each render so the (once-constructed) recognizer's handlers see the
+    // latest text/props; `gotResult` tracks whether a dictation produced anything (for onEnterAtVoiceDone).
+    const v2tRef                    = React.useRef< VoiceToText | null >( null );
+    const textRef                   = React.useRef<string>( text );  textRef.current = text;
+    const propsRef                  = React.useRef< TextInput.Props >( props );  propsRef.current = props;
+    const gotResultRef              = React.useRef<boolean>( false );
 
     React.useEffect( valueChanged, [props.value] );
     React.useEffect( insertRequest, [props.insertAtCursor] );
     React.useEffect( disabledChanged, [props.disabled] );
+    React.useEffect( setupVoice, [] );
 
     // Expose methods to parent
     React.useImperativeHandle( ref, () => ({
@@ -46,6 +60,51 @@ function TextInput( props : TextInput.Props, ref : React.Ref<TextInputHandle> ) 
     function disabledChanged() : void
     {
         setDisabled( props.disabled );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////
+    // construct the voice-to-text recognizer once (when enabled + supported); dispose on unmount. Handlers
+    // read the *ref*s so they always see the current text/props despite being bound once.
+    function setupVoice() : ( () => void ) | undefined
+    {
+        if( !( props.voiceToText ?? false ) || !VoiceToText.isSupported() )return undefined;
+        const v2t : VoiceToText = new VoiceToText( {}, {
+            onStart:  () : void => { gotResultRef.current = false; setListening( true ); },
+            onEnd:    onVoiceEnd,
+            onResult: onVoiceResult,
+        } );
+        v2tRef.current = v2t;
+        return () : void => v2t.dispose();
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////
+    // a finalized dictation chunk — append to the current text (space-separated) and push it out via onChange
+    function onVoiceResult( chunk : string, isFinal : boolean ) : void
+    {
+        if( !isFinal )return;
+        const piece : string = chunk.trim();
+        if( piece === "" )return;
+        gotResultRef.current = true;
+        const current : string = textRef.current ?? "";
+        const next : string = current === "" ? piece : `${ current } ${ piece }`;
+        textRef.current = next;
+        setText( next );
+        if( propsRef.current.onChange )propsRef.current.onChange( next );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////
+    // dictation ended — clear the mic state and, if requested, fire onEnter once (like pressing Enter)
+    function onVoiceEnd() : void
+    {
+        setListening( false );
+        if( propsRef.current.onEnterAtVoiceDone && gotResultRef.current && propsRef.current.onEnter )propsRef.current.onEnter();
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////
+    // mic button — start/stop dictation
+    function onToggleMic() : void
+    {
+        v2tRef.current?.toggle();
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -218,10 +277,24 @@ function TextInput( props : TextInput.Props, ref : React.Ref<TextInputHandle> ) 
         endIcon = <InputAdornment position="end">{ props.endIcon }</InputAdornment>;
     }
 
-    if( read_only || ValueUtils.notNull( startIcon ) || ValueUtils.notNull( endIcon ) )
+    // voice-to-text mic toggle, shown at the START of the entry (before any start label/icon)
+    const showMic : boolean = ( props.voiceToText ?? false ) && VoiceToText.isSupported();
+    const micIcon : JSX.Element | undefined = showMic
+            ? <InputAdornment position="start">
+                    <ButtonIcon id="voice-to-text" label={ "Voice To Text" } size="small" disabled={ disabled }
+                                icon={ listening ? <MicOffOutlinedIcon color="error" fontSize="small" /> : <MicNoneOutlinedIcon color="primary" fontSize="small" /> }
+                                onClick={ onToggleMic } />
+                </InputAdornment>
+            : undefined;
+
+    const startAdornment : JSX.Element | undefined = micIcon && startIcon
+            ? <>{ micIcon }{ startIcon }</>
+            : ( micIcon ?? startIcon );
+
+    if( read_only || ValueUtils.notNull( startAdornment ) || ValueUtils.notNull( endIcon ) )
     {
         input = {   readOnly        : read_only,
-                    startAdornment  : startIcon ?? startIcon,
+                    startAdornment  : startAdornment,
                     endAdornment    : endIcon ?? endIcon
                 };
     }
@@ -288,6 +361,8 @@ export namespace TextInput
         readOnly?           : boolean;
         multiline?          : boolean;
         maxRows?            : number;
+        voiceToText?        : boolean;      // show a mic toggle that dictates into the field (Web Speech API)
+        onEnterAtVoiceDone? : boolean;      // when voiceToText: call onEnter once dictation finishes with a result
         placeHolder?        : string;
         fullWidth?          : boolean;
         width?              : string | number;

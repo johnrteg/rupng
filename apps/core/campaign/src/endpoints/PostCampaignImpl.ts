@@ -1,0 +1,54 @@
+//
+import { randomUUID } from "node:crypto";
+
+import { PostCampaign, Campaign } from "@repo/api";
+import { NetworkUtils, type Type } from "@repo/common";
+import { RestfulEndpoint } from "@repo/endpoint";
+import CampaignService from "../services/CampaignService";
+
+//
+// Create a campaign in DRAFT state. Server assigns id / accountId / status / ownerId / timestamps; the stored
+// row carries a `campaignId` sort-key mirroring `id`. Channels/strategies/plans may be supplied now or via PATCH.
+//
+export class PostCampaignImpl extends PostCampaign
+{
+    private service : CampaignService;
+    constructor( service : CampaignService ) { super(); this.service = service; }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
+    {
+        if( !auth.userId )   return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
+        const accountId : string | undefined = auth.accountId;
+        if( !accountId )     return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
+        const name : string = this.body?.name ?? "";
+        if( !name )          return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "name required" } };
+
+        const now : Type.ISODateTime = new Date().toISOString();
+        const id : Type.UUID = randomUUID();
+        const entity : Campaign.Entity =
+        {
+            id,
+            accountId,
+            name,
+            objective: this.body?.objective,
+            status:    Campaign.Status.DRAFT,
+            channels:  this.body?.channels ?? [],
+            audience:  this.body?.audience,
+            budget:    this.body?.budget,
+            palette:   this.body?.palette,
+            fonts:     this.body?.fonts,
+            svgs:      this.body?.svgs,
+            ownerId:   auth.userId,
+            createdAt: now,
+            modifiedAt: now,
+        };
+
+        const wrote : Type.Result<void> = await this.service.dynamo.put( "campaigns", { ...entity, campaignId: id } );
+        if( !wrote.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "campaign write failed" } };
+
+        return { status: NetworkUtils.Status.OK, data: entity };
+    }
+}
+
+export default PostCampaignImpl;

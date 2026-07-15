@@ -25,6 +25,12 @@
 import type { Type } from "@repo/common";
 import type { Access } from "@repo/endpoint";
 
+// Shared contract vocabulary lives in @repo/api (one definition, spoken by client + server):
+//   • AuthMethod / MfaMethod   — login methods + second factors
+//   • Login.*                  — the staged-login challenge vocabulary (ChallengeType, Challenge, …)
+// This model references them; it does not redefine them.
+import type { AuthMethod, MfaMethod, Login } from "@repo/api";
+
 export namespace Auth
 {
     // ────────────────────────────────────────────────────────────────────────
@@ -105,18 +111,8 @@ export namespace Auth
     //   GSI: (method, providerSubject) -> userId   (resolve a federated login to our user)
     // ────────────────────────────────────────────────────────────────────────
 
-    /** A login method. Extensible — new methods are added here without changing callers. */
-    export enum AuthMethod
-    {
-        PASSWORD   = "password",    // Cognito-native email + password (+ MFA) — baseline
-        GOOGLE     = "google",      // social IdP, federated through Cognito
-        MICROSOFT  = "microsoft",
-        SAML       = "saml",        // enterprise IdP (per the account's SsoConnection)
-        OIDC       = "oidc",        // enterprise IdP (OIDC)
-        PASSKEY    = "passkey",     // WebAuthn / FIDO2 — strategic primary passwordless; phishing-resistant
-        EMAIL_OTP  = "email_otp",   // emailed one-time code — convenience for low-privilege roles + recovery; never sole factor for privileged roles
-        MAGIC_LINK = "magic_link",  // emailed one-time sign-in link — DEPRIORITIZED in favor of EMAIL_OTP (link-scanner consumption, cross-device); reserved, not planned
-    }
+    // `AuthMethod` (the login-method enum) is shared contract vocabulary → defined in @repo/api and
+    // imported above. UserIdentity references it.
 
     /** One login method linked to a user; a user may have many (enables linking + "sign in with …"). */
     export interface UserIdentity
@@ -423,41 +419,15 @@ export namespace Auth
     // terminal outcome. Built on Cognito CUSTOM_AUTH + the *AuthChallenge Lambda triggers.
     // ────────────────────────────────────────────────────────────────────────
 
-    /** A single step the server can demand. Extensible — a new factor slots in without a client rewrite. */
-    export enum ChallengeType
+    // The challenge VOCABULARY — ChallengeType, OtpChannel, Challenge, ChallengeOutcome, the
+    // client-facing ChallengeState — is shared contract, so it lives in @repo/api as `Login.*`
+    // (imported above) and is what PostLoginIdentify / PostLoginChallenge speak. Here we only add the
+    // INTERNAL augmentation the authorizer needs but never sends: why an adaptive step was inserted
+    // (risk signals) and the Context minted on success.
+    export interface ChallengeStateInternal extends Login.ChallengeState
     {
-        IDENTIFIER   = "identifier",    // Stage 1 — email / phone
-        PASSWORD     = "password",      // Stage 2 — knowledge factor
-        PASSKEY      = "passkey",       // Stage 2/3 — WebAuthn (primary or step-up)
-        EMAIL_OTP    = "email_otp",     // Stage 2/3 — emailed code
-        SMS_OTP      = "sms_otp",       // Stage 2/3 — texted code
-        TOTP         = "totp",          // Stage 3 — authenticator app
-        SSO_REDIRECT = "sso_redirect",  // Stage 1 → hand off to the account IdP
-    }
-
-    /** Where an OTP code is delivered. Defaults to the identifier type; the other is offered if available. */
-    export enum OtpChannel { EMAIL = "email", SMS = "sms" }
-
-    export interface Challenge
-    {
-        type          : ChallengeType;
-        channel?      : OtpChannel;             // OTP only — default = identifier type; `alternatives` offers the other
-        alternatives? : Array<ChallengeType>;  // other ways to satisfy this step ("use a passkey instead")
-        redirectUrl?  : string;                 // SSO_REDIRECT only
-        prompt?       : string;                 // optional UI hint (localized client-side)
-    }
-
-    export enum ChallengeOutcome { PENDING = "pending", AUTHENTICATED = "authenticated", DENIED = "denied" }
-
-    /** The state-machine value returned at each step of the staged flow. */
-    export interface ChallengeState
-    {
-        flowRef      : Type.ID;                 // opaque handle for the in-progress auth (Cognito session)
-        outcome      : ChallengeOutcome;
-        next?        : Challenge;               // present when PENDING — the step to render
-        triggeredBy? : Array<RiskSignal>;       // why an adaptive challenge was inserted (audit / telemetry)
-        denyReason?  : string;                  // present when DENIED (lockout / IP block / policy)
-        context?     : Context;                 // present when AUTHENTICATED
+        triggeredBy? : Array<RiskSignal>;       // why an adaptive challenge was inserted (audit / telemetry) — never wire-exposed
+        context?     : Context;                 // present when AUTHENTICATED — the authorizer Context (internal)
     }
 
     /** Inputs the risk engine evaluates at login / step-up (vs the UserLoginContext baseline). */
@@ -479,7 +449,7 @@ export namespace Auth
     {
         signals    : Array<RiskSignal>;         // which signals fired
         action     : RiskAction;                // worst-case action across fired signals for the tier
-        challenges : Array<ChallengeType>;      // the extra factor(s) to demand when action = CHALLENGE
+        challenges : Array<Login.ChallengeType>;  // the extra factor(s) to demand when action = CHALLENGE
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -534,16 +504,10 @@ export namespace Auth
     // 5. CONFIG — password / MFA / rate-limit policy
     // ══════════════════════════════════════════════════════════════════════════
 
-    export interface PasswordPolicy
-    {
-        minLength          : number;
-        requireUppercase   : boolean;
-        requireNumber      : boolean;
-        requireSymbol      : boolean;
-        preventReuseCount? : number;
-        maxAgeDays?        : number;
-        breachedCheck      : boolean;   // reject known-breached passwords
-    }
+    // Password COMPOSITION policy (min length, character classes, breached-check) is a web-config /
+    // bootstrap concern — it's the public PasswordPolicy in @repo/api GetBootstrap (the web client renders
+    // + pre-validates against it). The auth service does not redefine it here; the reset *windows* below
+    // (PasswordResetPolicy) are the operational half auth owns.
 
     // ────────────────────────────────────────────────────────────────────────
     // Password-reset policy — scoped GLOBAL → ACCOUNT → ROLE (both ladders), most-specific /
@@ -585,8 +549,7 @@ export namespace Auth
         usedAt?      : Type.ISODateTime;    // set on consume → single-use
     }
 
-    export enum MfaMethod { TOTP = "totp", SMS = "sms" }
-
+    // `MfaMethod` is shared contract vocabulary → @repo/api (imported above). MfaConfig references it.
     export interface MfaConfig
     {
         enabled            : boolean;
@@ -643,7 +606,7 @@ export namespace Auth
         signals       : Partial<Record<RiskSignal, RiskAction>>;
         minFactor     : FactorStrength;
         freshnessSec  : number;
-        challengeWith : Array<ChallengeType>;
+        challengeWith : Array<Login.ChallengeType>;
     }
 
     /**

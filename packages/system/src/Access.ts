@@ -35,6 +35,7 @@ export namespace Access
      */
     export enum AccountRole
     {
+        MINIMUM  = "minimum",   // always the first one as a general place holder for the lowest access role
         SENDER  = "sender",     // below user — may only send/queue messages, nothing else
         USER    = "user",       // normal authenticated user
         BILLING = "billing",    // billing activities a typical user cannot perform
@@ -66,7 +67,7 @@ export namespace Access
     //    reviewed migration — and guard it in CI (snapshot each endpoint's effective min-role,
     //    fail on any diff without sign-off). See packages/endpoint/SPECS.md → "Role ladder ordering".
     //
-    export const ACCOUNT_LADDER : ReadonlyArray<AccountRole> = [ AccountRole.SENDER, AccountRole.USER, AccountRole.BILLING, AccountRole.ACCOUNT ];
+    export const ACCOUNT_LADDER : ReadonlyArray<AccountRole> = [ AccountRole.MINIMUM, AccountRole.SENDER, AccountRole.USER, AccountRole.BILLING, AccountRole.ACCOUNT ];
     export const APP_LADDER     : ReadonlyArray<AppRole>     = [ AppRole.SUPPORT, AppRole.APPLICATION, AppRole.ROOT ];
 
     /**

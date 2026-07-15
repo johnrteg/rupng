@@ -75,7 +75,8 @@ Contact **delegates / does not own**:
   `SK: contactId`). It is **not** the query engine.
 * **Search/segmentation runs against the search service** (OpenSearch), fed by
   `contact.*` change events. Reads there are eventually consistent — note the lag.
-* Likely tables: `contacts`, `field_defs`, `segments`, `consent`, `import_jobs`, `change_history`
+* Likely tables: `contacts`, `field_defs`, `segments`, `consent`, `import_jobs`, `import_maps` (reusable
+  column→field import maps — system catalog + per-account), `change_history`
   (**append-only version log** — `PK: accountId#contactId`, `SK: version`; holds the per-field
   `{ field, before, after }` diff + `{ who, when, source }` — see *Audit & change tracking*).
   External-id lookups use a GSI (`system#externalId → contactId`) for sync upserts +
@@ -109,13 +110,26 @@ Contact **delegates / does not own**:
 * A **reasonable, plan-gated** count per account — **not unlimited**. Suggested:
   **50 by default**, up to **~200** on higher plans, hard system cap **~250**. The ceiling
   is driven by search-index cost and item size, not a hard storage wall.
-* Each field has a fixed **type**: `string`, `number`, `date`, `boolean`, `choice`
-  (single), `multi_choice`, plus typed `email`/`phone`/`url`. Common uses: voter id,
-  source list, tags, scores.
+* **Definition vs value.** The **definition** (uid · type · label · choices · group · order) is **account-level**
+  — defined + managed under **Settings → Contacts**. Each contact stores only the **value**, keyed by field
+  uid (`customFields: { [uid]: value }`) — the type/label/choices are never copied onto the contact.
+* **Values are stored as strings.** The contact keeps `{ uid → string }` regardless of type; the **renderer
+  converts to/from string** using the def's `type` (number/currency → numeric string, date/datetime → ISO,
+  boolean → `"true"`/`"false"`, `choice` → the option key, `multi_choice` → keys joined by `,`). Keeps storage
+  uniform; validation + (de)serialization live at the edges.
+* Each field has a fixed **type**: `text`, `multiline` (multi-line text), `number`, `currency`, `date`,
+  `datetime`, `choice` (dropdown single), `multi_choice` (dropdown multi / tag-like), `url`, `phone`, `email`,
+  `boolean`. Common uses: voter id, source list, tiers, scores, budget.
+* **Currency is per-field** — the field def fixes the ISO currency code (e.g. this "Budget" field is always
+  `USD`); the value is stored in **minor units** (cents), formatted via the locale helper.
 * **Type is immutable after definition** — to change a type you create a new field and
-  migrate; the old one is retired, never re-typed. Values are validated on write.
-* `choice`/`multi_choice` carry an option set; options may be **added** (never re-typed).
-  Metadata: key, label, required?, default?, `indexed?` (surfaced to search).
+  migrate; the old one is archived, never re-typed. Values are validated on write.
+* `choice`/`multi_choice` carry an option set of `{ key, label }`; options may be **added** (never re-keyed —
+  a value stores the stable `key`, so relabeling never orphans data). Metadata: label, required?, default?,
+  `indexed?` (surfaced to search → **usable as a segment filter condition**).
+* **Order + grouping in the profile.** Each field carries a **`group`** (a label/context, e.g. "Work",
+  "Preferences") and an **`order`** within that group, so the contact profile renders custom fields grouped +
+  ordered rather than as a flat bag. Reorder/regroup is a def edit (no value migration).
 * **Two definition modes** (multi-tenant):
   * **`self`** — defined and owned by the (sub-)account; it may edit or retire it.
   * **`inherit`** — defined by the **parent**, carried down to sub-accounts and
@@ -123,7 +137,9 @@ Contact **delegates / does not own**:
     definition (its type and options are locked from above).
   * Sub-accounts may always **add their own `self` fields** on top of inherited ones;
     inherited fields don't consume the sub-account's own field budget.
-* Field **deletion is soft** (hidden/retired); existing values retained unless purged.
+* **Fields are never removed — only archived.** There is no hard delete: a field's def flips to
+  `archived` (hidden from the editor/profile) but is retained, and existing values are kept — because past
+  segments, history, and imports may still reference it. Re-activate to bring it back.
 
 ## Tags
 Three independent tag namespaces on a contact, all queryable in segmentation:
@@ -144,6 +160,28 @@ Three independent tag namespaces on a contact, all queryable in segmentation:
 * **Loop prevention:** stamp each change with its origin; a change that arrived *from* a
   system is **not** echoed back to that system. Watch for sync storms.
 
+### Target CRM integrations (connectors)
+Each connector maps the external CRM's contact/constituent record ⇄ our Contact (external ref +
+source-of-truth config + upsert-by-external-id), via the sync API + webhooks above. The connector adapters
+themselves live in the integrations/workflow layer (a contact exposes the sync surface, not the vendor SDKs).
+First wave:
+* **HubSpot CRM** — free tier; OAuth app; Contacts API + webhooks. *(Priority — general CRM.)*
+* **Zoho CRM** — free tier; OAuth; Contacts/Leads modules + notification webhooks. *(Priority — general CRM.)*
+
+Nonprofit / donor CRMs (constituent = contact; carry donor fields as custom fields, keep giving history in the
+external SoT):
+* **Bloomerang** — REST API + API key; constituents.
+* **DonorPerfect** — API (XML/REST); constituents/donors.
+* **Little Green Light** — REST API + API key; constituents.
+* **Neon CRM** — REST API (OAuth/API key); accounts (individuals).
+* **Kindful** *(now Bloomerang-owned)* — REST API; contacts. Confirm API availability given the Bloomerang
+  consolidation before building.
+
+Notes: model each as an `ExternalRef` system key (`hubspot` / `zoho` / `bloomerang` / `donorperfect` / `lgl` /
+`neon` / `kindful`); reuse the **import maps** catalog for the initial one-time import, and the sync
+config/webhooks for the ongoing bidirectional flow. Rate limits + pagination are per-vendor (handle in the
+connector).
+
 ## Import (CSV / vCard)
 * Large async ingest with **column→field mapping**, **normalization**, **dedup mode**
   (skip / update / create), and a **dry-run preview** (counts, sample, conflicts).
@@ -152,14 +190,93 @@ Three independent tag namespaces on a contact, all queryable in segmentation:
 * Tag imported contacts with the **import batch id / list source** (provenance).
 * Idempotent re-runs (same batch doesn't double-create).
 
+### Upload path — direct-to-bucket, scanned, then queued (large files bypass the API gateway)
+CSV imports can be **very large**, so — exactly like media uploads — the file **never flows through the API
+gateway**. The flow mirrors the media ingest pipeline (see [media SPECS](../media/SPECS.md) upload + scan):
+1. **Presigned upload.** The client asks the contact service for a **presigned S3 PUT** (`POST /contact/imports/upload`
+   → `{ url, importId, key }`) and uploads the raw file **directly to S3** (an `imports/` prefix in a private
+   bucket). The gateway only ever sees the small JSON handshake, never the payload.
+2. **Scan gate.** On upload-complete (S3 event or a `POST /contact/imports/{id}/complete`), the object is
+   **malware/content-scanned** by the shared [`@repo/services` scanner](../../../packages/services/src/scan/)
+   (the same platform scanner media uses). A file stays **QUARANTINED** until it passes; a failed scan is
+   rejected (never parsed). This is why import is a first-class ingest, not an inline upload.
+3. **Move + enqueue.** A clean file is moved to a **scanned/ready location** and a **`contact-import` SQS job**
+   is enqueued; `ContactImportJob` streams the rows (map → normalize → dedup → write), emits progress, and
+   writes the per-row error report. `execute()` on the endpoint stays fast (validate → presign / enqueue →
+   `202`); the heavy parse/write is the Job (rows can number in the millions — never inline).
+
+### Import maps (reusable column→field mapping configurations)
+An **ImportMap** (`ImportMap` in `@repo/api`) is a saved, reusable mapping of a file's **column headings →
+application fields** (including custom fields), plus per-column **ETL transforms** and file-level parse
+options. It's what turns "an arbitrary CSV someone exported" into contacts without re-mapping every time.
+The model lives in the **contact** domain (the most common import target) but is not contact-only — a `target`
+field declares where the rows land, leaving room for other importers.
+* **Target-aware.** Each map declares a `target` (`contact`, …) so the same catalog can serve more than one
+  destination as future importers land — the editor renders the internal-field pickers for that target.
+* **Source formats.** `sourceFormat` = `csv | tsv | xlsx | vcard | json` (CSV first). File-level `parse`
+  options cover delimiter, quote char, header row, preamble `skipRows`, encoding, and (XLSX) sheet.
+* **ETL adaptors (`transform` per column).** `none · trim · lowercase · uppercase · title_case · split_name`
+  (one column → first/last) `· join` (many columns → one) `· split` (one → many) `· phone_e164 · email_normalize
+  · date · datetime` (with a `format` + `timeZone`) `· boolean · number · country_code · constant · lookup`
+  (value table) `· default_if_empty`. Adaptor config rides in `TransformOptions` (format, delimiter, sources,
+  targetFields, constant, lookup, trueValues, defaultCountry, locale, timeZone, onError). A per-mapping/ map-level
+  `onError` (`fail | skip_row | set_null | use_default`) governs bad values.
+* **Dedup/upsert.** An optional `dedupe { mode: create | skip | update | merge, matchKeys: [email | phone |
+  external_ref | custom] }` and per-mapping `isKey` flags drive how an incoming row reconciles with an existing
+  contact — feeding the same dedup engine as sync (see **Dedup & merge**).
+* **Provenance + authoring aids.** `defaultTags` are applied to every row imported with the map (batch/source
+  provenance); `sampleHeaders` remembers a sample file's columns so the editor can offer real dropdowns; `notes`
+  per mapping documents edge cases.
+* **System maps (platform-defined).** A catalog of **standard** maps for common sources/CRMs (e.g. an **L2**
+  voter-file layout, a generic vCard, a Mailchimp/HubSpot/Salesforce export). `scope = system`, stored under a
+  reserved `system` partition, **versioned**, owned by the platform — every account **sees** them but **cannot
+  edit** them; they can only **copy** one into their own space.
+* **Account maps (custom).** An account defines its own maps (`scope = account`) for its recurring file shapes:
+  **create / rename / edit / copy / archive / delete**. A **copy** (`ImportMap.Copy { sourceMapId, name? }`) is
+  the primitive behind both "start from a system map" and "clone-and-tweak an account map"; `sourceMapId` records
+  the origin and the system originals stay untouched.
+* **Lifecycle / status.** `active | archived | deleted`. `archived` hides the map from pickers but keeps it
+  (past import jobs / audit may reference it); `deleted` is a **soft-delete** — recoverable by an app admin and
+  **purged by a cron after a TTL** (same pattern as custom fields + segments), never an immediate hard-delete.
+* **Selection at import:** pick a map (system or account) for a file, preview the dry-run with that map, then
+  run. The chosen `mapId` (+ its `version`) is **recorded on the ImportJob** for provenance/repeatability.
+* **Model:** `ImportMap.Entity { id, accountId ("system" for platform maps), scope, name, description?, target,
+  sourceFormat, parse?, mappings: Array<FieldMapping>, dedupe?, defaultTags?, sampleHeaders?, sourceMapId?,
+  version?, status, audit }`, where `FieldMapping { externalField, internalField, transform?, options?, required?,
+  isKey?, notes? }`. (New table `import_maps` PK `accountId` SK `mapId`, with the system catalog under a reserved
+  `system` partition so an account reads system + its own maps in one Query.)
+* **Management UI:** import maps are managed under **Settings → Contacts** (list system + account maps; copy a
+  system map; create/rename/edit/archive/delete account maps) — separate from the per-import "pick a map" step.
+  System maps render read-only with a **Copy** action; the import wizard just selects from the maps that exist.
+
 ## Dedup & merge
 * Match keys: email, normalized phone, and any external id; match rules configurable.
 * On collision: skip / update / **merge** with field-level survivorship; manual merge for
   ambiguous cases. Runs on both import and sync.
 
 ## Segmentation  *(the primary tool)*
-* A **Segment** is a saved query over system + custom fields with comparisons (`eq`,
-  `neq`, `contains`, `gt/lt`, `in`, `exists`, date ranges) and boolean groups (AND/OR/NOT).
+* A **Segment** is a saved query over system + custom fields. The query language + the filterable-field
+  catalog + the type→operator matrix live in `Segment` (`@repo/api`) and are documented (with the exception
+  hook) in [Segment filters](../../../packages/api/src/contact/model/SEGMENT_FILTERS.md).
+* **Boolean groups** are `all` (AND) / `any` (OR) / `none` (NOT) and **nest arbitrarily** (a rule may itself
+  be a group). The web builder (`SegmentEditDialog` → `SegmentGroupEditor` → `SegmentConditionRow`) renders it
+  with a type-aware operand editor per field. A **"belongs to segment / none of"** rule is how you say
+  "these filters, **excluding** anyone in segment Y."
+* **Optional sort + limit.** A segment may carry a `sort` (field + direction) and, only with a sort, a
+  `limit` — cap membership to the **top-N by that sort** (e.g. return the 100 most-recent of 5,000 matches).
+  Both optional; limit is meaningless without an order.
+* **Preview** (`POST /contact/segments/preview`) evaluates an unsaved query against the account's contacts
+  in-service (bounded per account) and returns the match count + a **small sample** (a dozen — the count is
+  what matters), honoring sort + limit. A few derived fields (campaign audience, timezone-of-area-code) are
+  non-constraining in preview until search-backed evaluation lands; the response flags them in `unsupportedFields`.
+* **Materialization is a JOB, with a status lifecycle.** Saving a segment **retains its filter** (so it can be
+  re-edited) and enqueues `contact-segment-materialize`; the job evaluates the filter, reconciles the
+  **QUERY-sourced** join rows (leaving MANUAL/IMPORT members untouched), applies the sort + top-N limit, and
+  recounts. Status flows `pending → processing → active` (active = materialized/complete), or `failed`
+  (retryable). Other statuses: `inactive` (user-disabled), `archived`, `deleted`.
+* **Filter is optional.** A segment sourced from an **import** has members without a filter (status `active`
+  directly); adding a filter to it later further-refines that membership on the next materialize — same
+  machinery, so imported lists can be filtered down after import.
 * **Static membership** — the query is evaluated and the result set is **snapshotted**.
   Live / auto-updating segments are intentionally **deferred for now**: continuous
   re-evaluation makes capping send costs hard to reason about (a segment could grow between
@@ -173,11 +290,52 @@ Three independent tag namespaces on a contact, all queryable in segmentation:
   contact in?" is a direct lookup, not a full re-scan.
 * Size/count + preview; **exclusion segments**. Segments power campaign audience selection;
   campaign owns the send-time freeze, contact provides the query + consent overlay.
+* **Per-channel reachability counts on the segment.** A contact need not have every channel — depending on how
+  the segment was built, some members have an email, some a phone, some neither. So a segment carries **counts
+  per channel** (`channelCounts: { email, sms, voice, … }`) = how many members are actually **reachable +
+  opted-in** on each channel (not just total `size`). This is what a campaign reads to show "12,000 members ·
+  email 9,400 · SMS 6,100" and to estimate reach/cost per channel before a send. Counts are computed at
+  membership refresh (alongside `size`); they exclude burned/opted-out channels so they reflect *sendable*
+  reach, not raw presence.
+* **Counts stay fresh on contact edits.** A contact's reachability can change *after* it joins a segment — add
+  a cell number to a contact that had none and it's now SMS-reachable (and vice-versa: remove it / opt-out and
+  it drops). So **saving a contact recomputes the per-channel counts of every segment that contact belongs
+  to** (found via the `segment_members` `byContact` GSI). Because a contact can be in **many** segments, this
+  runs as an **async job** (`contact-segment-refresh`, enqueued on contact create / update / archive /
+  consent-change) rather than inline in the save — the save returns fast, counts converge shortly after.
+  (Membership `size` itself only changes for *dynamic/query* segments on an explicit refresh; this job updates
+  the **channel counts** of the segments the contact is already a member of.)
 * **Segments are archivable, never deletable.** Archiving hides a segment from active use
   but preserves it (and its membership snapshot) for audit/history — a past campaign must
   always be able to point at the exact segment it sent to.
 
 ## Consent & suppression
+
+> **TODO — refine consent/suppression grain to the channel-LINE INSTANCE (per email address / per phone
+> number), not just the channel type.** A contact has *multiple* endpoints per channel (e.g. John Doe = 2 cell
+> numbers + 3 emails = 5 line instances, each already carrying a context/type + a per-channel `default` flag,
+> "Contacts & PII" above). Consent + suppression must be tracked **per instance**, because the signals that
+> drive them are per-endpoint: a STOP/consent is for *that phone number* (TCPA proof is per number), an
+> unsubscribe/complaint/hard-bounce is for *that email address*. Refinement:
+> - **Grain:** the `ConsentRecord` + suppression key becomes `(contact, channel, endpoint)` where `endpoint`
+>   is the normalized address (lowercased email / E.164 phone) — NOT just `(contact, channel)`. Each of John's
+>   5 lines has its own opt-in/opt-out state + `source`/`at`/`proof` audit. **Compliance requires the ability
+>   to set opt-in AND opt-out for each instance** (a preference center exposes this).
+> - **Resolution = most-specific-wins:** evaluate the SPECIFIC endpoint a send will use (the channel `default`
+>   when none is specified) against **instance → channel → contact/account** records; the finest record present
+>   decides, and a block at any coarser level (a "stop all email" channel opt-out, or the account block list)
+>   also blocks. `canSend()` / `reachable()` resolves the target endpoint first, then checks its consent.
+> - **Preserved invariants:** still **account-wide, never per-campaign**; **burned-is-permanent** now applies at
+>   the instance grain (a specific address/number that STOP'd / complained / hard-bounced is burned; the
+>   contact's OTHER endpoints are unaffected) — a channel-wide opt-out burns every current + future endpoint on
+>   that channel. Complaint / hard-bounce suppression stays inherently per-instance. The account block list
+>   (account svc) is already **by-value**, so it's naturally per-endpoint.
+> - **Rollups:** keep a channel-level view for segmentation (`channelCounts` — "reachable on email at all" =
+>   any endpoint opted-in + not suppressed) and an optional explicit channel-wide / contact-wide (global
+>   do-not-contact) opt-out as coarser overrides.
+>
+> *(Until refined, the per-channel model below is the effective behavior; the instance grain supersedes it.)*
+
 * **Per-channel consent (opt-in / opt-out) lives on the contact** — a record per channel (`sms`, `email`,
   `voice`, …): `state` (`opted_in` / `opted_out` / `unknown` / `pending`), a **`source`** (where it happened —
   keyword, web form, import, API, agent), a **timestamp** (`at`), and **`proof`** (for TCPA). **Both opt-in and
@@ -186,6 +344,19 @@ Three independent tag namespaces on a contact, all queryable in segmentation:
   **latest `at`**, so an **opt-in dated *after* an opt-out re-enables sending** (a re-subscribe) — and vice
   versa. *(Exception: complaint / hard-bounce suppression is a deliverability hard block, below — **not**
   cleared by a later opt-in timestamp.)*
+* **Consent is per-channel AND account-wide — never per-campaign.** Opt-in / opt-out is recorded **per channel
+  at the contact level for the whole account**, not per campaign: a person can be **opted-in for text but
+  opted-out for email** for the same account. Every campaign the account runs reads this same per-channel state
+  — there is **no per-campaign consent record** (a campaign targets contacts + inherits their channel consent;
+  it doesn't hold its own consent copy). An *acquisition* list (an "Import opt-in" segment) is how consent is
+  *captured*, but the resulting state still lives per-channel on the contact.
+* **"Burned" is permanent + account-wide.** Once a contact has **opted out (or STOP'd / complained) on a
+  channel for an account, they are suppressed on that channel for ALL future campaigns of that account** —
+  permanently. This is the durable-suppression rule: a later per-campaign action can **never** re-enable a
+  burned channel; only a genuine new **opt-in** (a fresh, dated, sourced consent record — the re-subscribe
+  path above) can, and complaint/hard-bounce burns can't be cleared even by that. Enforced by auto-promoting
+  the opt-out into the **account block list** (see account service) so it **survives contact archival and
+  re-import** — a re-imported contact stays burned.
 * **Suppression lives on the contact**, per channel: whether suppressed, **`origin`** (STOP reply, manual,
   import, CRM sync, complaint, hard bounce), a **`source`** (the specific provenance), a **reason**, and a
   **timestamp** — the record of *how* a contact came to be suppressed.
@@ -407,9 +578,9 @@ Application
 # AWS Services and Other Dependencies
 
 **AWS services**
-* **DynamoDB** (+ **Streams**) — the source of truth (`contacts`, `field_defs`, `segments`, `consent`, `import_jobs`); external-id GSI; streams feed search/analytics.
-* **S3** — import files + export artifacts.
-* **SQS** — async import jobs + the `contact-forget` responder queue.
+* **DynamoDB** (+ **Streams**) — the source of truth (`contacts`, `field_defs`, `segments`, `consent`, `import_jobs`, `import_maps`); external-id GSI; streams feed search/analytics.
+* **S3** — import files (**presigned direct upload**, scanned before parse — see Import) + export artifacts.
+* **SQS** — async import jobs (`contact-import`, post-scan) + the `contact-forget` responder queue.
 * **Kafka** — `contact.*` change events to search + analytics.
 * **KMS** — encryption at rest.
 
@@ -494,6 +665,11 @@ backend, so it's a requirements group, not a separate service.
 - **contact-8.4** **Webhooks** — inbound idempotent (dedupe by external event id), outbound **HMAC-signed** (auth spec) — B
 - **contact-8.5** **Loop prevention** — origin-stamp each change; never echo a change back to its source; guard sync storms — B
 - **contact-8.6** Connectors owned by **integrations/workflow**; contact only **exposes the sync API + webhooks** — B
+- **contact-8.7** **Target CRM connectors** (see *External IDs & sync → Target CRM integrations*): first wave
+  **HubSpot CRM** + **Zoho CRM** (both free-tier, general); nonprofit/donor CRMs **Bloomerang · DonorPerfect ·
+  Little Green Light · Neon CRM · Kindful** (constituent ⇄ Contact; donor fields as custom fields; giving
+  history stays in the external SoT). Each is an `ExternalRef` system key; reuse import maps for the initial
+  import + the sync config/webhooks for ongoing bidirectional flow — B
 
 ## contact-9.0 Dedup & merge — B
 - **contact-9.1** Match keys — email, normalized phone, any external id; rules **configurable** — B
@@ -532,6 +708,27 @@ backend, so it's a requirements group, not a separate service.
 - **contact-14.4** **Jobs extend `ContactJob`** — `ContactImportJob` / `ContactExportJob` / `ContactForgetJob` / `ContactSyncJob` / `ContactSegmentJob` / `ContactStreamJob`, each a Lambda on the shared base — A
 - **contact-14.5** **`ContactStreamJob` (DDB Streams)** — emit `contact.*` to Kafka (search + analytics) **and** write the field-level **change-history diff** (`contact-13.3`) — A
 - **contact-14.6** **`ContactDedup` shared module** — match-key + field-level survivorship, reused by import / sync / merge (not a deployable); bulk duplicate scan runs within `ContactSyncJob` — B
+
+## contact-15.0 Address verification (provider-based, marketplace) — B
+- **contact-15.1** **Provider FACTORY for address verification / standardization** — a pluggable adapter
+  interface (same shape as other provider factories: one adapter per vendor, a `fake` for tests) that
+  **validates + standardizes** a structured address (CASS/USPS-style correction, delivery-point validation,
+  optional **geocode** → lat/lon), returning a normalized result + a **confidence / status**
+  (`verified` / `corrected` / `unverifiable`). Providers: **USPS** (US CASS), **Smarty** (US + international),
+  **Google** (Address Validation / Geocoding), **Geoapify** (geocoding + validation), **Melissa** (global
+  address verification + geocoding + data quality). — B
+- **contact-15.2** **Marketplace items** — each verification provider is a **[marketplace](../marketplace/SPECS.md)
+  installable**, configured per account; the account enables which provider(s) to use. Not built-in/default —
+  installed + credentialed (Secrets Manager) like other marketplace connectors. — B
+- **contact-15.3** **Plan-tiered usage** — verification is **metered**; a **basic allowance depends on the
+  account plan** ([account entitlements](../account/specs/SPECS.md)), with overage/upgrade beyond it (cost
+  accounting emitted to billing). Gate calls against the plan's allowance before invoking a paid provider. — B
+- **contact-15.4** **Verify on demand + on import** — verify a single address (edit form), in **bulk at import**
+  (contact-6), or re-verify on change; persist the normalized address + the verification `status` + `verifiedAt`
+  + provider on the contact's address (re-editable, non-destructive — keep the original alongside the
+  correction until accepted). — B
+- **contact-15.5** **Geocode → `lat`/`lon`** — when the provider returns coordinates, store them on the address
+  (feeds map / segment-by-radius + the `tz` derivation, `contact-1.5`). — C
 
 # Endpoints (first cut)
 
@@ -582,9 +779,10 @@ any junior minimum.
 | Method | URI | Purpose | Access | Req |
 |---|---|---|---|---|
 | GET | `/contact/segments` | List segments | USER | contact-4.1 |
-| POST | `/contact/segments` | Create a segment (saved query) | USER | contact-4.1 |
+| POST | `/contact/segments` | Create a segment (saved query; optional `sort` + `limit`) | USER | contact-4.1 |
 | GET | `/contact/segments/{id}` | Get a segment + current size | USER | contact-4.6 |
-| PATCH | `/contact/segments/{id}` | Edit the query | USER | contact-4.1 |
+| PATCH | `/contact/segments/{id}` | Edit the query / sort / limit | USER | contact-4.1 |
+| POST | `/contact/segments/preview` | **Preview an (unsaved) query** — match count + sample, honoring `sort`+`limit` (in-service eval) *(implemented)* | USER | contact-4.3 |
 | POST | `/contact/segments/{id}/preview` | **Count diff** (would-add / would-remove) + sample | USER | contact-4.3 |
 | POST | `/contact/segments/{id}/refresh` | **User-accepted** refresh — apply new membership | USER | contact-4.3 |
 | GET | `/contact/segments/{id}/members` | Membership snapshot (paged) | USER | contact-4.5 |
@@ -604,6 +802,16 @@ any junior minimum.
 | GET | `/contact/imports/{id}/errors` | Download the per-row error report | USER | contact-6.3 |
 | POST | `/contact/exports` | Start an export (contacts / segments → CSV); audited | ACCOUNT | contact-7.1 |
 | GET | `/contact/exports/{id}` | Export status + download link | ACCOUNT | contact-7.1 |
+
+### Import maps (contact-6) — reusable column→field maps *(implemented)*
+| Method | URI | Purpose | Access | Req |
+|---|---|---|---|---|
+| GET | `/contact/importmaps` | List account + system maps (paged; `status`/`target`/`scope` filters) | USER | contact-6.4 |
+| GET | `/contact/importmaps/{id}` | Get one map (account or system) | USER | contact-6.4 |
+| POST | `/contact/importmaps` | Create an account map | ACCOUNT | contact-6.4 |
+| PATCH | `/contact/importmaps/{id}` | Edit an account map (403 on system map) | ACCOUNT | contact-6.4 |
+| DELETE | `/contact/importmaps/{id}` | Soft-delete an account map (403 on system map) | ACCOUNT | contact-6.4 |
+| POST | `/contact/importmaps/{id}/copy` | Copy a system/account map into the account | ACCOUNT | contact-6.4 |
 
 ### Dedup & merge (contact-9)
 | Method | URI | Purpose | Access | Req |

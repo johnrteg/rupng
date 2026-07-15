@@ -9,24 +9,24 @@ import { logStore } from "./logStore";
 //
 
 /** Build a prompt referencing the on-disk logs for a service (only streams that have output). */
-export function claudePrompt( service : string ) : { prompt : string; paths : string[] }
+export function claudePrompt( service : string ) : { prompt : string; paths : Array<string> }
 {
     const state : StageState = processManager.stageState( service );
 
-    const paths : string[] = [];
+    const paths : Array<string> = [];
     for ( const stream of LOG_STREAMS )
     {
         if ( logStore.get( service, stream ).length > 0 ) paths.push( logStore.path( service, stream ) );
     }
 
-    const failed : ( "build" | "image" | "deploy" )[] = ( [ "build", "image", "deploy" ] as const ).filter( ( s ) => state[ s ] === "failed" );
+    const failed : Array<"build" | "image" | "deploy"> = ( [ "build", "image", "deploy" ] as const ).filter( ( stage ) => state[ stage ] === "failed" );
 
     const header : string = failed.length > 0
         ? `The "${failed.join( ", " )}" stage(s) of the "${service}" service failed in the RumbleUp console.`
         : `I'm working on the "${service}" service in the RumbleUp console and want you to review its build/deploy output.`;
 
     const fileList : string = paths.length > 0
-        ? paths.map( ( p ) => `  - ${p}` ).join( "\n" )
+        ? paths.map( ( logPath ) => `  - ${logPath}` ).join( "\n" )
         : "  (no logs captured yet)";
 
     const prompt : string =
@@ -35,7 +35,7 @@ export function claudePrompt( service : string ) : { prompt : string; paths : st
 Read the captured console output and diagnose what went wrong (and fix it if you can):
 ${fileList}
 
-Stage status: ${( [ "build", "image", "deploy" ] as const ).map( ( s ) => `${s}=${state[ s ]}` ).join( ", " )}.`;
+Stage status: ${( [ "build", "image", "deploy" ] as const ).map( ( stage ) => `${stage}=${state[ stage ]}` ).join( ", " )}.`;
 
     return { prompt, paths };
 }

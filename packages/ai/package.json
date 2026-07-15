@@ -1,6 +1,6 @@
 {
     "name": "@repo/ai",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "private": true,
     "main": "./bin/index.js",
     "types": "./bin/index.d.ts",
@@ -11,6 +11,9 @@
     "dependencies": {
         "@aws-sdk/client-bedrock-runtime": "3.1073.0",
         "@aws-sdk/client-kms": "3.1073.0",
+        "@aws-sdk/client-s3": "3.1073.0",
+        "@aws-sdk/client-secrets-manager": "3.1073.0",
+        "@aws-sdk/client-transcribe": "3.1073.0",
         "@repo/common": "*",
         "@repo/endpoint": "*",
         "ajv": "8.20.0"

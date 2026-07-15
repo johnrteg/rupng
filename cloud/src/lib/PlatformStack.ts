@@ -10,7 +10,8 @@ import * as msk from "aws-cdk-lib/aws-msk";
 import * as opensearch from "aws-cdk-lib/aws-opensearchservice";
 import * as oss from "aws-cdk-lib/aws-opensearchserverless";
 import * as cloudtrail from "aws-cdk-lib/aws-cloudtrail";
-import { Environment, PlatformManifest, KafkaClusterSpec, SearchClusterSpec, CloudTrailSpec, forEnv } from "@repo/cloud-manifest";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import { Environment, PlatformManifest, KafkaClusterSpec, SearchClusterSpec, CloudTrailSpec, SecretSpec, forEnv, physicalName, ResourceKind } from "@repo/cloud-manifest";
 import { mskInstanceType, searchInstanceType } from "./sizing";
 import { isLocal } from "./local";
 
@@ -30,6 +31,10 @@ export class PlatformStack extends cdk.Stack
     /** The shared VPC, passed to ServiceStacks for their networked resources. */
     public readonly vpc : ec2.IVpc;
 
+    /** Platform-shared secrets (logical key → secret), passed to every ServiceStack for read-grant +
+     *  ARN injection. The AI provider keys (OpenAI, Anthropic, …) live here — see PlatformManifest.secrets. */
+    public readonly secrets : Map<string, secretsmanager.ISecret> = new Map();
+
     /**
      * @param scope CDK construct scope
      * @param id    stack id
@@ -40,6 +45,11 @@ export class PlatformStack extends cdk.Stack
         super( scope, id, props );
         const m : PlatformManifest = props.manifest;
         const local : boolean = isLocal( props.deployEnv );
+
+        // Platform-shared secrets (AI provider keys, …) — provisioned once here; every ServiceStack is
+        // granted read + gets the ARN injected. Created empty; the value is set by a root op (root API /
+        // `awslocal secretsmanager put-secret-value`), never committed.
+        ( m.secrets ?? [] ).forEach( ( spec : SecretSpec ) => this.makeSecret( props.deployEnv, spec ) );
 
         // Local: minimal network — a single AZ, no NAT gateways (nothing to reach the real internet).
         this.vpc = new ec2.Vpc( this, "Vpc", {
@@ -55,6 +65,17 @@ export class PlatformStack extends cdk.Stack
 
         if( m.searchCluster ) this.makeSearch( props.deployEnv, m.searchCluster );
         if( m.cloudTrail?.enabled && !local ) this.makeCloudTrail( props.deployEnv, m.cloudTrail );
+    }
+
+    /** Create a platform-shared Secrets Manager secret (physical name `<env>-platform-secret-<key>`) and
+     *  record it so every ServiceStack can be granted read + inject its ARN. */
+    private makeSecret( env : Environment, spec : SecretSpec ) : void
+    {
+        const secret : secretsmanager.Secret = new secretsmanager.Secret( this, `Secret-${spec.key}`, {
+            secretName  : physicalName( env, "platform", ResourceKind.SECRET, spec.key ),
+            description : spec.description,
+        } );
+        this.secrets.set( spec.key, secret );
     }
 
     /** Create a multi-region CloudTrail trail (with its own encrypted log bucket). */

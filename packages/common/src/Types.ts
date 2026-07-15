@@ -60,6 +60,10 @@ export namespace Type
         timeZone : TimeZone;        // e.g. "America/New_York"
     }
 
+    /** Who + when — a compact audit stamp. `at` is a UTC instant ({@link ISODateTime}); `by` is the
+     *  actor's {@link ID}. Common across entities ({created,updated}, last-modified, etc.). */
+    export interface Stamp { at : ISODateTime; by : ID; }
+
     /** RFC-5322 email address. */
     export type Email = string;
 
@@ -71,6 +75,26 @@ export namespace Type
 
     /** ISO-4217 currency code, e.g. "USD". */
     export type Currency = string;
+
+    //
+    // Money — amounts are stored as INTEGER minor units to avoid floating-point drift. Two precisions:
+    //
+    //   • {@link Cents}      — whole cents (1/100 of the currency unit). The default for BALANCES, budgets,
+    //                          caps, invoice lines — any settled amount. $12.34 → 1234.
+    //   • {@link MilliCents} — thousandths of a cent (1/100000 of the currency unit). For per-unit RATES that
+    //                          are FRACTIONAL cents — e.g. $0.025 (2.5¢) per SMS segment → 2500 milliCents.
+    //                          1 cent = 1000 milliCents. Keeps sub-cent pricing exact; convert to Cents (with
+    //                          explicit rounding) only when settling a total. See `CurrencyUtils`.
+    //
+    // Rule of thumb: a stored/settled amount is `Cents`; a rate you multiply by a quantity is `MilliCents`.
+    // Never do money math in floats or dollars — stay in integer minor units and convert at the edges.
+    //
+
+    /** Whole cents — integer minor units (1/100 of the currency unit). $12.34 → 1234. */
+    export type Cents = number;
+
+    /** Thousandths of a cent — integer (1/100000 of the currency unit). 2.5¢ → 2500. For fractional-cent rates. */
+    export type MilliCents = number;
 
     //
     // JSON — a precise, recursive type for "any JSON value", as an alternative to `any`
@@ -113,4 +137,21 @@ export namespace Type
     // carried over Kafka (inter-service), the WebSocket push frame (server → client), and outbound webhooks.
     // It lives there (not here) because it's typed by `Events.Object` / `Events.Verb`; `@repo/common` stays
     // dependency-free. (The old PII-light `MessageEnvelope` `{ type, data }` is superseded by it.)
+
+    export interface GlobalPosition
+    {
+        lat?    : number;
+        lng?    : number;
+    }
+
+    export interface Address
+    {
+        street1 : string;
+        street2 : string;
+        city    : string;
+        state   : string;
+        zip     : string;
+        country : string;
+        location? : GlobalPosition;
+    }
 }

@@ -7,7 +7,7 @@
 // `Access` in @repo/endpoint.
 //
 // Design tenets carried from SPECS.md (cited inline as `texting-N.M`):
-//   • TYPED, not stringly — no `flags[]` bag, no magic status integers (texting-5.11 / 20.2).
+//   • TYPED, not stringly — no `Array<flags>` bag, no magic status integers (texting-5.11 / 20.2).
 //     Each concern is its own typed attribute on the right entity.
 //   • The NUMBER RECORD is the pivot — number → provider → creds → TCR (texting-4.6).
 //   • Normalize at the edges — the adapter speaks provider dialect; everything inboard
@@ -146,7 +146,7 @@ export namespace Texting
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Typed tags & state — NOT one `flags[]` bag (texting-5.11). One mission per field.
+    // Typed tags & state — NOT one `Array<flags>` bag (texting-5.11). One mission per field.
     // ──────────────────────────────────────────────────────────────────────────
 
     // ── suppression (contact-owned SoT; texting reads it via canSend) ───────────

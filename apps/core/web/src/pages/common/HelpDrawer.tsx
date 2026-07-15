@@ -23,6 +23,7 @@ import AppModel from '@model/AppModel';
 import PubSubService from '@model/service/PubSubService';
 import BrowserUtils from '@utils/BrowserUtils';
 import { StringUtils } from '@repo/common';
+import { useIsDesktop } from '../../utils/useBreakpoint';
 
 
 // api
@@ -40,7 +41,8 @@ declare global
 //
 export function HelpDrawer( props : HelpDrawer.Props ) : JSX.Element
 {
-    const appdata       : AppModel = AppModel.instance();
+    const appmodel       : AppModel = AppModel.instance();
+    const isDesktop : boolean = useIsDesktop();
     
     const [open,setOpen]            = React.useState< boolean >( false );
     const [url,setUrl]              = React.useState< string >( "" );
@@ -62,14 +64,14 @@ export function HelpDrawer( props : HelpDrawer.Props ) : JSX.Element
     {
         // can't use <Subscribere since it is not rendereed when the drawer is closed
         // have to manage it the old fashion way
-        appdata.pubsub.addSubscriber( PubSubService.Type.HELP , onHelpRequest );
+        appmodel.pubsub.addSubscriber( PubSubService.Type.HELP , onHelpRequest );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////
     function componentUnLoaded() : void
     {
         //window.removeEventListener( 'resize', onWindowResize );
-        appdata.pubsub.removeSubscriber( PubSubService.Type.HELP , onHelpRequest );
+        appmodel.pubsub.removeSubscriber( PubSubService.Type.HELP , onHelpRequest );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -81,7 +83,7 @@ export function HelpDrawer( props : HelpDrawer.Props ) : JSX.Element
     //////////////////////////////////////////////////////////////////////////////////////////////////
     function onHelpRequest( event : PubSubService.Event ) : void
     {
-        if( appdata.cache.tracker )
+        if( appmodel.cache.tracker )
         {
             //ReactGA.send({ hitType: Analytics.Type.PAGE, page: event });
         }
@@ -153,7 +155,7 @@ export function HelpDrawer( props : HelpDrawer.Props ) : JSX.Element
                             disablePortal: true
                         }}
                     sx={{ zIndex: 20000 }} // set on root
-                    slotProps={{ paper: { sx: { zIndex: 20001, width: expanded ? BrowserUtils.isDesktop ? 750 : "100%" : BrowserUtils.isDesktop ? 500 : "100%" } } }}
+                    slotProps={{ paper: { sx: { zIndex: 20001, width: expanded ? isDesktop ? 750 : "100%" : isDesktop ? 500 : "100%" } } }}
 
                     onClose={ () => onClose() } >
 
@@ -169,13 +171,13 @@ export function HelpDrawer( props : HelpDrawer.Props ) : JSX.Element
                         */}
 
                         <ButtonIcon id="expand"
-                                    label={ appdata.ui.locale.label( 'dialogs.help.expand' ) }
+                                    label={ appmodel.label( 'dialogs.help.expand' ) }
                                     icon={ expanded ? <PanoramaHorizontalOutlinedIcon /> : <PanoramaWideAngleOutlinedIcon /> } onClick={ onExpand } />
                         <ButtonIcon id="open"
-                                    label={ appdata.ui.locale.label( 'common.button.open' ) }
+                                    label={ appmodel.label( 'common.button.open' ) }
                                     icon={ <OpenInNewOutlinedIcon /> } onClick={ onOpen } />
                         <ButtonIcon id="close"
-                                    label={ appdata.ui.locale.label( 'common.button.close' ) }
+                                    label={ appmodel.label( 'common.button.close' ) }
                                     icon={ <CancelOutlinedIcon /> } onClick={ onClose } />
                     </Stack>
 
@@ -193,7 +195,7 @@ export function HelpDrawer( props : HelpDrawer.Props ) : JSX.Element
                     </Show>
                     
                     <Show show={ updated !== "" }>
-                        <TextLabel variant="caption" value={ StringUtils.format( "{0}: {1}", appdata.ui.locale.label( 'dialogs.help.updated' ), updated ) } />
+                        <TextLabel variant="caption" value={ StringUtils.format( "{0}: {1}", appmodel.label( 'dialogs.help.updated' ), updated ) } />
                     </Show>
 
                 </Stack>

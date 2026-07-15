@@ -19,7 +19,7 @@ export class GetHealthImpl extends GetHealth
     // server-side fulfillment of the request
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
-        const reply : GetHealth.Response = { ok : true };
+        const reply : GetHealth.Response = { ok : true, version : this.service.version };
         return { status : NetworkUtils.Status.OK, data : reply };
     }
 }

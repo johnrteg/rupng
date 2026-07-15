@@ -1,18 +1,24 @@
 {
     "name": "auth",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "private": true,
     "main": "./bin/index.js",
+    "exports": {
+        ".": "./bin/index.js",
+        "./manifest": "./src/CloudManifest.ts"
+    },
     "scripts": {
         "build": "rup-bundle",
-        "dev": "tsx watch src/index.ts",
+        "dev": "NODE_OPTIONS=--trace-warnings tsx watch src/index.ts",
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {
+        "@aws-sdk/client-cognito-identity-provider": "3.1073.0",
         "@repo/api": "*",
         "@repo/common": "*",
         "@repo/endpoint": "*",
-        "@repo/services": "*"
+        "@repo/services": "*",
+        "@simplewebauthn/server": "13.3.2"
     },
     "devDependencies": {
         "@repo/build": "*",

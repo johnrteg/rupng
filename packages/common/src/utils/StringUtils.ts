@@ -188,7 +188,7 @@ export default class StringUtils
      * StringUtils.matchesAny('foo', ['hello', 'world']); // false
      * StringUtils.matchesAny('Test', []); // false
      */
-    public static matchesAny( target: string, arr: string[]): boolean
+    public static matchesAny( target: string, arr: Array<string>): boolean
     {
         const lowerTarget : string = target.toLowerCase();
         return arr.some( item => item.toLowerCase() === lowerTarget );
@@ -1014,7 +1014,7 @@ export default class StringUtils
      * This method is useful for internationalization, dynamic message generation, and
      * template-based string construction.
      */
-    public static format( ...values: (string | number)[] ): string
+    public static format( ...values: Array<string | number> ): string
     {
         let text : string = "";
         if( values.length > 0 )

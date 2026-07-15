@@ -25,9 +25,9 @@ async function siteBucket( service : string ) : Promise<string | undefined>
     try
     {
         const out = await cfnClient().send( new DescribeStackResourcesCommand( { StackName: `${service}-local` } ) );
-        const res = ( out.StackResources ?? [] )
-            .find( ( r ) => r.ResourceType === "AWS::S3::Bucket" && ( r.LogicalResourceId ?? "" ).startsWith( "Bucket" ) );
-        return res?.PhysicalResourceId;
+        const bucketResource = ( out.StackResources ?? [] )
+            .find( ( resource ) => resource.ResourceType === "AWS::S3::Bucket" && ( resource.LogicalResourceId ?? "" ).startsWith( "Bucket" ) );
+        return bucketResource?.PhysicalResourceId;
     }
     catch { return undefined; }
 }
@@ -46,14 +46,14 @@ function contentType( file : string ) : string
 }
 
 /** Recursively list every file under a directory (absolute paths). */
-function walk( dir : string ) : string[]
+function walk( dir : string ) : Array<string>
 {
-    const out : string[] = [];
+    const out : Array<string> = [];
     for ( const name of readdirSync( dir ) )
     {
-        const p : string = join( dir, name );
-        if ( statSync( p ).isDirectory() ) out.push( ...walk( p ) );
-        else out.push( p );
+        const fullPath : string = join( dir, name );
+        if ( statSync( fullPath ).isDirectory() ) out.push( ...walk( fullPath ) );
+        else out.push( fullPath );
     }
     return out;
 }
@@ -61,7 +61,7 @@ function walk( dir : string ) : string[]
 /** Upload the whole build output into the bucket (keys = paths relative to bin/, POSIX separators). */
 async function uploadAll( dir : string, bucket : string ) : Promise<number>
 {
-    const files : string[] = walk( dir );
+    const files : Array<string> = walk( dir );
     const s3 = s3Client();
     for ( const file of files )
     {
@@ -73,6 +73,7 @@ async function uploadAll( dir : string, bucket : string ) : Promise<number>
     return files.length;
 }
 
+/** Start the fast deployed loop: spawn `vite build --watch` and sync each rebuild into the site bucket. */
 export async function startWatchSync( service : string ) : Promise<{ ok : boolean; error? : string }>
 {
     if ( active.has( service ) ) return { ok: true };
@@ -85,24 +86,25 @@ export async function startWatchSync( service : string ) : Promise<{ ok : boolea
     // kick off the incremental builder; its output lands in the Build stream
     processManager.startBuildWatch( service );
 
+    // upload the current build output, guarding against overlapping runs via the busy flag
     const doSync = () : void =>
     {
-        const st : SyncState | undefined = active.get( service );
-        if ( !st || st.busy || !existsSync( bin ) ) return;
-        st.busy = true;
+        const sync : SyncState | undefined = active.get( service );
+        if ( !sync || sync.busy || !existsSync( bin ) ) return;
+        sync.busy = true;
         uploadAll( bin, bucket )
-            .then( ( n ) => logStore.sys( service, "deploy", `⇡ synced ${n} file(s) → s3://${bucket}` ) )
+            .then( ( count : number ) => logStore.sys( service, "deploy", `⇡ synced ${count} file(s) → s3://${bucket}` ) )
             .catch( ( err ) => logStore.sys( service, "deploy", `✖ sync failed: ${awsErr( err )}` ) )
-            .finally( () => { const s = active.get( service ); if ( s ) s.busy = false; } );
+            .finally( () => { const current = active.get( service ); if ( current ) current.busy = false; } );
     };
 
     // debounce rebuild bursts (vite writes many files per build)
     const watcher : FSWatcher = watch( existsSync( bin ) ? bin : serviceDir( service ), { recursive: true }, () =>
     {
-        const st : SyncState | undefined = active.get( service );
-        if ( !st ) return;
-        if ( st.timer ) clearTimeout( st.timer );
-        st.timer = setTimeout( doSync, 600 );
+        const sync : SyncState | undefined = active.get( service );
+        if ( !sync ) return;
+        if ( sync.timer ) clearTimeout( sync.timer );
+        sync.timer = setTimeout( doSync, 600 );
     } );
 
     active.set( service, { watcher, bucket, busy: false } );
@@ -111,15 +113,44 @@ export async function startWatchSync( service : string ) : Promise<{ ok : boolea
     return { ok: true };
 }
 
+/** Stop watch-sync for a service: clear the debounce timer, close the watcher, and kill the build process. */
 export function stopWatchSync( service : string ) : void
 {
-    const st : SyncState | undefined = active.get( service );
-    if ( !st ) return;
-    if ( st.timer ) clearTimeout( st.timer );
-    try { st.watcher.close(); } catch { /* already closed */ }
+    const sync : SyncState | undefined = active.get( service );
+    if ( !sync ) return;
+    if ( sync.timer ) clearTimeout( sync.timer );
+    try { sync.watcher.close(); } catch { /* already closed */ }
     active.delete( service );
     processManager.kill( service, "build" );
     logStore.sys( service, "deploy", "■ watch-sync stopped" );
 }
 
 export function isWatchSyncing( service : string ) : boolean { return active.has( service ); }
+
+/**
+ * One-shot: push the current build output into the site bucket. Called right after a local
+ * `cdklocal deploy` of a frontend — on LocalStack the CDK BucketDeployment is skipped (it mishandles
+ * Updates), so the deploy creates the bucket + CloudFront but uploads nothing; this populates it.
+ */
+export async function syncSiteOnce( service : string ) : Promise<{ ok : boolean; error? : string }>
+{
+    const bin : string = join( serviceDir( service ), "bin" );
+    if ( !existsSync( bin ) )
+        return { ok: false, error: `no build output at ${bin} — run the Build stage first` };
+
+    const bucket : string | undefined = await siteBucket( service );
+    if ( !bucket )
+        return { ok: false, error: `couldn't find the site bucket for ${service}-local` };
+
+    try
+    {
+        const count : number = await uploadAll( bin, bucket );
+        logStore.sys( service, "deploy", `⇡ synced ${count} file(s) → s3://${bucket} (BucketDeployment skipped on local)` );
+        return { ok: true };
+    }
+    catch ( err )
+    {
+        logStore.sys( service, "deploy", `✖ site sync failed: ${awsErr( err )}` );
+        return { ok: false, error: awsErr( err ) };
+    }
+}

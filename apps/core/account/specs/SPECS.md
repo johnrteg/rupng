@@ -143,18 +143,15 @@ Plan and Pricing
 4. `Public Plan vs Private Plan` is just a flag. Enterprise pricing isn't a special system — it's a Plan with visibility=private scoped to an accountId. Same model.
 
 
-## The lean core model (~6 entities)
-# Catalog (definitions, versioned):
-* `Feature` — key (the universal toggle the app checks), name. Pure capability. No price here.
-* `Plan` — name, visibility (public/private), accountId? (if private/enterprise), status, version.
-* `PlanFeature` — links `Plan` → `Feature`, carrying the entitlement (enabled, limit/quota/counter config) and 0–N `PriceComponents`.
-* `PriceComponent` — a small typed union (see below) attached to a `PlanFeature` (or to the Plan for a base fee).
-
-# Commercial relationship (instances):
-* `Subscription` — accountId, planId+version, status, start/end (effective-dated), and a priceSnapshot captured at subscribe time.
-* `Coupon`+ `SubscriptionCoupon` — discounts applied to a subscription (below).
-
-Feeding + output: UsageRecord (metered, from services) → Invoice (computed) + AuditLog (immutable).
+## The lean core model — ✅ migrated to code
+> **Migrated.** The concrete object + field definitions now live in **`@repo/api` → `Billing`**
+> ([`packages/api/src/account/Billing.ts`](../../../../packages/api/src/account/Billing.ts)) as the shared
+> contract — don't re-declare them here. Migrated: `Feature`, `Plan` (+ `PlanVisibility`/`PlanStatus`),
+> `PlanFeature`, `Entitlement`/`Limit`, the `PriceComponent` union (+ `PriceType`/`TierMode`/`PriceTier`),
+> `Subscription` (+ `PriceSnapshot`/`SubscriptionStatus`), `Coupon` (+ `CouponType`/`CouponScope`/
+> `PriceOverride`/`AppliedCoupon`), `UsageRecord`, `Invoice` (+ `InvoiceLineItem`/`InvoiceStatus`),
+> `AuditEvent`, and `ResolvedEntitlements`/`ResolvedFeature`. The sections below remain as **design
+> rationale** (the *why*), not field definitions.
 
 ## One abstraction covers all your charge types: PriceComponent
 Rather than separate models per charge type, make `PriceComponent` a typed union with parameters:
@@ -377,17 +374,25 @@ this service **owns the account↔user relationship** (membership + roles + swit
 - **account-1.4** Configuration: name, branding/whitelabel, preferences, limits — A
 - **account-1.5** Feature flags (platform + per-account, support-toggled) — B
 - **account-1.6** Account-closure data lifecycle — **configurable; prod default: retain 1 year → purge PII 3 months after** (~15 mo); redacted tombstone keeps financial records (~7 y) + opt-out proof + `accountId` shell — B
+- **account-1.7** **Registration provisioning — invite-aware.** On `auth.user.created`, a registrant gets a **personal account named after them** *only if they have no pending invite* (`provisionAccount` → `AccountService.provisionPersonalAccount`). **Invited users get NO personal account** — they join the account(s) they were invited to (email-matched on first login; see account-3 / `materializeInvites`), which avoids a sprawl of empty personal accounts. Registration **does not prompt for an account name** (it defaults to the user's name; rename later) and **never surfaces the invite** (a registrant may not know one exists, and revealing it would break enumeration-neutrality). If a user wants a scratch space, they create a **sub-account**. ✅ implemented — A
+- **account-1.8** **Never leave a registered user orphaned — lazy personal-account fallback.** If a user loads their memberships with **zero memberships and no pending invite** (e.g. their invite was **cancelled** after registration but before first login, so the personal account was skipped), the read path silently mints a personal account via the shared `AccountService.provisionPersonalAccount` (single source of truth with account-1.7). **Silent, not a warning** — no invite existence is leaked and it also covers any other zero-membership state (e.g. removed from a last account). ✅ implemented — A
 
 ## account-2.0 Hierarchy & sub-accounts — B
 - **account-2.1** Parent–child relationship (one parent per account) — B
 - **account-2.2** Config cascade parent→child (replace vs merge) — B
 - **account-2.3** `parentAccess` (open | granted) — B
 - **account-2.4** Group edit from parent — C
+- **account-2.5** **Create a sub-account** — an ACCOUNT admin creates a child (`parentId` = acting account). **The creator becomes the sub-account's `ownerId` AND an ACCOUNT-role member** (so it's never orphaned and they can manage it directly); their personal *home* account is unchanged. New account is also announced via `account.account.created` (parity with registration provisioning). ✅ implemented — A
+- **account-2.7** **Inherit from parent on create** — the sub-account's **organization defaults to the parent's** (editable in the create form), and the creator picks **carry-over fields** to copy from the parent via checkboxes — **address** today (extensible: `PostSubAccount.CarryOver`). Carry-over is applied **server-side** from the parent row (authoritative — the client sends only the flags). ✅ implemented — A
+- **account-2.8** **Suspension cascades down the hierarchy** — suspending an account **suspends every descendant**. Cascade-suspended descendants are flagged (`suspendedByAncestor`); **reactivating** the ancestor lifts *only* those (descendants suspended on their own stay suspended). Terminal/already-off states (`disabled`/`cancelled`/`deleted`/already-`suspended`) are left untouched. Enforced at the source (`PostSubAccountStatus`); a parent admin acts on a **direct** child (authz: target's `parentId` = acting account) and the cascade walks the full subtree. ✅ implemented — A
+- **account-2.6** **Hierarchy caps are enforced from config** (`AccountConfig.hierarchy`): **`maxDepth`** (walk the parent chain; reject a create that would exceed it → `409`), **`maxSubAccountsPerParent`** (fan-out cap per parent → `409`), and **`defaultParentAccess`** seeds the new account's `parentAccess`. Live-tunable via AppConfig (SEED: depth 3, fan-out 100, `granted`). ✅ implemented — A
 
 ## account-3.0 Members, roles & access — account OWNS the account↔user relationship — A
 - **account-3.1** **Own the account↔user membership** — SoT for which users belong to an account, their **role + max-role ceiling**, and the lifecycle (invite / add / change-role / remove); **auth reads** it for RBAC — A
 - **account-3.2** **Switch eligibility is account-owned** — account is SoT for which accounts a user may switch to + the per-account ceiling; **auth runs** the session switch (`/auth/session/switch`) by reading it (≤ ceiling) — A
 - **account-3.3** Cross-account grant **settings** (`grantable`/`grantableAs`/`grantIssuanceMinRole`/`maxGrantWindowDays`/`requireApprovalForSupportAccess`) — account-owned; the grant *runtime* = auth — B
+- **account-3.4** **Account owner** (`account.ownerId`) is a *singular anchor*, distinct from the *admin role*: exactly one per account, **can't be removed or demoted** (guarantees ≥1 admin — the account is never orphaned), marks each user's **home / reset-target** account, and is the single accountable party for billing/legal/closure. The owner is always also an admin; "admin" is a grantable capability (many), "owner" is protected identity (one). — A
+- **account-3.5** **Transfer ownership** — **any ACCOUNT admin** may re-assign `ownerId` to another **existing member** (the outgoing owner needn't be reachable — the use case is *the owner has left the company*). The new owner is promoted to ACCOUNT if not already. ✅ implemented — A
 
 ## account-4.0 Feature catalog & entitlements — A
 - **account-4.1** `Feature` — capability key, no price — A
@@ -439,6 +444,14 @@ this service **owns the account↔user relationship** (membership + roles + swit
 - **account-10.3** Sub-account fold-up + itemization — B
 - **account-10.4** Agency/reseller — top account owns billing; pricing visibility gated by hierarchy — B
 - **account-10.5** Coupon/discount admin surface — B
+- **account-10.6** **Prepaid balance** — an `AccountBalance` (credit in minor units) drawn down by PREPAID/usage charges; the billing overview surfaces the current balance — B
+- **account-10.7** **Manual top-up** — a one-off `add funds` that charges the default method (Stripe) and credits the balance; skeleton credits the stored balance until Stripe is wired — B
+- **account-10.8** **Auto-reload** — when the balance falls below a `threshold`, charge the default method for a fixed `amount` (opt-in per account) — B
+- **account-10.9** **Billing type** — `card` (charged to a card on file) vs `invoice` (net terms, paid out-of-band); drives dunning + collection behavior. **Note:** *trial* is NOT a billing type — it is a subscription lifecycle state (`SubscriptionStatus.TRIALING`); the two are orthogonal (a trialing account can still hold a card) — B
+- **account-10.10** **Payment history** — a list of charges / top-ups / refunds (`Payment`), filterable by an optional ISO date range — B
+- **account-10.11** **Cost summary** — "what's currently being charged" (`CostLine[]`) derived from the active subscription + usage, shown on the overview — B
+- **account-10.12** **Billing address = account address** — a `billingAddressSameAsAccount` toggle; when set, the billing address mirrors the account address (no separate copy), else an explicit override is stored — B
+- **account-10.13** **Campaign wallet** — a **per-campaign spend budget** carved out of the account prepaid balance (account-10.6). A campaign is allocated a `Wallet` (a **reserved sub-balance**, minor units) that its sends draw down against; when the wallet is exhausted the campaign **hard-stops** (no further sends / follow-on) independently of other campaigns. The wallet is the accounting side of the campaign's **cross-channel cost cap** (see [campaign → Cost, limits & entitlements](../../campaign/SPECS.md)): the campaign owns the *cap policy*, the account owns the *funds*. Mechanics: **allocate** (move funds from the account balance into the campaign wallet — a reserve, audited), **spend** (channels/links meter actual cost against the wallet; reserve-before-dispatch + commit-on-actual, so concurrency can't overspend), **top-up** (add more from the balance), and **release** (return the unspent remainder to the account balance on campaign completion/archival). Composes with the account ceiling — a send must pass **both** the wallet **and** the account balance / `max_out`. A `Wallet` ledger row (`allocated`, `spent`, `reserved`, `available`) is auditable + reconciled against actuals — **B** — see [campaign SPECS](../../campaign/SPECS.md).
 
 ## account-11.0 Block list (do-not-contact) — A
 - **account-11.1** Global suppression by normalized value (phone E.164 / email) — A
@@ -483,6 +496,12 @@ redirect**, never bytes.
 requires **step-up** · **`Internal`** = VPC-only S2S · **`Stripe-sig`** = authenticated by the Stripe webhook
 signature (not a user role). A senior role satisfies any junior minimum.
 
+**Status column:** implementation state of each endpoint in this repo — **✅** = implemented (functional) · **⚠️**
+= stubbed / partial (contract + wiring exist but functionality is skeleton — e.g. awaiting Stripe or the plan
+catalog) · blank = planned, not yet built. Concrete implemented/stubbed endpoints today are served from
+`AccountReadService` under the published **`/api/acct/v1/...`** facade (X-Account-scoped), which is why some
+`/account/{id}/...` design paths are annotated with the concrete path actually in code.
+
 > Boundaries: **identity/authn + the grant *runtime* live in [auth](../../auth/specs/SPECS.md)**;
 > **account-switching** is `auth`'s `/auth/session/switch` (auth *reads* membership). This service owns
 > **membership/role *assignment*, plans, billing, entitlements, and the block list**. **Card data is never
@@ -490,103 +509,116 @@ signature (not a user role). A senior role satisfies any junior minimum.
 > (a `SetupIntent` client secret). These are APP/INTERNAL shapes; the published API is the `/v1/...` facade.
 
 ### Accounts & configuration (account-1)
-| Method | URI | Purpose | Access | Req |
-|---|---|---|---|---|
-| POST | `/account` | Create an account (top-level: staff; sub-account: admin) | ACCOUNT ⬆ | account-1.1 |
-| GET | `/account` | List accounts I can see (mine / children) | USER | account-1.1 |
-| GET | `/account/{id}` | Get one account | USER | account-1.1 |
-| PATCH | `/account/{id}` | Update name / branding / preferences / limits | ACCOUNT | account-1.4 |
-| PATCH | `/account/{id}/status` | Change status (suspend / close / reactivate) | ACCOUNT ⬆ | account-1.3 |
-| GET | `/account/{id}/config` | Resolved config / branding / limits | USER | account-1.4 |
-| GET, PUT | `/account/{id}/feature-flags` | Per-account feature flags (support-toggled) | ACCOUNT ⬆ | account-1.5 |
-| POST | `/account/{id}/erasure` | Close + erase account PII (app/root, audited) | APPLICATION ⬆ | account-1.6/12.4 |
+| Method | URI | Purpose | Access | Status | Req |
+|---|---|---|---|---|---|
+| POST | `/account` | Create an account (top-level: staff; sub-account: admin) | ACCOUNT ⬆ | | account-1.1 |
+| GET | `/account` | List accounts I can see (mine / children) | USER | | account-1.1 |
+| GET | `/account/{id}` | Get one account (acting account via X-Account) | USER | ✅ | account-1.1 |
+| PATCH | `/account/{id}` | Update name / branding / preferences / limits (impl: `PUT /api/acct/v1/account`) | ACCOUNT | ✅ | account-1.4 |
+| PATCH | `/account/{id}/status` | Change status (suspend / close / reactivate) | ACCOUNT ⬆ | | account-1.3 |
+| GET | `/account/{id}/config` | Resolved config / branding / limits | USER | | account-1.4 |
+| GET, PUT | `/account/{id}/feature-flags` | Per-account feature flags (support-toggled) | ACCOUNT ⬆ | | account-1.5 |
+| POST | `/account/{id}/erasure` | Close + erase account PII (app/root, audited) | APPLICATION ⬆ | | account-1.6/12.4 |
 
 ### Hierarchy & sub-accounts (account-2)
-| Method | URI | Purpose | Access | Req |
-|---|---|---|---|---|
-| GET | `/account/{id}/children` | List sub-accounts | USER | account-2.1 |
-| POST | `/account/{id}/children` | Create a sub-account | ACCOUNT ⬆ | account-2.1 |
-| GET, PUT | `/account/{id}/parent-access` | `parentAccess` (open \| granted) setting | ACCOUNT ⬆ | account-2.3 |
+Impl paths are the concrete `/api/acct/v1/*` facade (X-Account-scoped), served from `AccountReadService`.
+
+| Method | URI | Purpose | Access | Status | Req |
+|---|---|---|---|---|---|
+| GET | `/api/acct/v1/sub-accounts` | List the acting account's direct children (parentId GSI) | ACCOUNT | ✅ | account-2.1 |
+| POST | `/api/acct/v1/sub-accounts` | Create a sub-account (creator → owner + admin; enforces maxDepth / maxSubAccountsPerParent → `409`) | ACCOUNT | ✅ | account-2.5/2.6 |
+| POST | `/api/acct/v1/sub-accounts/{subAccountId}/status` | Suspend / reactivate a direct child — suspension cascades to all descendants | ACCOUNT | ✅ | account-2.8 |
+| GET, PUT | `/account/{id}/parent-access` | `parentAccess` (open \| granted) setting | ACCOUNT ⬆ | | account-2.3 |
 
 ### Members, roles & grant settings (account-3)
-| Method | URI | Purpose | Access | Req |
-|---|---|---|---|---|
-| GET | `/account/{id}/members` | List members + roles + max-role | ACCOUNT | account-3.1 |
-| POST | `/account/{id}/members` | Add/invite a user with a max-role | ACCOUNT ⬆ | account-3.1 |
-| PATCH | `/account/{id}/members/{userId}` | Change a member's roles / max-role | ACCOUNT ⬆ | account-3.1 |
-| DELETE | `/account/{id}/members/{userId}` | Remove a member | ACCOUNT ⬆ | account-3.1 |
-| GET, PUT | `/account/{id}/grant-settings` | Cross-account grant settings (`grantable`/`grantableAs`/…) | ACCOUNT ⬆ | account-3.3 |
+| Method | URI | Purpose | Access | Status | Req |
+|---|---|---|---|---|---|
+| GET | `/account/{id}/members` | List members + roles + max-role | ACCOUNT | ✅ | account-3.1 |
+| PATCH | `/account/{id}/members/{userId}` | Change a member's roles / max-role | ACCOUNT ⬆ | ✅ | account-3.1 |
+| DELETE | `/account/{id}/members/{userId}` | Remove a member | ACCOUNT ⬆ | ✅ | account-3.1 |
+| POST | `/api/acct/v1/owner/transfer` | Transfer ownership to another member (promotes them to admin) | ACCOUNT | ✅ | account-3.5 |
+| GET | `/account/{id}/invites` | List pending/invited/accepted/declined/cancelled invites | ACCOUNT | ✅ | account-3.1 |
+| POST | `/account/{id}/invites` | Invite a user (async via SQS → provisional invite) | ACCOUNT ⬆ | ✅ | account-3.1 |
+| POST | `/account/{id}/invites/{inviteId}/resend` | Resend an invitation | ACCOUNT ⬆ | ✅ | account-3.1 |
+| DELETE | `/account/{id}/invites/{inviteId}` | Cancel an invitation | ACCOUNT ⬆ | ✅ | account-3.1 |
+| GET, PUT | `/account/{id}/grant-settings` | Cross-account grant settings (`grantable`/`grantableAs`/…) | ACCOUNT ⬆ | | account-3.3 |
 
 ### Feature catalog & entitlements (account-4)
-| Method | URI | Purpose | Access | Req |
-|---|---|---|---|---|
-| GET | `/account/features` | List the feature catalog | USER | account-4.1 |
-| POST | `/account/features` | Create a feature (staff) | APPLICATION ⬆ | account-4.1 |
-| GET | `/account/entitlements` | `ResolvedEntitlements` for my current account (the gate) | USER | account-4.4 |
-| GET | `/account/{id}/entitlements` | Resolved entitlements for an account | USER | account-4.4 |
-| GET | `/account/internal/{id}/entitlements` | S2S entitlement resolve (shared gate, cached) | Internal | account-4.4 |
+| Method | URI | Purpose | Access | Status | Req |
+|---|---|---|---|---|---|
+| GET | `/account/features` | List the feature catalog | USER | | account-4.1 |
+| POST | `/account/features` | Create a feature (staff) | APPLICATION ⬆ | | account-4.1 |
+| GET | `/account/entitlements` | `ResolvedEntitlements` for my current account (the gate) | USER | | account-4.4 |
+| GET | `/account/{id}/entitlements` | Resolved entitlements for an account | USER | | account-4.4 |
+| GET | `/account/internal/{id}/entitlements` | S2S entitlement resolve (shared gate, cached) | Internal | | account-4.4 |
 
 ### Plans & pricing catalog (account-5)
-| Method | URI | Purpose | Access | Req |
-|---|---|---|---|---|
-| GET | `/account/plans` | List plans (public catalog; private if entitled) | USER | account-5.1 |
-| POST | `/account/plans` | Create a plan (staff) | APPLICATION ⬆ | account-5.1 |
-| GET | `/account/plans/{id}` | One plan (+ current version) | USER | account-5.1 |
-| POST | `/account/plans/{id}/versions` | Publish a new plan version (never mutate published) | APPLICATION ⬆ | account-5.3 |
-| PATCH | `/account/plans/{id}/status` | `DRAFT → ACTIVE → RETIRED` | APPLICATION ⬆ | account-5.1 |
-| GET | `/account/coupons` | List coupons | ACCOUNT | account-5.5 |
-| POST | `/account/coupons` | Create a coupon (incl. `PRICE_OVERRIDE`) | APPLICATION ⬆ | account-5.5/6.6 |
-| DELETE | `/account/coupons/{id}` | Retire a coupon | APPLICATION ⬆ | account-5.5 |
+| Method | URI | Purpose | Access | Status | Req |
+|---|---|---|---|---|---|
+| GET | `/account/plans` | List plans (public catalog; private if entitled) | USER | | account-5.1 |
+| POST | `/account/plans` | Create a plan (staff) | APPLICATION ⬆ | | account-5.1 |
+| GET | `/account/plans/{id}` | One plan (+ current version) | USER | | account-5.1 |
+| POST | `/account/plans/{id}/versions` | Publish a new plan version (never mutate published) | APPLICATION ⬆ | | account-5.3 |
+| PATCH | `/account/plans/{id}/status` | `DRAFT → ACTIVE → RETIRED` | APPLICATION ⬆ | | account-5.1 |
+| GET | `/account/coupons` | List coupons | ACCOUNT | | account-5.5 |
+| POST | `/account/coupons` | Create a coupon (incl. `PRICE_OVERRIDE`) | APPLICATION ⬆ | | account-5.5/6.6 |
+| DELETE | `/account/coupons/{id}` | Retire a coupon | APPLICATION ⬆ | | account-5.5 |
 
 ### Subscriptions & invoicing (account-6)
-| Method | URI | Purpose | Access | Req |
-|---|---|---|---|---|
-| GET | `/account/{id}/subscription` | Current subscription (+ `PriceSnapshot`) | BILLING | account-6.1 |
-| POST | `/account/{id}/subscription` | Subscribe to a plan (freeze the snapshot) | BILLING ⬆ | account-6.1/6.2 |
-| PATCH | `/account/{id}/subscription` | Change plan (new snapshot; history preserved) | BILLING ⬆ | account-6.3 |
-| DELETE | `/account/{id}/subscription` | Cancel the subscription | BILLING ⬆ | account-6.1 |
-| POST | `/account/{id}/subscription/coupons` | Apply a coupon (`AppliedCoupon`) | BILLING ⬆ | account-6.5/6.6 |
-| DELETE | `/account/{id}/subscription/coupons/{couponId}` | Remove an applied coupon | BILLING ⬆ | account-6.5 |
-| GET | `/account/{id}/invoices` | Invoice history | BILLING | account-6.4/10.1 |
-| GET | `/account/{id}/invoices/{invoiceId}` | One invoice (line items + refs) | BILLING | account-6.4 |
-| GET | `/account/{id}/invoices/{invoiceId}/pdf` | Invoice PDF (redirect to Stripe/presigned) | BILLING | account-10.1 |
+| Method | URI | Purpose | Access | Status | Req |
+|---|---|---|---|---|---|
+| GET | `/account/{id}/subscription` | Current subscription (+ `PriceSnapshot`) | BILLING | | account-6.1 |
+| POST | `/account/{id}/subscription` | Subscribe to a plan (freeze the snapshot) | BILLING ⬆ | | account-6.1/6.2 |
+| PATCH | `/account/{id}/subscription` | Change plan (new snapshot; history preserved) | BILLING ⬆ | | account-6.3 |
+| DELETE | `/account/{id}/subscription` | Cancel the subscription | BILLING ⬆ | | account-6.1 |
+| POST | `/account/{id}/subscription/coupons` | Apply a coupon (`AppliedCoupon`) | BILLING ⬆ | | account-6.5/6.6 |
+| DELETE | `/account/{id}/subscription/coupons/{couponId}` | Remove an applied coupon | BILLING ⬆ | | account-6.5 |
+| GET | `/account/{id}/invoices` | Invoice history (impl: `GET /api/acct/v1/billing/invoices`, optional `from`/`to`) | BILLING | ⚠️ | account-6.4/10.1 |
+| GET | `/account/{id}/invoices/{invoiceId}` | One invoice (line items + refs) | BILLING | | account-6.4 |
+| GET | `/account/{id}/invoices/{invoiceId}/pdf` | Invoice PDF (redirect to Stripe/presigned) | BILLING | | account-10.1 |
 
 ### Usage & metering (account-7)
-| Method | URI | Purpose | Access | Req |
-|---|---|---|---|---|
-| GET | `/account/{id}/usage` | Usage for the current period (per metric) | USER | account-7.1 |
-| POST | `/account/internal/usage` | S2S ingest of `UsageRecord` aggregates from services | Internal | account-7.1 |
+| Method | URI | Purpose | Access | Status | Req |
+|---|---|---|---|---|---|
+| GET | `/account/{id}/usage` | Usage for the current period (per metric) | USER | | account-7.1 |
+| POST | `/account/internal/usage` | S2S ingest of `UsageRecord` aggregates from services | Internal | | account-7.1 |
 
 ### Payments & billing methods (account-8, account-10)
-| Method | URI | Purpose | Access | Req |
-|---|---|---|---|---|
-| GET | `/account/{id}/billing` | Billing summary (address, default method `last4`/`brand`, status) | BILLING | account-10.1 |
-| PUT | `/account/{id}/billing/address` | Update the billing address | BILLING ⬆ | account-10.1 |
-| GET | `/account/{id}/billing/payment-methods` | List methods (ref + last4 + brand only) | BILLING | account-8.2 |
-| POST | `/account/{id}/billing/payment-methods/setup` | Start a Stripe `SetupIntent` (client secret for Elements) | BILLING ⬆ | account-8.2 |
-| DELETE | `/account/{id}/billing/payment-methods/{pmId}` | Remove a payment method | BILLING ⬆ | account-8.2 |
-| POST | `/account/{id}/billing/portal` | Create a Stripe Billing Portal session (redirect) | BILLING | account-10.1 |
+Impl paths are the concrete `/api/acct/v1/billing/*` facade (X-Account-scoped) served from `AccountReadService`.
+Everything here is **⚠️ stubbed** — the contract + persistence (balance + settings on the account row) exist,
+but payment methods / history / real charges await Stripe.
+
+| Method | URI | Purpose | Access | Status | Req |
+|---|---|---|---|---|---|
+| GET | `/api/acct/v1/billing` | Billing **overview** — plan · costs · balance · settings · billing address · default method (one read) | BILLING | ⚠️ | account-10.1/10.6/10.11 |
+| PUT | `/api/acct/v1/billing/settings` | Update billing type (card \| invoice), auto-reload, and billing-address-same-as-account (+ override address) | BILLING ⬆ | ⚠️ | account-10.8/10.9/10.12 |
+| POST | `/api/acct/v1/billing/balance/topup` | Add funds to the prepaid balance (skeleton credits stored balance; real flow charges the card) | BILLING ⬆ | ⚠️ | account-10.6/10.7 |
+| GET | `/api/acct/v1/billing/payment-methods` | List methods (ref + last4 + brand only) | BILLING | ⚠️ | account-8.2 |
+| POST | `/api/acct/v1/billing/payment-methods/setup` | Start a Stripe `SetupIntent` (client secret for Elements) | BILLING ⬆ | ⚠️ | account-8.2 |
+| DELETE | `/api/acct/v1/billing/payment-methods/{methodId}` | Remove a payment method | BILLING ⬆ | ⚠️ | account-8.2 |
+| GET | `/api/acct/v1/billing/payments` | Payment history (charges / top-ups / refunds), optional `from`/`to` | BILLING | ⚠️ | account-10.10 |
+| POST | `/account/{id}/billing/portal` | Create a Stripe Billing Portal session (redirect) | BILLING | | account-10.1 |
 
 ### Stripe webhooks (account-9)
-| Method | URI | Purpose | Access | Req |
-|---|---|---|---|---|
-| POST | `/account/billing/webhook` | Stripe webhook receiver — signature-verified, idempotent, async reconcile | Stripe-sig | account-9.1/9.2/9.4 |
+| Method | URI | Purpose | Access | Status | Req |
+|---|---|---|---|---|---|
+| POST | `/account/billing/webhook` | Stripe webhook receiver — signature-verified, idempotent, async reconcile | Stripe-sig | | account-9.1/9.2/9.4 |
 
 ### Block list — do-not-contact (account-11)
-| Method | URI | Purpose | Access | Req |
-|---|---|---|---|---|
-| GET | `/account/{id}/block-list` | List suppressions (filters) | USER | account-11.1 |
-| POST | `/account/{id}/block-list` | Add a suppression (value / channel / source / reason) | USER | account-11.1 |
-| DELETE | `/account/{id}/block-list/{entryId}` | Soft unblock (audited) | ACCOUNT ⬆ | account-11.5 |
-| POST | `/account/{id}/block-list/import` | Bulk import | ACCOUNT ⬆ | account-11.5 |
-| GET | `/account/{id}/block-list/export` | Export (CSV → presigned URL) | USER | account-11.5 |
-| POST | `/account/internal/block-list/check` | S2S — dispatch checks value(s) before send | Internal | account-11.3 |
+| Method | URI | Purpose | Access | Status | Req |
+|---|---|---|---|---|---|
+| GET | `/account/{id}/block-list` | List suppressions (filters) | USER | | account-11.1 |
+| POST | `/account/{id}/block-list` | Add a suppression (value / channel / source / reason) | USER | | account-11.1 |
+| DELETE | `/account/{id}/block-list/{entryId}` | Soft unblock (audited) | ACCOUNT ⬆ | | account-11.5 |
+| POST | `/account/{id}/block-list/import` | Bulk import | ACCOUNT ⬆ | | account-11.5 |
+| GET | `/account/{id}/block-list/export` | Export (CSV → presigned URL) | USER | | account-11.5 |
+| POST | `/account/internal/block-list/check` | S2S — dispatch checks value(s) before send | Internal | | account-11.3 |
 
 ### Audit & ops (account-12, account-13)
-| Method | URI | Purpose | Access | Req |
-|---|---|---|---|---|
-| GET | `/account/{id}/audit` | Query account/billing audit events (RBAC-scoped) | ACCOUNT | account-12.1 |
-| GET | `/account/{id}/audit/{eventId}` | One audit event (+ hash-verify result) | ACCOUNT | account-12.2 |
-| GET | `/account/config` | Read the service's own runtime config (AppConfig-backed) | ROOT | account-13 |
-| PUT | `/account/config` | Update service runtime config → reconfigure-without-restart; audited | ROOT ⬆ | account-13 |
-| GET | `/account/health` | Liveness/readiness (read-only smoke) | Internal | account-13 |
+| Method | URI | Purpose | Access | Status | Req |
+|---|---|---|---|---|---|
+| GET | `/account/{id}/audit` | Query account/billing audit events (RBAC-scoped) | ACCOUNT | | account-12.1 |
+| GET | `/account/{id}/audit/{eventId}` | One audit event (+ hash-verify result) | ACCOUNT | | account-12.2 |
+| GET | `/account/config` | Read the service's own runtime config (AppConfig-backed) | ROOT | | account-13 |
+| PUT | `/account/config` | Update service runtime config → reconfigure-without-restart; audited | ROOT ⬆ | | account-13 |
+| GET | `/account/health` | Liveness/readiness (read-only smoke) | Internal | ✅ | account-13 |

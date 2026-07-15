@@ -24,6 +24,7 @@ import Bolt from "@mui/icons-material/Bolt";
 import Groups from "@mui/icons-material/Groups";
 import Language from "@mui/icons-material/Language";
 import Extension from "@mui/icons-material/Extension";
+import Science from "@mui/icons-material/Science";
 
 //
 // Maps a catalog icon NAME to its MUI component. Unknown names fall back to a generic icon so a
@@ -34,7 +35,7 @@ const MAP : Record<string, SvgIconComponent> =
 {
     Hub, VpnKey, AccountCircle, HowToReg, Contacts, Campaign, AccountTree, Storefront,
     Textsms, Email, Call, Print, Share, Poll, PermMedia, Link, Analytics, Assessment,
-    MonitorHeart, Gavel, Search, Bolt, Groups, Language, Extension
+    MonitorHeart, Gavel, Search, Bolt, Groups, Language, Extension, Science
 };
 
 export function serviceIcon( name : string ) : SvgIconComponent

@@ -17,11 +17,11 @@ import { LOG_DIR } from "./paths";
 // The store also emits "line" events the IPC layer forwards to the renderer live.
 //
 
-const RING = 5000; // lines kept in memory per (service, stream)
+const RING : number = 5000; // lines kept in memory per (service, stream)
 
 interface Buf
 {
-    lines : LogLine[];
+    lines : Array<LogLine>;
     seq : number;
     file : WriteStream;
 }
@@ -30,30 +30,32 @@ class LogStore extends EventEmitter
 {
     private bufs = new Map<string, Buf>();
 
+    /** Composite map key for a (service, stream) pair. */
     private key( service : string, stream : LogStream ) : string
     {
         return `${service}:${stream}`;
     }
 
+    /** Get (or lazily create) the ring buffer + append-stream for a (service, stream). */
     private buf( service : string, stream : LogStream ) : Buf
     {
-        const k : string = this.key( service, stream );
-        let b : Buf | undefined = this.bufs.get( k );
-        if ( !b )
+        const mapKey : string = this.key( service, stream );
+        let buffer : Buf | undefined = this.bufs.get( mapKey );
+        if ( !buffer )
         {
             const dir : string = join( LOG_DIR, service );
             mkdirSync( dir, { recursive: true } );
             const file : WriteStream = createWriteStream( join( dir, `${stream}.log` ), { flags: "a" } );
-            b = { lines: [], seq: 0, file };
-            this.bufs.set( k, b );
+            buffer = { lines: [], seq: 0, file };
+            this.bufs.set( mapKey, buffer );
         }
-        return b;
+        return buffer;
     }
 
     /** Append one line of text (may contain embedded newlines — split into lines). */
     append( service : string, stream : LogStream, level : LogLine[ "level" ], text : string ) : void
     {
-        const b : Buf = this.buf( service, stream );
+        const buffer : Buf = this.buf( service, stream );
 
         for ( const raw of text.split( /\r?\n/ ) )
         {
@@ -61,18 +63,19 @@ class LogStore extends EventEmitter
             const line : LogLine =
             {
                 service, stream, level,
-                seq  : b.seq++,
+                seq  : buffer.seq++,
                 ts   : Date.now(),
                 text : raw
             };
 
-            b.lines.push( line );
-            if ( b.lines.length > RING ) b.lines.splice( 0, b.lines.length - RING );
+            buffer.lines.push( line );
+            // ring buffer: once over capacity, drop the oldest lines to keep only the most recent RING
+            if ( buffer.lines.length > RING ) buffer.lines.splice( 0, buffer.lines.length - RING );
 
             this.emit( "line", line );
         }
 
-        b.file.write( text.endsWith( "\n" ) ? text : text + "\n" );
+        buffer.file.write( text.endsWith( "\n" ) ? text : text + "\n" );
     }
 
     /** A console-generated annotation line (started / exited / errors). */
@@ -82,7 +85,7 @@ class LogStore extends EventEmitter
     }
 
     /** Fetch buffered history for a (service, stream). */
-    get( service : string, stream : LogStream ) : LogLine[]
+    get( service : string, stream : LogStream ) : Array<LogLine>
     {
         return this.bufs.get( this.key( service, stream ) )?.lines.slice() ?? [];
     }
@@ -90,8 +93,8 @@ class LogStore extends EventEmitter
     /** Clear the in-memory buffer for a stream (the file on disk is left intact for history). */
     clear( service : string, stream : LogStream ) : void
     {
-        const b : Buf | undefined = this.bufs.get( this.key( service, stream ) );
-        if ( b ) b.lines = [];
+        const buffer : Buf | undefined = this.bufs.get( this.key( service, stream ) );
+        if ( buffer ) buffer.lines = [];
     }
 
     /** Absolute on-disk path for a stream's log file (shown in the UI + used by Ask-Claude). */

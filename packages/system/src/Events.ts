@@ -130,9 +130,13 @@ export namespace Events
         AUTH_APIKEY           = "auth.apikey",
         AUTH_IMPERSONATION    = "auth.impersonation",
         AUTH_DATA             = "auth.data",
+        AUTH_USER             = "auth.user",      // identity lifecycle (registered / updated / deleted)
+        AUTH_PASSKEY          = "auth.passkey",   // WebAuthn credential lifecycle (registered / removed)
 
         // account
         ACCOUNT_ACCOUNT          = "account.account",
+        ACCOUNT_MEMBER           = "account.member",   // membership lifecycle (joined / role-or-status change / removed)
+        ACCOUNT_INVITE           = "account.invite",   // invite lifecycle (invited / resent / cancelled)
         ACCOUNT_PLAN             = "account.plan",
         ACCOUNT_INVOICE          = "account.invoice",
         ACCOUNT_BLOCK_LIST_ENTRY = "account.block_list_entry",
@@ -175,6 +179,7 @@ export namespace Events
 
         // assets
         MEDIA_ASSET  = "media.asset",
+        MEDIA_JOB    = "media.job",   // async processing progress (stage events for UI + workflows, media-19.2)
 
         // links
         LINKS_LINK   = "links.link",
@@ -206,6 +211,30 @@ export namespace Events
     {
         BEHAVIOR   = "platform.behavior",     // in-app product / behavior (app BFF /app/events → analytics)
         ENGAGEMENT = "platform.engagement",   // channel engagement (sent / delivered / opened / … → analytics)
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Job stage — the progress lifecycle of an async processing Job (media-19.2). Emitted on the `media.job`
+    //   Object (verb UPDATED) so the UI can show live progress and workflows can sequence steps.
+    // ──────────────────────────────────────────────────────────────────────────
+
+    export enum JobStage
+    {
+        QUEUED    = "queued",      // enqueued, not yet picked up
+        STARTED   = "started",     // a worker began
+        RUNNING   = "running",     // in progress (see `progress`)
+        COMPLETED = "completed",   // succeeded — result written to the entity
+        FAILED    = "failed",      // errored (see `message`)
+    }
+
+    /** The `data` of a `media.job` event — an async operation's progress on one entity (keyed by `guid`). */
+    export interface JobProgress
+    {
+        guid      : string;        // the asset/entity the job is processing
+        job       : string;        // the operation (e.g. "transcribe", "generate", "process")
+        stage     : JobStage;
+        progress? : number;        // 0..100 when known (RUNNING)
+        message?  : string;        // human note / failure reason
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -273,6 +302,7 @@ export namespace Events
     export interface EventPayload
     {
         [Object.MEDIA_ASSET]: Payloads.MediaAsset;
+        [Object.MEDIA_JOB]:   JobProgress;   // async processing progress (media-19.2)
         // … one per published entity (e.g. [Object.CONTACT_CONTACT]: Payloads.Contact) as services land.
     }
 
@@ -292,6 +322,46 @@ export namespace Events
     export function actionOf( object : Object, verb : Verb ) : Action
     {
         return `${object}.${verb}` as Action;
+    }
+
+    /** The compact input to {@link envelope} — the per-event bits; the rest is stamped with sane defaults. */
+    export interface EnvelopeInput
+    {
+        object:     Object;
+        verb:       Verb;
+        accountId:  Type.ID;
+        target:     Target;
+        data?:      unknown;
+        actorUserId?: Type.ID;          // present → a USER actor; absent → the SERVICE actor (derived from the object's service prefix)
+        source?:    SourceChannel;      // default API
+        outcome?:   Outcome;            // default SUCCESS
+        version?:   string;             // payload schema version (default "1")
+    }
+
+    /**
+     * Build a complete {@link Envelope} from the per-event essentials — the ONE place the boilerplate
+     * (eventId, occurredAt, action, actor default, KAFKA sink) is stamped, so every service emits an
+     * identical shape. Browser-safe (no node deps): uses `globalThis.crypto.randomUUID`. Publish with
+     * `kafka.publishEvent( Events.envelope( { … } ) )`.
+     */
+    export function envelope( input : EnvelopeInput ) : Envelope
+    {
+        const serviceId : string = ( input.object as string ).split( "." )[ 0 ];   // "account.member" → "account"
+        return {
+            version:    input.version ?? "1",
+            eventId:    globalThis.crypto.randomUUID(),
+            occurredAt: new Date().toISOString(),
+            accountId:  input.accountId,
+            actor:      input.actorUserId ? { kind: ActorKind.USER, id: input.actorUserId } : { kind: ActorKind.SERVICE, id: serviceId },
+            object:     input.object,
+            verb:       input.verb,
+            action:     actionOf( input.object, input.verb ),
+            target:     input.target,
+            source:     { channel: input.source ?? SourceChannel.API },
+            outcome:    input.outcome ?? Outcome.SUCCESS,
+            data:       input.data,
+            sinks:      [ Sink.KAFKA ],
+        };
     }
 
     /** The Object (entity/topic) of an action — its `<service>.<noun>` prefix. */
@@ -333,9 +403,13 @@ export namespace Events
         [ Object.AUTH_APIKEY ]:          { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.SECURITY }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.SECURITY } },
         [ Object.AUTH_IMPERSONATION ]:   { [ Verb.CREATED ]: { minAccess: Access.AppRole.APPLICATION, category: Category.SECURITY } },
         [ Object.AUTH_DATA ]:            { [ Verb.ACCESSED ]: { minAccess: Access.AppRole.APPLICATION, category: Category.COMPLIANCE } },
+        [ Object.AUTH_USER ]:            { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT } },
+        [ Object.AUTH_PASSKEY ]:         { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.SECURITY }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.SECURITY } },
 
         // account
         [ Object.ACCOUNT_ACCOUNT ]:          { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.PURGED ]: { minAccess: Access.AppRole.APPLICATION, category: Category.COMPLIANCE } },
+        [ Object.ACCOUNT_MEMBER ]:           { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT } },
+        [ Object.ACCOUNT_INVITE ]:           { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT } },
         [ Object.ACCOUNT_PLAN ]:             { [ Verb.CREATED ]: { minAccess: Access.AccountRole.BILLING, category: Category.BILLING }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.BILLING, category: Category.BILLING }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.BILLING, category: Category.BILLING }, [ Verb.PURGED ]: { minAccess: Access.AccountRole.BILLING, category: Category.BILLING } },
         [ Object.ACCOUNT_INVOICE ]:          { [ Verb.CREATED ]: { minAccess: Access.AccountRole.BILLING, category: Category.BILLING } },
         [ Object.ACCOUNT_BLOCK_LIST_ENTRY ]: { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.ACCOUNT } },
@@ -374,6 +448,7 @@ export namespace Events
 
         // assets / links
         [ Object.MEDIA_ASSET ]:  { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.PURGED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.COMPLIANCE } },
+        [ Object.MEDIA_JOB ]:    { [ Verb.UPDATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT } },   // async stage progress (media-19.2)
         [ Object.LINKS_LINK ]:   { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT } },
         [ Object.LINKS_DOMAIN ]: { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.CONTENT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.CONTENT } },
 

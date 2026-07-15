@@ -1,6 +1,9 @@
 //
 import { DateUtils, StringUtils } from "@repo/common";
 
+//
+import { PhoneFormat } from "./PhoneFormat";
+
 
 interface NumberFomat
 {
@@ -70,6 +73,20 @@ export class LocaleService
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Locale-formatted byte size (B / KB / MB / GB), using the locale number formatter for the value.
+    public bytes( value : number | null ) : string
+    {
+        if( value === null || value === undefined ) return "";
+        const kilobyte : number = 1024;
+        const megabyte : number = kilobyte * 1024;
+        const gigabyte : number = megabyte * 1024;
+        if( value < kilobyte ) return `${ this.number( value, 0 ) } B`;
+        if( value < megabyte ) return `${ this.number( value / kilobyte, 0 ) } KB`;
+        if( value < gigabyte ) return `${ this.number( value / megabyte, 1 ) } MB`;
+        return `${ this.number( value / gigabyte, 2 ) } GB`;
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
     public date( value : Date | null, format : LocaleService.Format ) : string
     {
         if( value === null || isNaN( value.getTime() ) )return "";
@@ -132,14 +149,51 @@ export class LocaleService
 
     }
 
-/*
     ////////////////////////////////////////////////////////////////////////////////////////////////
-    public phone( phone : string ) : string
+    // Phone formatting (country-aware) — delegates to PhoneFormat. The platform stores E.164; these
+    // turn loose input into E.164 and back into a country's pretty national format for display.
+
+    /** Pretty national format for display — e.g. "+18583331234" → "(858) 333-1234". */
+    public phone( phone : string, country? : string ) : string
     {
-        const phoneNumber : PhoneNumber | undefined = parsePhoneNumber( phone , 'US' );
-        return phoneNumber ? phoneNumber.formatNational() : phone;
+        return PhoneFormat.format( phone, country );
     }
-*/
+
+    /** Normalize loose/pretty input to E.164 for storage — e.g. "(858) 333-1234" → "+18583331234" (or null). */
+    public phoneToE164( phone : string, country : string = PhoneFormat.DEFAULT_COUNTRY ) : string | null
+    {
+        return PhoneFormat.toE164( phone, country );
+    }
+
+    /** True when a number is valid for the given country. */
+    public phoneValid( phone : string, country : string = PhoneFormat.DEFAULT_COUNTRY ) : boolean
+    {
+        return PhoneFormat.isValid( phone, country );
+    }
+
+    /** Calling-code choices for a set of countries — ["US","CA"] → [{value:"+1",label:"US"}, …]. */
+    public phonePrefixes( countries : Array<string>, useNames : boolean = false ) : Array<LocaleService.Choice>
+    {
+        return PhoneFormat.prefixChoices( countries, useNames ? LocaleService.COUNTRIES : undefined );
+    }
+
+    /** The "+"-prefixed calling code for a country — "US" → "+1". */
+    public phonePrefix( country? : string ) : string
+    {
+        return PhoneFormat.prefix( country );
+    }
+
+    /** The national display mask/placeholder for a country — "US" → "(###) ###-####". */
+    public phonePlaceholder( country? : string ) : string
+    {
+        return PhoneFormat.placeholder( country );
+    }
+
+    /** As-you-type formatting of loose input for a country (progressive mask). */
+    public phoneFormatPartial( value : string, country? : string ) : string
+    {
+        return PhoneFormat.formatPartial( value, country );
+    }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
     public label( path : string, options? : LocaleService.LabelOptions ) : string

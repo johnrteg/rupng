@@ -1,5 +1,6 @@
 //
-import { Application, Service, Ports, Register } from "@repo/services";
+import { Application, Service, Ports, Register, Kafka } from "@repo/services";
+import { GetBootstrap } from "@repo/api";
 
 //
 // common app (BFF) server base — the domain base every concrete app role extends.
@@ -10,25 +11,59 @@ import { Application, Service, Ports, Register } from "@repo/services";
 export class AppService extends Service
 {
     // name/version of this app, read from apps/core/app/package.json at startup
-    protected pkg : Application.PackageInfo;
+    //protected pkg : Application.PackageInfo;
+
+    // Kafka facade — the app BFF consumes upstream entity events (account.account, auth.user) to keep
+    // its read models / caches warm. Lazy + cached.
+    private _kafka? : Kafka;
+    public get kafka() : Kafka { return this._kafka ??= new Kafka( this.cloud ); }
 
     ///////////////////////////////////////////////////////////////////////////////////////
     constructor( role : AppService.Role )
     {
+        
         // identity = Register.Service.APP (+ role → "app:main"); default to this role's port in the APP block
         // for local dev; a deploy's env PORT overrides it
         super( Register.Service.APP, role, AppService.PORT[ role ] );
 
         // __dirname resolves to apps/core/app/bin/services at runtime; loadPackageInfo walks
         // up to the nearest package.json (apps/core/app/package.json)
-        this.pkg = this.loadPackageInfo( __dirname );
-        this.log.info( "version", { name: this.pkg.name, version: this.pkg.version } );
+        const pkg : Application.PackageInfo = this.loadPackageInfo( __dirname );
+        this.setVersion( pkg.version );
+
+        this.log.info( "version", { name: pkg.name, version: pkg.version } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
     protected async init() : Promise<void>
     {
         super.init();
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** Disconnect Kafka (the read-model consumer's run-loop + producer) BEFORE the base closes the HTTP
+     *  server — otherwise the open consumer keeps the process alive past SIGINT and the dev watcher
+     *  force-kills it. (The app BFF currently only CONSUMES events; it owns no persisted CRUD entity to
+     *  publish — the notices entity is not implemented yet.) */
+    protected async aboutToQuit() : Promise<void>
+    {
+        if( this._kafka ) { try { await this._kafka.disconnect(); } catch( err ) { this.log.error( "kafka disconnect failed", err ); } }
+        await super.aboutToQuit();
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * The PUBLIC bootstrap blob (`GetBootstrap.Config`) — read live from AppConfig (profile "web").
+     * Falls back to `GetBootstrap.DEFAULT` if it isn't deployed yet / is unreadable. Live read for now;
+     * a Redis cache will front this later. This is the WEB config — distinct from the (authed) AppService
+     * config wired later.
+     */
+    public async getWebConfig() : Promise<GetBootstrap.Config>
+    {
+        const result = await this.appConfig.json<GetBootstrap.Config>( "config", "web" );
+        if ( result.ok && result.data !== undefined ) return result.data;
+        if ( !result.ok ) this.log.warn( "web config read failed — serving DEFAULT", { error: result.error } );
+        return GetBootstrap.DEFAULT;
     }
 }
 
@@ -50,10 +85,9 @@ export namespace AppService
 
     export interface Config
     {
-        maxUploadSize : { texting : number };
     }
 
-    export const InitConfig : Config = { maxUploadSize : { texting : 750_000 } };
+    export const InitConfig : Config = {};
 }
 
 export default AppService;

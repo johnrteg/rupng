@@ -5,8 +5,8 @@
 //
 import { AppConfigDataClient, StartConfigurationSessionCommand, GetLatestConfigurationCommand } from "@aws-sdk/client-appconfigdata";
 import type { StartConfigurationSessionCommandOutput, GetLatestConfigurationCommandOutput } from "@aws-sdk/client-appconfigdata";
-import { AppConfigClient, ListHostedConfigurationVersionsCommand, CreateHostedConfigurationVersionCommand, StartDeploymentCommand, GetDeploymentCommand } from "@aws-sdk/client-appconfig";
-import type { ListHostedConfigurationVersionsCommandOutput, CreateHostedConfigurationVersionCommandOutput, StartDeploymentCommandOutput, GetDeploymentCommandOutput } from "@aws-sdk/client-appconfig";
+import { AppConfigClient, ListHostedConfigurationVersionsCommand, CreateHostedConfigurationVersionCommand, StartDeploymentCommand, GetDeploymentCommand, ListConfigurationProfilesCommand, ListEnvironmentsCommand } from "@aws-sdk/client-appconfig";
+import type { ListHostedConfigurationVersionsCommandOutput, CreateHostedConfigurationVersionCommandOutput, StartDeploymentCommandOutput, GetDeploymentCommandOutput, ListConfigurationProfilesCommandOutput, ListEnvironmentsCommandOutput } from "@aws-sdk/client-appconfig";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
@@ -246,6 +246,85 @@ export class AppConfig
                 version            : deployment.ConfigurationVersion,
             };
         } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    /** Resolve a configuration profile's **id** from its NAME (the control-plane calls need the id, but
+     *  the manifest/data-plane use names). Paginates. Err if no profile by that name. */
+    async profileId( appConfigKey : ResourceKey, profile : string ) : Promise<Type.Result<string>>
+    {
+        return ResultUtils.from( async () : Promise<string> =>
+        {
+            const applicationId : string = this.cloud.appConfigId( appConfigKey );
+            let nextToken : string | undefined = undefined;
+            do
+            {
+                const page : ListConfigurationProfilesCommandOutput = await this.adminClient.send( new ListConfigurationProfilesCommand( { ApplicationId: applicationId, NextToken: nextToken } ) );
+                const hit = ( page.Items ?? [] ).find( ( p ) => p.Name === profile );
+                if( hit?.Id ) return hit.Id;
+                nextToken = page.NextToken;
+            }
+            while( nextToken !== undefined );
+            throw new Error( `AppConfig: no configuration profile named "${profile}" in ${String( appConfigKey )}` );
+        } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    /** Resolve an environment's **id** from its NAME (default `APPCONFIG_ENV` ?? "default"). Paginates. */
+    async environmentId( appConfigKey : ResourceKey, environment : string = process.env.APPCONFIG_ENV ?? "default" ) : Promise<Type.Result<string>>
+    {
+        return ResultUtils.from( async () : Promise<string> =>
+        {
+            const applicationId : string = this.cloud.appConfigId( appConfigKey );
+            let nextToken : string | undefined = undefined;
+            do
+            {
+                const page : ListEnvironmentsCommandOutput = await this.adminClient.send( new ListEnvironmentsCommand( { ApplicationId: applicationId, NextToken: nextToken } ) );
+                const hit = ( page.Items ?? [] ).find( ( e ) => e.Name === environment );
+                if( hit?.Id ) return hit.Id;
+                nextToken = page.NextToken;
+            }
+            while( nextToken !== undefined );
+            throw new Error( `AppConfig: no environment named "${environment}" in ${String( appConfigKey )}` );
+        } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    /**
+     * **Ensure a profile is seeded.** If a hosted version already exists, returns the live value (or the
+     * `seed` shape if it can't be read); otherwise (empty profile) creates a hosted version from `seed`,
+     * deploys it (AllAtOnce), and returns `seed`. A one-shot bootstrap for a config the service owns — so
+     * a fresh environment has a usable value without a manual console step. (Control-plane; the profile
+     * itself must already exist, i.e. created by the /cloud build.)
+     *
+     * Existence is checked via {@link listVersions} (control plane), NOT a data-plane read: LocalStack's
+     * `GetLatestConfiguration` throws on an EMPTY profile ("list index out of range") instead of returning
+     * empty, so it can't tell "not seeded yet" from a real error.
+     */
+    async ensureSeeded<T>( appConfigKey : ResourceKey, profile : string, seed : T, environment : string = process.env.APPCONFIG_ENV ?? "default" ) : Promise<Type.Result<T>>
+    {
+        const profileId : Type.Result<string> = await this.profileId( appConfigKey, profile );
+        if( !profileId.ok ) return profileId;   // profile doesn't exist — the /cloud build must create it first
+
+        const versions : Type.Result<Array<AppConfig.Version>> = await this.listVersions( appConfigKey, profileId.data );
+        if( !versions.ok ) return versions;
+
+        if( versions.data.length > 0 )   // already seeded — return the live value if readable, else the seed shape
+        {
+            const existing : Type.Result<T | undefined> = await this.json<T>( appConfigKey, profile, environment );
+            return ResultUtils.ok( existing.ok && existing.data !== undefined ? existing.data : seed );
+        }
+
+        // empty profile → create the first hosted version + deploy it
+        const environmentId : Type.Result<string> = await this.environmentId( appConfigKey, environment );
+        if( !environmentId.ok ) return environmentId;
+
+        const version : Type.Result<number> = await this.createVersion( appConfigKey, profileId.data, JSON.stringify( seed ) );
+        if( !version.ok ) return version;
+        const deployed : Type.Result<number> = await this.deploy( appConfigKey, profileId.data, environmentId.data, version.data, { description: `seed ${profile}` } );
+        if( !deployed.ok ) return deployed;
+
+        return ResultUtils.ok( seed );
     }
 }
 

@@ -75,6 +75,7 @@ export function PasswordInput( props : PasswordInput.Props ) : JSX.Element
                         disabled    = { props.disabled != undefined ? props.disabled : false }
                         type        = { show_password ? "text" : "password"}
                         size        = { props.dense != null ? ( props.dense ? "small" : "medium" ) : "small" }
+                        autoFocus   = { props.focus ?? false }
                         value       = { text }
                         onChange    = { ( evt: any ) => onChange( evt ) }
                         onKeyDown   = { ( evt: React.KeyboardEvent<HTMLDivElement> ) => onKeyPress( evt )}
@@ -103,6 +104,7 @@ export namespace PasswordInput
         required?       : boolean;
         dense?          : boolean;
         disabled?       : boolean;
+        focus?          : boolean;   // autofocus on mount (e.g. when the password step appears)
         allowGenerate?  : boolean
         autoComplete?   : string;   // e.g. "current-password" (login) / "new-password" (signup/reset)
         onChange?       : ( new_value : string ) => void;

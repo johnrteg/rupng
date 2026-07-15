@@ -1022,6 +1022,56 @@ role). A senior role satisfies any junior minimum.
 > `RoleGrant`, so there's no `/auth` role-assignment endpoint. These are **APP/INTERNAL** shapes; the published
 > external API re-expresses them as the versioned `/v1/...` facade.
 
+> **Implementation status (2026-06).** Legend: **✅ impl** = real Cognito/DynamoDB logic ·
+> **🟡 stub** = registered + schema-validated, returns a placeholder · **▫ planned** = design-only (not coded).
+>
+> **Foundation in place:** a `UserStore` data layer ([apps/core/auth/src/services/UserStore.ts]) wraps
+> **Cognito** (the credential authority — tokens/MFA/federation) + **DynamoDB** (the `users` / `user_meta`
+> tables). The base service decodes the `Bearer` access token into the request's auth-context (dev: payload
+> decode, no signature verify — prod = the API Gateway Lambda authorizer/JWKS) and **enforces the
+> endpoint's `minAccess`** against the caller's JWT role (`role` claim / `cognito:groups`; authenticated
+> default = `USER`) — `Service.processEndpoint`. All endpoints below are **gateway-routed** via
+> `apiEndpoints([...])` in `cloud/src/app.ts` and registered by role (reads → reader, writes → writer).
+>
+> | Endpoint | Status |
+> |---|---|
+> | `POST /auth/login` (single-shot) | ✅ Cognito `ADMIN_USER_PASSWORD_AUTH` → tokens |
+> | `POST /auth/login/identify` | ✅ neutral — advances to a `password` challenge |
+> | `POST /auth/login/challenge` | ✅ password → Cognito tokens (other types: 400) |
+> | `POST /auth/login/challenge/resend` | 🟡 best-effort Cognito resend |
+> | `POST /auth/register` | ✅ Cognito SignUp + `users` row (enumeration-neutral on conflict) |
+> | `POST /auth/register/verify` | ✅ Cognito ConfirmSignUp → activate |
+> | `POST /auth/verify/resend` | ✅ Cognito ResendConfirmationCode |
+> | `POST /auth/verify/phone` | ▫ placeholder (needs the user's access token mid-registration) |
+> | `GET /auth/users` | ✅ Cognito ListUsers ⊕ `users` row |
+> | `GET /auth/users/exists` | ✅ Cognito lookup (authed admin; never the anon path) |
+> | `GET /auth/session` | ✅ composed `User.Entity` for the caller |
+> | `DELETE /auth/session` | ✅ Cognito global sign-out |
+> | `GET /auth/user/meta` · `POST` · `DELETE /auth/user/meta/{id}` | ✅ DynamoDB `user_meta` (caller-scoped) |
+> | `POST /auth/password/forgot` · `POST /auth/password/reset` | ✅ Cognito ForgotPassword / ConfirmForgotPassword |
+> | `POST /auth/session/refresh` | ✅ Cognito `REFRESH_TOKEN_AUTH` → new access token |
+> | `POST /auth/session/switch` | 🟡 stub — echoes target (needs account-owned max-role check) |
+> | `GET /auth/sessions` · `DELETE /auth/sessions/{id}` · `POST /auth/sessions/revoke-all` | 🟡 stub (revoke-all = global sign-out); needs the `sessions` table |
+> | `GET /auth/accounts` | 🟡 stub — needs `role_grants` resolution |
+> | `POST /auth/passkey/register/options` · `…/register/verify` | ✅ WebAuthn enrolment (@simplewebauthn) → `passkeys` table |
+> | `POST /auth/login/passkey/options` · `…/passkey/verify` | ✅ WebAuthn sign-in → verify assertion → **auth-issued session** (`Session`); wired into the web Login |
+> | `GET /auth/passkeys` · `DELETE /auth/passkeys/{credentialId}` | ✅ list / remove the caller's passkeys (manage UI: "Add a passkey" on the dashboard) |
+> | SSO/SCIM · MFA (TOTP/SMS) · cross-account grants · API keys · impersonation · risk/IP · audit · recertification · privacy · internal S2S | ▫ planned (rows below) |
+>
+> **Passkeys (WebAuthn).** Real `@simplewebauthn/server` ceremonies, credentials + challenges in the
+> `passkeys` / `webauthn_challenges` tables; the web Login has a **"Sign in with a passkey"** button
+> (`@simplewebauthn/browser`, discoverable credential) → on success it mints an **auth-issued session
+> JWT** (`Session`, the seam for the spec's session model) and routes to the dashboard. Not Cognito-native
+> (LocalStack can't run Cognito's WebAuthn APIs); set `WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGIN` per environment
+> (defaults: `localhost` / `http://localhost:5173`). Enrolment endpoints are authed (a settings UI is TODO).
+>
+> **Caveats:** token signature is **not** verified locally (the authorizer does that in prod); role
+> enforcement gates on the JWT role claim (until the pre-token-generation Lambda stamps it, callers
+> default to `USER`, so admin endpoints need a token carrying an account/app role); `/auth/verify/phone`
+> is the *registration* phone-verify (the design row below marks it `USER` — reconcile when implemented);
+> the **web client** still calls local stubs, not these routes. Requires a `cdklocal deploy` (pool +
+> tables + a user-pool app client) before anything returns live data.
+
 ### Sign-in — staged pipeline (auth-2, auth-3, auth-4)
 | Method | URI | Purpose | Access | Req |
 |---|---|---|---|---|

@@ -10,6 +10,7 @@ import CodeMirror, { EditorView, Extension }    from '@uiw/react-codemirror';
 import { javascript }                           from '@codemirror/lang-javascript';
 import { json, jsonParseLinter }                from '@codemirror/lang-json';
 import { html }                                 from '@codemirror/lang-html';
+import { css }                                  from '@codemirror/lang-css';
 import { linter, lintGutter }                   from '@codemirror/lint';
 
 // Theme imports
@@ -59,7 +60,7 @@ export function CodeEditorInput( props : CodeEditorInput.Props ) : JSX.Element
     {
         if (props.format === 'json' && props.jsonSchema)
         {
-            const ajv : Ajv = new Ajv({ allErrors: true });
+            const ajv : Ajv = new Ajv({ allErrors: true, allowUnionTypes: true });
             addFormats(ajv); // Add format validators (email, uri, date-time, etc.)
             const validate = ajv.compile( props.jsonSchema );
             
@@ -204,7 +205,7 @@ export function CodeEditorInput( props : CodeEditorInput.Props ) : JSX.Element
     ///////////////////////////////////////////////////////////////////////////////////////////////////
     function formatChanged() : void
     {
-        const baseExtensions: Extension[] = [];
+        const baseExtensions: Array<Extension> = [];
         const schemaLinter : Extension | null = createSchemaLinter();
         
         // Add font size extension
@@ -225,6 +226,10 @@ export function CodeEditorInput( props : CodeEditorInput.Props ) : JSX.Element
 
             case "html":
                 baseExtensions.push(html());
+                break;
+
+            case "css":
+                baseExtensions.push(css());
                 break;
         }
         
@@ -273,6 +278,9 @@ export function CodeEditorInput( props : CodeEditorInput.Props ) : JSX.Element
                 borderRadius: 1,
                 px: 1, pt:1.5, pb: 1,
                 backgroundColor: 'inherit',
+                // scroll still works (wheel/trackpad) — just hide the vertical scrollbar chrome
+                "& .cm-scroller": { scrollbarWidth: "none" },
+                "& .cm-scroller::-webkit-scrollbar": { width: 0, height: 0, display: "none" },
                 }}
             >
                 <CodeMirror
@@ -302,7 +310,7 @@ export namespace CodeEditorInput
         width?      : number | string;
         fontSize?   : number;        // Font size in pixels (default: 14)
         // other choices that can be added: cpp, java, lezer, markdown, php, python, rust, sql, xml, less, sass, csharp
-        format      : "javascript" | "json" | "html";
+        format      : "javascript" | "json" | "html" | "css";
         jsonSchema? : object; // JSON schema for validation (only applies when format is "json")
         onChange?   : ( ids: string ) => void;
     }

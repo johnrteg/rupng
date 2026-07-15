@@ -4,6 +4,8 @@ import { JSX } from "react";
 
 //
 import IconButton from '@mui/material/IconButton';
+import type { IconButtonProps } from '@mui/material/IconButton';
+import type { SxProps, Theme } from '@mui/material/styles';
 import Tooltip from '@mui/material/Tooltip';
 
 //
@@ -34,6 +36,9 @@ export function ButtonIcon( props: ButtonIcon.Props ) : JSX.Element
                     <IconButton key={ props.id }
                                 disabled={ disabled }
                                 size={ props.size != undefined ? props.size : "medium" }
+                                color={ props.color }
+                                edge={ props.edge }
+                                sx={ props.sx }
                                 onClick={ onClick } >
                         { props.icon }
                     </IconButton>
@@ -52,6 +57,9 @@ export namespace ButtonIcon
         label       : string;
         disabled?   : boolean;
         size?       : "small" | "medium" | "large";
+        color?      : IconButtonProps[ "color" ];   // MUI icon-button color (primary/error/inherit/…)
+        edge?       : IconButtonProps[ "edge" ];     // start/end/false — for toolbar alignment
+        sx?         : SxProps<Theme>;                // positioning/spacing overrides at the call site
         onClick     : () => void;
     }
 }

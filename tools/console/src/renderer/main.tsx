@@ -6,6 +6,9 @@ import { ThemeProvider } from "@mui/material/styles";
 import { theme } from "./theme";
 import { App } from "./App";
 
+//
+// Renderer entry point: mount the React tree into #root, wrapped in the shared MUI theme + CssBaseline.
+//
 createRoot( document.getElementById( "root" )! ).render(
     <StrictMode>
         <ThemeProvider theme={theme}>

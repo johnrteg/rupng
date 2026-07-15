@@ -19,24 +19,26 @@ export const ACTIVE_CONFIG = ".active";
 export function activeConfigExists() : boolean { return existsSync( configPath( ACTIVE_CONFIG ) ); }
 
 /** The available config names (file basenames), e.g. ["local","development","staging","production"]. */
-export function listProxyConfigs() : string[]
+export function listProxyConfigs() : Array<string>
 {
     const dir : string = configDir();
     if ( !existsSync( dir ) ) return [];
     return readdirSync( dir )
-        .filter( ( f ) => f.endsWith( ".json" ) )
-        .map( ( f ) => f.slice( 0, -5 ) )
+        .filter( ( fileName : string ) => fileName.endsWith( ".json" ) )
+        .map( ( fileName : string ) => fileName.slice( 0, -5 ) )   // strip the ".json" extension → bare config name
         .sort();
 }
 
+/** Read + parse a named config file; returns either the parsed config or a human-readable error. */
 export function readProxyConfig( name : string ) : { config? : ProxyConfig; error? : string }
 {
-    const p : string = configPath( name );
-    if ( !existsSync( p ) ) return { error: `no config "${name}.json"` };
-    try { return { config: JSON.parse( readFileSync( p, "utf8" ) ) as ProxyConfig }; }
+    const path : string = configPath( name );
+    if ( !existsSync( path ) ) return { error: `no config "${name}.json"` };
+    try { return { config: JSON.parse( readFileSync( path, "utf8" ) ) as ProxyConfig }; }
     catch ( err ) { return { error: ( err as Error ).message }; }
 }
 
+/** Serialize + write a named config file (4-space JSON, trailing newline). */
 export function writeProxyConfig( name : string, config : ProxyConfig ) : { ok : boolean; error? : string }
 {
     try

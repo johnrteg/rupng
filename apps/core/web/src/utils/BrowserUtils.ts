@@ -109,6 +109,22 @@ export default class BrowserUtils
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Trigger a browser "Save as…" download of an in-memory blob under a filename — wraps the object-URL +
+    // temporary anchor dance (and revokes the URL after) so callers (e.g. exporting a Studio canvas) don't
+    // repeat it. Used for bytes we hold client-side, not for server URLs (use `open` for those).
+    public static downloadBlob( blob : Blob, filename : string ) : void
+    {
+        const url : string = URL.createObjectURL( blob );
+        const anchor : HTMLAnchorElement = document.createElement( "a" );
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild( anchor );
+        anchor.click();
+        document.body.removeChild( anchor );
+        URL.revokeObjectURL( url );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
     public static mailto( email : string, subject? : string ): void
     {
         let link : string = StringUtils.format( "mailto:{0}", email );

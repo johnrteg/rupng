@@ -17,7 +17,7 @@ import { ArrayUtils, StringUtils, ValueUtils } from '@repo/common';
 export function SliderInput( props : SliderInput.Props ) : JSX.Element
 {
     // state
-    const [value,setValue]            = React.useState< number | number[] >( props.value );
+    const [value,setValue]            = React.useState< number | Array<number> >( props.value );
     const [label,setLabel]            = React.useState< string >( updateLabel( props.value ) );
 
     //
@@ -31,7 +31,7 @@ export function SliderInput( props : SliderInput.Props ) : JSX.Element
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////
-    function onChange( event: Event, newValue: number | number[] ) : void
+    function onChange( event: Event, newValue: number | Array<number> ) : void
     {
         //evt.preventDefault();
         setValue( newValue );
@@ -40,11 +40,11 @@ export function SliderInput( props : SliderInput.Props ) : JSX.Element
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////
-    function updateLabel( value : number | number[] ) : string
+    function updateLabel( value : number | Array<number> ) : string
     {
         if( ArrayUtils.isValid( value ) )
         {
-            return StringUtils.format( "{0}: {1}{2}", props.label, ( value as number[] ).join("-"), ValueUtils.notNull( props.isPercent ) && props.isPercent ?  "%" : "" );
+            return StringUtils.format( "{0}: {1}{2}", props.label, ( value as Array<number> ).join("-"), ValueUtils.notNull( props.isPercent ) && props.isPercent ?  "%" : "" );
         }
         else
         {
@@ -53,7 +53,7 @@ export function SliderInput( props : SliderInput.Props ) : JSX.Element
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////
-    function onChangeCommitted( event: React.SyntheticEvent | Event, newValue: number | number[] ) : void
+    function onChangeCommitted( event: React.SyntheticEvent | Event, newValue: number | Array<number> ) : void
     {
         if( props.onChangeCommitted )props.onChangeCommitted( newValue );
     }
@@ -83,15 +83,15 @@ export namespace SliderInput
         id                : string;
         label             : string;
         labelPlacement?   : "start" | "end" | "top" | "bottom";
-        value             : number | number[];
+        value             : number | Array<number>;
         disabled?         : boolean;
         width?            : number | string;
         min?              : number;
         max?              : number;
         step?             : number;
         isPercent?        : boolean;
-        onChange?         : ( new_value : number | number[] ) => void;
-        onChangeCommitted? : ( new_value : number | number[] ) => void;
+        onChange?         : ( new_value : number | Array<number> ) => void;
+        onChangeCommitted? : ( new_value : number | Array<number> ) => void;
     }
 }
 

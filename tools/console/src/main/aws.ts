@@ -6,10 +6,16 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { ApiGatewayV2Client } from "@aws-sdk/client-apigatewayv2";
 import { ECSClient } from "@aws-sdk/client-ecs";
 import { ElasticLoadBalancingV2Client } from "@aws-sdk/client-elastic-load-balancing-v2";
+import { AppConfigClient } from "@aws-sdk/client-appconfig";
+import { CognitoIdentityProviderClient } from "@aws-sdk/client-cognito-identity-provider";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { fromIni } from "@aws-sdk/credential-providers";
 import { loadSharedConfigFiles } from "@aws-sdk/shared-ini-file-loader";
 
 import type { Target, TargetInfo } from "../shared/types";
+import { TargetKind } from "../shared/types";
 
 //
 // AWS access for the Monitor/Jobs surfaces. The SDK clients point at EITHER LocalStack (local,
@@ -24,7 +30,7 @@ const REGIONS = [
     "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ca-central-1"
 ];
 
-let target : Target = { kind: "localstack" };
+let target : Target = { kind: TargetKind.LOCALSTACK };
 
 // cached clients — cleared whenever the target changes
 let _cfn : CloudFormationClient | undefined;
@@ -35,16 +41,22 @@ let _s3 : S3Client | undefined;
 let _apigw : ApiGatewayV2Client | undefined;
 let _ecs : ECSClient | undefined;
 let _elbv2 : ElasticLoadBalancingV2Client | undefined;
+let _appconfig : AppConfigClient | undefined;
+let _cognito : CognitoIdentityProviderClient | undefined;
+let _ddb : DynamoDBClient | undefined;
+let _ddbDoc : DynamoDBDocumentClient | undefined;
+let _secrets : SecretsManagerClient | undefined;
 
+/** Drop every cached SDK client so the next accessor rebuilds it against the current target. */
 function resetClients() : void
 {
-    _cfn = _logs = _cw = _lambda = _s3 = _apigw = _ecs = _elbv2 = undefined;
+    _cfn = _logs = _cw = _lambda = _s3 = _apigw = _ecs = _elbv2 = _appconfig = _cognito = _ddb = _ddbDoc = _secrets = undefined;
 }
 
 /** SDK config for the active target. LocalStack: edge endpoint + test creds. AWS: profile + region. */
 function config() : object
 {
-    if ( target.kind === "aws" )
+    if ( target.kind === TargetKind.AWS )
     {
         return {
             region      : target.region ?? "us-east-1",
@@ -60,20 +72,23 @@ function config() : object
     };
 }
 
+/** The currently selected target (LocalStack or a named AWS profile/region). */
 export function getTarget() : Target { return target; }
 
-export function isReadOnly() : boolean { return target.kind === "aws"; }
+/** A real AWS account is treated as read-only; LocalStack allows mutating calls. */
+export function isReadOnly() : boolean { return target.kind === TargetKind.AWS; }
 
-export function setTarget( t : Target ) : void
+/** Switch the active target and invalidate the cached clients so they rebuild for it. */
+export function setTarget( newTarget : Target ) : void
 {
-    target = t.kind === "aws"
-        ? { kind: "aws", profile: t.profile, region: t.region ?? "us-east-1" }
-        : { kind: "localstack" };
+    target = newTarget.kind === TargetKind.AWS
+        ? { kind: TargetKind.AWS, profile: newTarget.profile, region: newTarget.region ?? "us-east-1" }
+        : { kind: TargetKind.LOCALSTACK };
     resetClients();
 }
 
 /** Profiles found in ~/.aws (config + credentials), for the selector. */
-export async function listProfiles() : Promise<string[]>
+export async function listProfiles() : Promise<Array<string>>
 {
     try
     {
@@ -84,6 +99,7 @@ export async function listProfiles() : Promise<string[]>
     catch { return []; }
 }
 
+/** Everything the target selector UI needs: current target, read-only flag, profiles, regions. */
 export async function targetInfo() : Promise<TargetInfo>
 {
     return { target, readOnly: isReadOnly(), profiles: await listProfiles(), regions: REGIONS };
@@ -94,21 +110,28 @@ export function cfnClient() : CloudFormationClient { return _cfn ??= new CloudFo
 export function logsClient() : CloudWatchLogsClient { return _logs ??= new CloudWatchLogsClient( config() ); }
 export function cwClient() : CloudWatchClient { return _cw ??= new CloudWatchClient( config() ); }
 export function lambdaClient() : LambdaClient { return _lambda ??= new LambdaClient( config() ); }
-export function s3Client() : S3Client { return _s3 ??= new S3Client( { ...config(), forcePathStyle: target.kind === "localstack" } ); }
+export function s3Client() : S3Client { return _s3 ??= new S3Client( { ...config(), forcePathStyle: target.kind === TargetKind.LOCALSTACK } ); }
 export function apigwClient() : ApiGatewayV2Client { return _apigw ??= new ApiGatewayV2Client( config() ); }
 export function ecsClient() : ECSClient { return _ecs ??= new ECSClient( config() ); }
 export function elbv2Client() : ElasticLoadBalancingV2Client { return _elbv2 ??= new ElasticLoadBalancingV2Client( config() ); }
+export function appConfigClient() : AppConfigClient { return _appconfig ??= new AppConfigClient( config() ); }
+export function cognitoClient() : CognitoIdentityProviderClient { return _cognito ??= new CognitoIdentityProviderClient( config() ); }
+export function secretsClient() : SecretsManagerClient { return _secrets ??= new SecretsManagerClient( config() ); }
+export function dynamoClient() : DynamoDBClient { return _ddb ??= new DynamoDBClient( config() ); }
+export function dynamoDocClient() : DynamoDBDocumentClient { return _ddbDoc ??= DynamoDBDocumentClient.from( dynamoClient(), { marshallOptions: { removeUndefinedValues: true } } ); }
 
 /** Turn an SDK error into a short, friendly message (LocalStack-down / creds are the common ones). */
 export function awsErr( err : unknown ) : string
 {
-    const e : { name? : string; message? : string } = err as { name? : string; message? : string };
-    const msg : string = e?.message ?? String( err );
-    if ( /ECONNREFUSED|fetch failed|ENOTFOUND|EHOSTUNREACH|socket hang up/i.test( msg ) )
-        return target.kind === "localstack"
+    const sdkError : { name? : string; message? : string } = err as { name? : string; message? : string };
+    const message : string = sdkError?.message ?? String( err );
+    // connection-level failures — most often LocalStack not running, or a network/region issue
+    if ( /ECONNREFUSED|fetch failed|ENOTFOUND|EHOSTUNREACH|socket hang up/i.test( message ) )
+        return target.kind === TargetKind.LOCALSTACK
             ? "LocalStack unreachable on http://localhost:4566 — is it up? (start it from the header)"
             : "AWS endpoint unreachable — check your network / region.";
-    if ( /credential|token|expired|AccessDenied|UnrecognizedClient|InvalidClientTokenId/i.test( msg ) )
-        return `AWS credentials problem for this profile: ${msg}`;
-    return e?.name ? `${e.name}: ${msg}` : msg;
+    // auth-level failures — bad / expired / missing credentials for the active profile
+    if ( /credential|token|expired|AccessDenied|UnrecognizedClient|InvalidClientTokenId/i.test( message ) )
+        return `AWS credentials problem for this profile: ${message}`;
+    return sdkError?.name ? `${sdkError.name}: ${message}` : message;
 }

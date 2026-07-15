@@ -24,10 +24,11 @@ import { MONO } from "../theme";
 // manual invoke is the test path). Deploy reuses the service's cdklocal deploy (deploys all its
 // Lambdas) via the pipeline's Deploy stage.
 //
+/** Lists a service's declared Lambda jobs, shows which are deployed to LocalStack, and invokes one with a JSON payload. */
 export function JobsPanel( { service } : { service : string } )
 {
-    const [ jobs, setJobs ]         = useState<JobInfo[]>( [] );
-    const [ fns, setFns ]           = useState<LambdaFn[]>( [] );
+    const [ jobs, setJobs ]         = useState<Array<JobInfo>>( [] );
+    const [ fns, setFns ]           = useState<Array<LambdaFn>>( [] );
     const [ fnError, setFnError ]   = useState<string | undefined>();
     const [ selectedFn, setFn ]     = useState<string>( "" );
     const [ payload, setPayload ]   = useState<string>( "{}" );
@@ -44,6 +45,7 @@ export function JobsPanel( { service } : { service : string } )
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [ service ] );
 
+    /** Re-query the Lambdas deployed to LocalStack for this service; default the selection to the first one. */
     const refreshDeployed = async () : Promise<void> =>
     {
         setBusy( "list" );
@@ -52,11 +54,12 @@ export function JobsPanel( { service } : { service : string } )
             const { functions, error } = await api.lambdaList( service );
             setFns( functions );
             setFnError( error );
-            if ( functions.length > 0 ) setFn( ( cur ) => cur || functions[ 0 ].name );
+            if ( functions.length > 0 ) setFn( ( current ) => current || functions[ 0 ].name );
         }
         finally { setBusy( null ); }
     };
 
+    /** Invoke the selected Lambda with the current JSON payload and capture the result. */
     const invoke = async () : Promise<void> =>
     {
         if ( !selectedFn ) return;
@@ -89,11 +92,12 @@ export function JobsPanel( { service } : { service : string } )
             </Box>
 
             {/* declared jobs */}
-            {jobs.map( ( j ) =>
+            {jobs.map( ( job ) =>
             {
-                const deployed : LambdaFn | undefined = fns.find( ( f ) => f.name.toLowerCase().includes( j.name.toLowerCase() ) );
+                // a declared job counts as deployed if any LocalStack function name contains its name
+                const deployed : LambdaFn | undefined = fns.find( ( fn ) => fn.name.toLowerCase().includes( job.name.toLowerCase() ) );
                 return (
-                    <Box key={j.name} sx={{ display: "flex", alignItems: "center", gap: 1, py: 0.5 }}>
+                    <Box key={job.name} sx={{ display: "flex", alignItems: "center", gap: 1, py: 0.5 }}>
                         <Chip
                             label={deployed ? "deployed" : "not deployed"}
                             color={deployed ? "success" : "default"}
@@ -101,8 +105,8 @@ export function JobsPanel( { service } : { service : string } )
                             sx={{ minWidth: 96 }}
                         />
                         <Box sx={{ minWidth: 0 }}>
-                            <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>{j.name}</Typography>
-                            <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: MONO }} noWrap>{j.handler}</Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>{job.name}</Typography>
+                            <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: MONO }} noWrap>{job.handler}</Typography>
                         </Box>
                     </Box>
                 );
@@ -124,7 +128,7 @@ export function JobsPanel( { service } : { service : string } )
                     : (
                         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
                             <Select size="small" value={selectedFn} onChange={( e ) => setFn( e.target.value )} sx={{ fontFamily: MONO, fontSize: 12 }}>
-                                {fns.map( ( f ) => <MenuItem key={f.name} value={f.name} sx={{ fontFamily: MONO, fontSize: 12 }}>{f.name}</MenuItem> )}
+                                {fns.map( ( fn ) => <MenuItem key={fn.name} value={fn.name} sx={{ fontFamily: MONO, fontSize: 12 }}>{fn.name}</MenuItem> )}
                             </Select>
                             <TextField
                                 size="small"

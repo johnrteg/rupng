@@ -6,6 +6,7 @@ import type {
     DiagApi, DiagFinding, DiagIntegration, DiagLoadBalancer, DiagService, DiagTarget,
     DiagTargetGroup, DiagTask, DiagVpcLink, VpcLinkDiagnosis
 } from "../shared/types";
+import { TargetKind } from "../shared/types";
 import { apigwClient, awsErr, ecsClient, elbv2Client, getTarget } from "./aws";
 
 //
@@ -18,14 +19,15 @@ import { apigwClient, awsErr, ecsClient, elbv2Client, getTarget } from "./aws";
 // Each section is independently guarded so one failing call still yields a useful partial report.
 //
 
+/** Walk the HTTP API → VpcLink → ALB → ECS chain (read-only) and return state + plain-language findings. */
 export async function diagnoseVpcLink() : Promise<VpcLinkDiagnosis>
 {
-    const targetKind : "localstack" | "aws" = getTarget().kind;
-    const services : DiagService[] = [];
-    const targetGroups : DiagTargetGroup[] = [];
-    const loadBalancers : DiagLoadBalancer[] = [];
-    const vpcLinks : DiagVpcLink[] = [];
-    const apis : DiagApi[] = [];
+    const targetKind : TargetKind = getTarget().kind;
+    const services : Array<DiagService> = [];
+    const targetGroups : Array<DiagTargetGroup> = [];
+    const loadBalancers : Array<DiagLoadBalancer> = [];
+    const vpcLinks : Array<DiagVpcLink> = [];
+    const apis : Array<DiagApi> = [];
     let error : string | undefined;
 
     // ── ECS: clusters → services → tasks (running count + per-task status/IP) ──────────────────────
@@ -38,26 +40,27 @@ export async function diagnoseVpcLink() : Promise<VpcLinkDiagnosis>
             const { serviceArns = [] } = await ecs.send( new ListServicesCommand( { cluster, maxResults: 100 } ) );
             if ( serviceArns.length === 0 ) continue;
 
-            const { services: descr = [] } = await ecs.send( new DescribeServicesCommand( { cluster, services: serviceArns } ) );
-            for ( const svc of descr )
+            const { services: describedServices = [] } = await ecs.send( new DescribeServicesCommand( { cluster, services: serviceArns } ) );
+            for ( const service of describedServices )
             {
-                const serviceName : string = svc.serviceName ?? "?";
-                const tasks : DiagTask[] = [];
+                const serviceName : string = service.serviceName ?? "?";
+                const tasks : Array<DiagTask> = [];
                 try
                 {
                     const { taskArns = [] } = await ecs.send( new ListTasksCommand( { cluster, serviceName } ) );
                     if ( taskArns.length > 0 )
                     {
-                        const { tasks: td = [] } = await ecs.send( new DescribeTasksCommand( { cluster, tasks: taskArns } ) );
-                        for ( const t of td )
+                        const { tasks: describedTasks = [] } = await ecs.send( new DescribeTasksCommand( { cluster, tasks: taskArns } ) );
+                        for ( const task of describedTasks )
                         {
-                            const ip : string | undefined = t.attachments
-                                ?.flatMap( ( a ) => a.details ?? [] )
-                                .find( ( d ) => d.name === "privateIPv4Address" )?.value;
+                            // the task's private IP lives in an ENI attachment detail
+                            const ip : string | undefined = task.attachments
+                                ?.flatMap( ( attachment ) => attachment.details ?? [] )
+                                .find( ( detail ) => detail.name === "privateIPv4Address" )?.value;
                             tasks.push( {
-                                taskArn    : shortArn( t.taskArn ),
-                                lastStatus : t.lastStatus ?? "?",
-                                healthStatus : t.healthStatus ?? "UNKNOWN",
+                                taskArn    : shortArn( task.taskArn ),
+                                lastStatus : task.lastStatus ?? "?",
+                                healthStatus : task.healthStatus ?? "UNKNOWN",
                                 ip
                             } );
                         }
@@ -68,8 +71,8 @@ export async function diagnoseVpcLink() : Promise<VpcLinkDiagnosis>
                 services.push( {
                     cluster  : shortArn( cluster ),
                     service  : serviceName,
-                    desired  : svc.desiredCount ?? 0,
-                    running  : svc.runningCount ?? 0,
+                    desired  : service.desiredCount ?? 0,
+                    running  : service.runningCount ?? 0,
                     tasks
                 } );
             }
@@ -82,42 +85,43 @@ export async function diagnoseVpcLink() : Promise<VpcLinkDiagnosis>
     {
         const elb = elbv2Client();
         const { LoadBalancers = [] } = await elb.send( new DescribeLoadBalancersCommand( {} ) );
-        for ( const lb of LoadBalancers )
+        for ( const loadBalancer of LoadBalancers )
         {
             loadBalancers.push( {
-                name    : lb.LoadBalancerName ?? "?",
-                type    : lb.Type,
-                scheme  : lb.Scheme,
-                state   : lb.State?.Code,
-                dnsName : lb.DNSName
+                name    : loadBalancer.LoadBalancerName ?? "?",
+                type    : loadBalancer.Type,
+                scheme  : loadBalancer.Scheme,
+                state   : loadBalancer.State?.Code,
+                dnsName : loadBalancer.DNSName
             } );
         }
 
         const { TargetGroups = [] } = await elb.send( new DescribeTargetGroupsCommand( {} ) );
-        for ( const tg of TargetGroups )
+        for ( const targetGroup of TargetGroups )
         {
-            const targets : DiagTarget[] = [];
+            const targets : Array<DiagTarget> = [];
             try
             {
+                // target health is the crux check — whether tasks are actually registered + healthy
                 const { TargetHealthDescriptions = [] } = await elb.send(
-                    new DescribeTargetHealthCommand( { TargetGroupArn: tg.TargetGroupArn } ) );
-                for ( const th of TargetHealthDescriptions )
+                    new DescribeTargetHealthCommand( { TargetGroupArn: targetGroup.TargetGroupArn } ) );
+                for ( const targetHealth of TargetHealthDescriptions )
                 {
                     targets.push( {
-                        id     : th.Target?.Id ?? "?",
-                        port   : th.Target?.Port,
-                        state  : th.TargetHealth?.State ?? "unknown",
-                        reason : th.TargetHealth?.Reason
+                        id     : targetHealth.Target?.Id ?? "?",
+                        port   : targetHealth.Target?.Port,
+                        state  : targetHealth.TargetHealth?.State ?? "unknown",
+                        reason : targetHealth.TargetHealth?.Reason
                     } );
                 }
             }
             catch ( err ) { error = error ?? `TargetHealth: ${awsErr( err )}`; }
 
             targetGroups.push( {
-                name       : tg.TargetGroupName ?? "?",
-                protocol   : tg.Protocol,
-                port       : tg.Port,
-                targetType : tg.TargetType,
+                name       : targetGroup.TargetGroupName ?? "?",
+                protocol   : targetGroup.Protocol,
+                port       : targetGroup.Port,
+                targetType : targetGroup.TargetType,
                 targets
             } );
         }
@@ -129,41 +133,41 @@ export async function diagnoseVpcLink() : Promise<VpcLinkDiagnosis>
     {
         const gw = apigwClient();
         const { Items: apiItems = [] } = await gw.send( new GetApisCommand( {} ) );
-        for ( const a of apiItems )
+        for ( const api of apiItems )
         {
-            const apiId : string = a.ApiId ?? "?";
-            const routes : string[] = [];
-            const integrations : DiagIntegration[] = [];
+            const apiId : string = api.ApiId ?? "?";
+            const routes : Array<string> = [];
+            const integrations : Array<DiagIntegration> = [];
             try
             {
                 const { Items: routeItems = [] } = await gw.send( new GetRoutesCommand( { ApiId: apiId } ) );
-                for ( const r of routeItems ) if ( r.RouteKey ) routes.push( r.RouteKey );
+                for ( const route of routeItems ) if ( route.RouteKey ) routes.push( route.RouteKey );
             }
             catch { /* best-effort */ }
             try
             {
-                const { Items: intItems = [] } = await gw.send( new GetIntegrationsCommand( { ApiId: apiId } ) );
-                for ( const i of intItems )
+                const { Items: integrationItems = [] } = await gw.send( new GetIntegrationsCommand( { ApiId: apiId } ) );
+                for ( const integration of integrationItems )
                     integrations.push( {
-                        id             : i.IntegrationId ?? "?",
-                        connectionType : i.ConnectionType,
-                        connectionId   : i.ConnectionId,
-                        uri            : i.IntegrationUri
+                        id             : integration.IntegrationId ?? "?",
+                        connectionType : integration.ConnectionType,
+                        connectionId   : integration.ConnectionId,
+                        uri            : integration.IntegrationUri
                     } );
             }
             catch { /* best-effort */ }
 
             // invoke base URL: LocalStack uses the execute-api subdomain on the edge port; AWS reports it
-            const endpoint : string = targetKind === "localstack"
+            const endpoint : string = targetKind === TargetKind.LOCALSTACK
                 ? `http://${apiId}.execute-api.localhost.localstack.cloud:4566`
-                : ( a.ApiEndpoint ?? "" );
+                : ( api.ApiEndpoint ?? "" );
 
-            apis.push( { apiId, name: a.Name, protocol: a.ProtocolType, endpoint, routes, integrations } );
+            apis.push( { apiId, name: api.Name, protocol: api.ProtocolType, endpoint, routes, integrations } );
         }
 
         const { Items: linkItems = [] } = await gw.send( new GetVpcLinksCommand( {} ) );
-        for ( const l of linkItems )
-            vpcLinks.push( { id: l.VpcLinkId ?? "?", name: l.Name, status: l.VpcLinkStatus } );
+        for ( const link of linkItems )
+            vpcLinks.push( { id: link.VpcLinkId ?? "?", name: link.Name, status: link.VpcLinkStatus } );
     }
     catch ( err ) { error = error ?? `API Gateway: ${awsErr( err )}`; }
 
@@ -178,32 +182,32 @@ export async function diagnoseVpcLink() : Promise<VpcLinkDiagnosis>
 
 /** Turn the raw resource state into ordered, plain-language findings (the report's verdict). */
 function synthesize(
-    d : Pick<VpcLinkDiagnosis, "targetKind" | "services" | "targetGroups" | "loadBalancers" | "vpcLinks" | "apis"> )
-    : DiagFinding[]
+    diagnosis : Pick<VpcLinkDiagnosis, "targetKind" | "services" | "targetGroups" | "loadBalancers" | "vpcLinks" | "apis"> )
+    : Array<DiagFinding>
 {
-    const findings : DiagFinding[] = [];
+    const findings : Array<DiagFinding> = [];
 
-    const runningTasks : number = d.services.reduce( ( n, s ) => n + s.running, 0 );
-    const registered : DiagTarget[] = d.targetGroups.flatMap( ( tg ) => tg.targets );
-    const healthy : number = registered.filter( ( t ) => /healthy/i.test( t.state ) ).length;
+    const runningTasks : number = diagnosis.services.reduce( ( total, service ) => total + service.running, 0 );
+    const registered : Array<DiagTarget> = diagnosis.targetGroups.flatMap( ( targetGroup ) => targetGroup.targets );
+    const healthy : number = registered.filter( ( target ) => /healthy/i.test( target.state ) ).length;
 
     // ECS layer
-    if ( d.services.length === 0 )
+    if ( diagnosis.services.length === 0 )
         findings.push( { level: "warn", title: "No ECS services found", detail: "Nothing is deployed to ECS for the active target, so there's no backend to reach." } );
     else if ( runningTasks === 0 )
-        findings.push( { level: "error", title: "ECS services have 0 running tasks", detail: `${d.services.length} service(s) found, but none have a running task. The app can't be reached until a task is Running.` } );
+        findings.push( { level: "error", title: "ECS services have 0 running tasks", detail: `${diagnosis.services.length} service(s) found, but none have a running task. The app can't be reached until a task is Running.` } );
     else
-        findings.push( { level: "ok", title: `${runningTasks} ECS task(s) running`, detail: `Across ${d.services.length} service(s). The application layer is up.` } );
+        findings.push( { level: "ok", title: `${runningTasks} ECS task(s) running`, detail: `Across ${diagnosis.services.length} service(s). The application layer is up.` } );
 
     // ALB target registration — the crux of the gateway → ALB → ECS path
-    if ( d.targetGroups.length === 0 )
+    if ( diagnosis.targetGroups.length === 0 )
         findings.push( { level: "warn", title: "No ALB target groups found", detail: "Without a target group the ALB has nothing to forward to. Expected one per ECS service behind the ALB." } );
     else if ( runningTasks > 0 && registered.length === 0 )
         findings.push( {
             level  : "error",
             title  : "ECS tasks are running but NOT registered in any ALB target group",
             detail : "This breaks the gateway → VpcLink → ALB → ECS path: the ALB has no backend to forward to. " +
-                     ( d.targetKind === "localstack"
+                     ( diagnosis.targetKind === TargetKind.LOCALSTACK
                          ? "On LocalStack this is the common data-path gap — task→target-group registration isn't exercised. This is strong evidence to share with support."
                          : "On real AWS, check the service's load-balancer config, target group, and that the task is in a subnet the ALB can reach." )
         } );
@@ -211,23 +215,23 @@ function synthesize(
         findings.push( {
             level  : "error",
             title  : "Targets are registered but none are healthy",
-            detail : `Target states: ${[ ...new Set( registered.map( ( t ) => t.state ) ) ].join( ", " )}. The ALB won't forward to unhealthy targets, so the gateway gets a 5xx.`
+            detail : `Target states: ${[ ...new Set( registered.map( ( target ) => target.state ) ) ].join( ", " )}. The ALB won't forward to unhealthy targets, so the gateway gets a 5xx.`
         } );
     else if ( healthy > 0 )
         findings.push( { level: "ok", title: `${healthy} healthy target(s) registered in the ALB`, detail: "The ALB has live backends — the ALB → ECS hop should work." } );
 
     // VpcLink
-    const badLinks : DiagVpcLink[] = d.vpcLinks.filter( ( l ) => l.status && !/AVAILABLE/i.test( l.status ) );
-    if ( d.vpcLinks.length === 0 )
+    const badLinks : Array<DiagVpcLink> = diagnosis.vpcLinks.filter( ( link ) => link.status && !/AVAILABLE/i.test( link.status ) );
+    if ( diagnosis.vpcLinks.length === 0 )
         findings.push( { level: "warn", title: "No VpcLink found", detail: "The HTTP API needs a VpcLink to reach a private (internal) ALB." } );
     else if ( badLinks.length > 0 )
-        findings.push( { level: "warn", title: "VpcLink not AVAILABLE", detail: badLinks.map( ( l ) => `${l.id}: ${l.status}` ).join( ", " ) } );
+        findings.push( { level: "warn", title: "VpcLink not AVAILABLE", detail: badLinks.map( ( link ) => `${link.id}: ${link.status}` ).join( ", " ) } );
     else
-        findings.push( { level: "ok", title: `${d.vpcLinks.length} VpcLink(s) AVAILABLE`, detail: "" } );
+        findings.push( { level: "ok", title: `${diagnosis.vpcLinks.length} VpcLink(s) AVAILABLE`, detail: "" } );
 
     // API Gateway private integration
-    const privInts : DiagIntegration[] = d.apis.flatMap( ( a ) => a.integrations ).filter( ( i ) => /VPC_LINK/i.test( i.connectionType ?? "" ) );
-    if ( d.apis.length === 0 )
+    const privInts : Array<DiagIntegration> = diagnosis.apis.flatMap( ( api ) => api.integrations ).filter( ( integration ) => /VPC_LINK/i.test( integration.connectionType ?? "" ) );
+    if ( diagnosis.apis.length === 0 )
         findings.push( { level: "warn", title: "No HTTP APIs found", detail: "No API Gateway API for the active target." } );
     else if ( privInts.length === 0 )
         findings.push( { level: "warn", title: "No VPC_LINK integration on any API", detail: "Expected an integration with connectionType VPC_LINK pointing at the internal ALB listener." } );
@@ -235,7 +239,7 @@ function synthesize(
         findings.push( { level: "ok", title: `${privInts.length} VPC_LINK integration(s) configured`, detail: "API routes are wired to the ALB via the VpcLink." } );
 
     // LocalStack caveat — the two checks support often suggests don't apply here
-    if ( d.targetKind === "localstack" )
+    if ( diagnosis.targetKind === TargetKind.LOCALSTACK )
         findings.push( {
             level  : "ok",
             title  : "Note: SG / VPC-reachability checks don't apply on LocalStack",
@@ -245,6 +249,7 @@ function synthesize(
     return findings;
 }
 
+/** Reduce an ARN to its final "/"-delimited segment (its short name), or "?" when absent. */
 function shortArn( arn : string | undefined ) : string
 {
     if ( !arn ) return "?";

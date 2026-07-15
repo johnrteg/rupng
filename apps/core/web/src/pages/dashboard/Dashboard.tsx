@@ -1,29 +1,21 @@
-import AppModel from "@model/AppModel";
 //
-import React from 'react';
 import { JSX } from "react";
 
+import { Box, Typography } from "@mui/material";
 
-import Page         from "@pages/common/Page";
-import { Access }   from "@repo/endpoint";
+import { Access }  from "@repo/endpoint";
+import AuthPage    from "../../widgets/app/AuthPage";
 
+//
+// Dashboard — the authenticated landing page. (Passkey enrolment now lives on Profile : Security.)
+//
 export function Dashboard( props : Dashboard.Props ) : JSX.Element
 {
-    const appmodel : AppModel = AppModel.instance();
-    
-    //
-    React.useEffect( () => componentLoaded(), [] );
-
-    ////////////////////////////////////////////////////////////////////////////////////////////
-    // when this is loaded, it means all of its children have loaded already
-    function componentLoaded() : void
-    {
-
-    
-    }
-
-    return <Page minAccess={ Access.AccountRole.USER }>
-    </Page>;
+    return  <AuthPage minAccess={ Access.AccountRole.USER } title={"Dashboard"}>
+                <Box sx={{ p: 3 }}>
+                    <Typography variant="body2" sx={{ color: "text.secondary" }}>{"Welcome back."}</Typography>
+                </Box>
+            </AuthPage>;
 }
 
 export namespace Dashboard

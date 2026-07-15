@@ -4,7 +4,7 @@
 // + GDPR forget.
 //
 // Everything is scoped under the `Contact` namespace, so call sites read clearly:
-//   Contact.Record, Contact.Segment, Contact.CustomFieldDef, Contact.ImportJob, ...
+//   Contact.Record, Segment.Entity, Contact.CustomFieldDef, Contact.ImportJob, ...
 //
 // Sourced from elsewhere (single source of truth):
 //   * scalar primitives (UUID, Email, PhoneE164, ISODateTime, TimeZone, Url, Json)

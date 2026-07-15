@@ -60,16 +60,16 @@ export function Page( props : Page.Props ) : JSX.Element
                     }
                     // if no match on status, but is hidden and the user is super-admin, allow it to continue
                     else if( appdata.acct.account
-                        && appdata.acct.account.status === GetAccount.AccountStatus.HIDDEN
+                        && appdata.acct.account.status === Account.Status.HIDDEN
                         && appdata.auth.isRegularAdmin() )
                     {
                         setValidated( true );
                     }
                     // if not above, and the account is disabled, deleted or hidden (and user is not super-admin), go to disabled page
                     else if( appdata.acct.account
-                        && (   appdata.acct.account.status === GetAccount.AccountStatus.DISABLED
-                            || appdata.acct.account.status === GetAccount.AccountStatus.DELETED
-                            || appdata.acct.account.status === GetAccount.AccountStatus.HIDDEN ) )
+                        && (   appdata.acct.account.status === Account.Status.DISABLED
+                            || appdata.acct.account.status === Account.Status.DELETED
+                            || appdata.acct.account.status === Account.Status.HIDDEN ) )
                     {
                         appdata.goto( AppRouter.Route.DASHBOARD );
                     }
@@ -141,7 +141,7 @@ export namespace Page
     {
         //authorized      : boolean;
         //roles           : Array<AccountLogin.RoleType>;
-        //status          : Array<GetAccount.AccountStatus>;
+        //status          : Array<Account.Status>;
         minAccess?      : Access.Role;
         children?       : React.ReactNode | Array<React.ReactNode>;
         verticalScroll? : 'auto' | 'hidden';

@@ -121,14 +121,46 @@ original brief calls out — so data is *pushed* to monitor's stores and the API
 # Requirements
 
 ## Tracing & correlation
-* **Inject transaction id at the API Gateway** — `x-transactionid: $context.requestId` via integration
-  request mapping (no code). Confirmed approach.
-* **X-Ray** active tracing injects `X-Amzn-Trace-Id` automatically across compute (already enabled per
-  service via the manifest `tracing` flag).
-* Services **propagate** `x-transactionid` on every downstream call (HTTP, SQS message attr, event detail);
-  the base `Application`/`Trace` **falls back to a generated id** if none is present.
-* Given a transaction id, monitor can assemble the **full cross-service timeline**: logs + spans + the
-  services/queues it traversed.
+
+The **transaction id** is the portable correlation key that threads one request through every hop it touches
+(HTTP → events → jobs → fan-out), independent of AWS X-Ray. It works identically in local dev and AWS — only
+the log *sink* differs (Console log files ↔ CloudWatch/OpenSearch). X-Ray is a complementary prod-only layer.
+
+### Mechanism — implemented in the base runtime (`@repo/services` / `@repo/common`)
+* **Ambient context, not threaded params** — `RequestContext` (a Node `AsyncLocalStorage`) carries
+  `{ transactionId }` across `await`s. Each entry point enters a context; everything inside reads it. ✅
+* **Every log line is stamped** — `Trace` reads an ambient context provider (wired by `Application` to
+  `RequestContext`) and adds a **`txn`** field to its JSON record. `id` stays the process/service-instance id;
+  `txn` is the request/event correlation id. No per-call-site logger threading. ✅
+* **Inbound HTTP** — `Service.processEndpoint` reuses the caller's `x-transactionid` (else mints one),
+  **echoes it on the response**, runs the request inside `RequestContext`, and sets `auth.transactionId`. ✅
+* **Client** — the web `RestfulService` sends `x-transactionid` on every call and surfaces the id on the
+  reply (`Reply.transactionId`) + as the response header (visible in devtools) for self-service troubleshooting. ✅
+* **Propagation on every hop** (the id survives whatever transport): ✅
+  * **S2S HTTP** — `RestfulService` forwards the ambient id (server provider → `RequestContext`); an explicit
+    header still wins; the browser (no provider) mints its own.
+  * **Kafka** — `publishEvent` stamps `envelope.source.transactionId` + a message header; `runConsumer`
+    re-enters a `RequestContext` from it, so a consumer's logs + any events IT emits stay on the chain.
+  * **SQS** — `send` stamps a **`transactionId` message attribute** (out-of-band, no body/envelope change);
+    `Sqs.transactionId(msg)` reads it back and the consumer wraps processing in `RequestContext`.
+  * **Jobs (Lambda)** — `Job.invoke` extracts the id from the trigger (SQS record attribute / EventBridge
+    `detail`) and wraps the handler, so a queue/event-started job inherits the id (and its fan-out keeps it).
+* **Fallback** — an entry point with no upstream id simply mints/omits one; nothing breaks.
+
+### Prod infra (planned / partially enabled)
+* **Inject at the API Gateway** — `x-transactionid: $context.requestId` via integration request mapping
+  (no code) so the edge always supplies one. ⏳ (the base already reads/echoes/generates it regardless)
+* **X-Ray** active tracing is enabled per service via the manifest `tracing` flag; the AWS-SDK instrumentation
+  (`aws-xray-sdk` in `ClientUtils`) is still to wire. Bridge to our id by **annotating the root segment with
+  `transactionId`** so X-Ray is searchable by it. X-Ray gives the service map + latency; it does **not** trace
+  Kafka hops — the transaction id does. ⏳
+* **Logs → OpenSearch** — subscribe all service/Lambda log groups → Firehose → OpenSearch; searchable by
+  `txn` / `accountId`. Locally this is the Console's log-merge; in AWS it's CloudWatch **Logs Insights**
+  (`fields @timestamp, name, level, message | filter txn = "…" | sort @timestamp`). ⏳
+
+### The payoff
+Given a transaction id, monitor (or the Console, or Logs Insights) assembles the **full cross-service
+timeline** — every log line, the services/queues it traversed, and (in prod) the X-Ray span tree.
 
 ## Metrics
 * Ingest via **Metric Streams → Firehose** — never poll for dashboard reads.
@@ -140,8 +172,10 @@ original brief calls out — so data is *pushed* to monitor's stores and the API
 
 ## Logs
 * **Subscribe** to all service/Lambda log groups; ship to OpenSearch for search.
-* Every log line should carry `transactionId` + `accountId` where available (correlation keys).
-* Searchable by transaction id, account, service, level, time window.
+* Log lines are the structured `Trace` JSON record: `{ level, time, name, id, txn?, message, args? }` — `txn`
+  is the transaction id (present inside a request/event context), `name` is the service, `id` the process
+  instance. Correlation keys: **`txn`** + `accountId` (where the message includes it).
+* Searchable by transaction id (`txn`), account, service (`name`), level, time window.
 
 ## Alarms & alerting
 * Define **threshold alarms** on any ingested metric (e.g. DLQ depth > N, error rate > x%, p99 > Nms).

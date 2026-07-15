@@ -6,7 +6,7 @@ import { JSX } from "react";
 import { MuiColorInput, MuiColorInputFormat } from 'mui-color-input';
 
 //
-import { FormControlLabel, Popover, Box, Stack, IconButton, Theme, useTheme } from '@mui/material';
+import { FormControlLabel, Popover, Box, Stack, IconButton, Theme, Typography, useTheme } from '@mui/material';
 
 //
 import FormatColorResetOutlinedIcon from '@mui/icons-material/FormatColorResetOutlined';
@@ -14,6 +14,7 @@ import ChecklistOutlinedIcon from '@mui/icons-material/ChecklistOutlined';
 
 //
 import { ArrayUtils } from "@repo/common";
+import AppModel from "@model/AppModel";
 import ButtonIcon from "./ButtonIcon";
 import ButtonIconDropdown from "./ButtonIconDropdown";
 
@@ -124,16 +125,17 @@ export function ColorPicker( props : ColorPicker.Props ) : JSX.Element
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////
-    function predefinedColors() : Array<JSX.Element>
+    // render a set of colors as chunked swatch rows (shared by the standard choices + each named palette group)
+    function swatchRows( colors : Array<string>, keyPrefix : string ) : Array<JSX.Element>
     {
-        // divide the sets of colors into chunks
+        // divide the set of colors into chunks (row width depends on which trailing controls are present)
         const nbr : number = props.onClear && props.formats ? 11 : props.onClear || props.formats ? 10 : 8;
-        const chunks : Array< Array<string> > = ArrayUtils.chunkArray<string>( props.choices, nbr );
+        const chunks : Array< Array<string> > = ArrayUtils.chunkArray<string>( colors, nbr );
 
         return chunks.map( ( row : Array<string>, index : number ) =>
         {
-            return <Stack direction="row" key={'pallete-'+index}>
-                { row.map( ( item: string, in_index : number ) => {
+            return <Stack direction="row" key={ keyPrefix + '-' + index }>
+                { row.map( ( item: string ) => {
                      return <Box    key={ item } onClick={ ()=>onColorClicked( item ) }
                             sx={{   border: 2,
                                     borderColor: props.value == item ? "#ffffff" : item,
@@ -141,10 +143,41 @@ export function ColorPicker( props : ColorPicker.Props ) : JSX.Element
                                     bgcolor: item,
                                     width:24,
                                     height: 24 }}
-                    /> 
+                    />
                 } ) }
             </Stack>
         } );
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////
+    // the standard predefined palette (backwards-compatible with the original single-palette behavior)
+    function predefinedColors() : Array<JSX.Element>
+    {
+        return swatchRows( props.choices, "standard" );
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////
+    // the palette groups to offer: the ACTING account's brand palette (cached in AccountService, auto-included
+    // app-wide) followed by any the caller passed (e.g. the campaign palette in a campaign context). Empty
+    // groups are dropped by paletteGroup.
+    function effectivePalettes() : Array<ColorPicker.Palette>
+    {
+        const accountColors : Array<string> = AppModel.instance().account.palette ?? [];
+        const groups : Array<ColorPicker.Palette> = [];
+        if( accountColors.length > 0 ) groups.push( { label: "Account", colors: accountColors } );
+        ( props.palettes ?? [] ).forEach( ( palette : ColorPicker.Palette ) : void => { groups.push( palette ); } );
+        return groups;
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////
+    // a NAMED palette group (Account / Campaign / …) — a small caption over its swatch rows. Skipped when empty.
+    function paletteGroup( palette : ColorPicker.Palette ) : JSX.Element | null
+    {
+        if( palette.colors.length === 0 ) return null;
+        return <Stack direction="column" key={ 'pal-' + palette.label } sx={{ width: "100%", pt: 0.5 }}>
+                    <Typography variant="caption" sx={{ px: 0.5, color: "text.secondary" }}>{ palette.label }</Typography>
+                    { swatchRows( palette.colors, 'pal-' + palette.label ) }
+               </Stack>;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -272,9 +305,13 @@ export function ColorPicker( props : ColorPicker.Props ) : JSX.Element
 
                         </Stack>
                                 
-                        { /* ---------------- predefined pallet --------------- */ }
+                        { /* ---------------- named palettes (Account auto-included + any passed, e.g. Campaign) --------------- */ }
+                        { effectivePalettes().map( ( palette : ColorPicker.Palette ) => paletteGroup( palette ) ) }
+
+                        { /* ---------------- standard predefined palette --------------- */ }
                         { props.choices.length > 0 ?
-                            <Stack direction="column">
+                            <Stack direction="column" sx={{ width: "100%", pt: 0.5 }}>
+                                { effectivePalettes().length > 0 ? <Typography variant="caption" sx={{ px: 0.5, color: "text.secondary" }}>{"Standard"}</Typography> : null }
                                 { predefinedColors() }
                             </Stack> : null }
                                  
@@ -301,10 +338,18 @@ export namespace ColorPicker
         isAlphaHidden?  : boolean;
         icon?           : JSX.Element;
         choices         : Array<string>;
+        palettes?       : Array<ColorPicker.Palette>;   // named palette groups (e.g. Account / Campaign) shown above Standard
         formats?        : Array<ColorPicker.Formats>;
         selected?       : boolean;
         onChange        : ( color : string ) => void;
         onClear?        : () => void;
+    }
+
+    /** A named palette group offered in the picker (label + ordered hex swatches). */
+    export interface Palette
+    {
+        label  : string;
+        colors : Array<string>;
     }
 
 

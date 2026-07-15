@@ -2,8 +2,8 @@
 // S3 facade — common object ops + presigned URLs, keyed by cloud-manifest LOGICAL bucket keys
 // (CloudResolver turns them into physical names). Drop to `.client` for anything not wrapped.
 //
-import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
-import type { GetObjectCommandOutput, PutObjectCommandInput } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectVersionsCommand, CopyObjectCommand } from "@aws-sdk/client-s3";
+import type { GetObjectCommandOutput, PutObjectCommandInput, ListObjectVersionsCommandOutput, CopyObjectCommandOutput } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
@@ -30,8 +30,16 @@ export class S3
     /**
      * The raw `S3Client` — escape hatch for operations this facade doesn't wrap (multipart,
      * S3 Select, tagging, …). Created lazily on first access and cached.
+     *
+     * `*ChecksumCalculation/Validation: WHEN_REQUIRED` opts OUT of the SDK's default
+     * (`WHEN_SUPPORTED`) automatic CRC32 checksums. The default breaks **presigned PUT** URLs: it
+     * folds an `x-amz-checksum-*` header into the signature (so a browser PUT that doesn't send that
+     * exact header fails `SignatureDoesNotMatch`), and while presigning a body-less PutObject the
+     * checksum middleware hashes an empty body and throws "The 'string' argument must be of type
+     * string or an instance of Buffer or ArrayBuffer." WHEN_REQUIRED keeps checksums off unless a
+     * command explicitly needs one — the correct posture for our presigned-upload flow.
      */
-    get client() : S3Client { return this._client ??= ClientUtils.createClient( S3Client ); }
+    get client() : S3Client { return this._client ??= ClientUtils.createClient( S3Client, { requestChecksumCalculation: "WHEN_REQUIRED", responseChecksumValidation: "WHEN_REQUIRED" } ); }
 
     /** Resolve a cloud-manifest logical bucket key (e.g. `"uploads"`) to its physical bucket name. */
     bucket( key : ResourceKey ) : string { return this.cloud.bucketName( key ); }
@@ -145,6 +153,30 @@ export class S3
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////
+    /** Does an object exist? `ok:true, data:true|false` — a `NotFound`/`NoSuchKey` maps to `false`
+     *  (not an error); any other failure is `ok:false`. HeadObject, so no bytes transfer. */
+    exists( bucketKey : ResourceKey, objectKey : S3.Key ) : Promise<Type.Result<boolean>>
+    {
+        const objectName : Type.Result<string> = this.resolveKey( objectKey );
+        if( ! objectName.ok ) return Promise.resolve( objectName );
+        return ResultUtils.from( async () : Promise<boolean> =>
+        {
+            try
+            {
+                await this.client.send( new HeadObjectCommand( { Bucket: this.bucket( bucketKey ), Key: objectName.data } ) );
+                return true;
+            }
+            catch( err )
+            {
+                const name : string = ( err as { name? : string } )?.name ?? "";
+                const status : number = ( err as { $metadata? : { httpStatusCode? : number } } )?.$metadata?.httpStatusCode ?? 0;
+                if( name === "NotFound" || name === "NoSuchKey" || status === 404 ) return false;   // missing → false
+                throw err;                                                                          // real error → ok:false
+            }
+        } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////
     /** Delete an object. Idempotent — succeeds even if the key doesn't exist. */
     remove( bucketKey : ResourceKey, objectKey : S3.Key ) : Promise<Type.Result<void>>
     {
@@ -182,6 +214,55 @@ export class S3
         const objectName : Type.Result<string> = this.resolveKey( objectKey );
         if( ! objectName.ok ) return Promise.resolve( objectName );
         return ResultUtils.from( () => getSignedUrl( this.client, new GetObjectCommand( { Bucket: this.bucket( bucketKey ), Key: objectName.data } ), { expiresIn: ttlSec } ) );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * List the S3 object versions for a single key, newest first — the history a caller can revert to
+     * ({@link restoreVersion}). Requires a versioning-enabled bucket; on an un-versioned bucket the sole
+     * "null" version is returned. Filtered to the exact key (ListObjectVersions is prefix-based). Delete
+     * markers are excluded — a revert restores content, not a deletion.
+     */
+    listVersions( bucketKey : ResourceKey, objectKey : S3.Key ) : Promise<Type.Result<Array<S3.Version>>>
+    {
+        const objectName : Type.Result<string> = this.resolveKey( objectKey );
+        if( ! objectName.ok ) return Promise.resolve( objectName );
+        return ResultUtils.from( async () : Promise<Array<S3.Version>> =>
+        {
+            const output : ListObjectVersionsCommandOutput = await this.client.send(
+                new ListObjectVersionsCommand( { Bucket: this.bucket( bucketKey ), Prefix: objectName.data } ) );
+            const versions : NonNullable<ListObjectVersionsCommandOutput[ "Versions" ]> = output.Versions ?? [];
+            return versions
+                .filter( ( version ) => version.Key === objectName.data && !!version.VersionId )
+                .map( ( version ) : S3.Version => ( {
+                    versionId:    version.VersionId as string,
+                    size:         version.Size ?? 0,
+                    lastModified: ( version.LastModified ?? new Date( 0 ) ).toISOString(),
+                    isLatest:     version.IsLatest === true,
+                } ) );
+        } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Restore a prior version of an object by copying that version back onto the current key — which
+     * writes a NEW latest version with the old bytes (nothing is destroyed; the just-replaced content
+     * stays in history). No-op-safe if `versionId` is already the latest. Returns the new latest
+     * version id when S3 reports one.
+     */
+    restoreVersion( bucketKey : ResourceKey, objectKey : S3.Key, versionId : string ) : Promise<Type.Result<string | undefined>>
+    {
+        const objectName : Type.Result<string> = this.resolveKey( objectKey );
+        if( ! objectName.ok ) return Promise.resolve( objectName );
+        return ResultUtils.from( async () : Promise<string | undefined> =>
+        {
+            const bucket : string = this.bucket( bucketKey );
+            const output : CopyObjectCommandOutput = await this.client.send( new CopyObjectCommand( {
+                Bucket: bucket, Key: objectName.data,
+                CopySource: `${ bucket }/${ encodeURIComponent( objectName.data ) }?versionId=${ encodeURIComponent( versionId ) }`,
+            } ) );
+            return output.VersionId;
+        } );
     }
 }
 
@@ -229,4 +310,8 @@ export namespace S3
 
     /** A key arg to the object methods: a raw string or a typed {@link S3.ObjectKey}. */
     export type Key = string | ObjectKey;
+
+    /** One stored version of an object (newest first from {@link S3.listVersions}) — the history a caller
+     *  can revert to via {@link S3.restoreVersion}. */
+    export interface Version { versionId : string; size : number; lastModified : string; isLatest : boolean; }
 }

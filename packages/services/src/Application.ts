@@ -8,9 +8,14 @@ import * as path from 'path';
 import { randomUUID, UUID } from 'crypto';
 
 import { Trace }    from './Trace';
+import { RequestContext } from './RequestContext';
+import { RestfulService } from '@repo/endpoint';
 
 import { CloudResolver, Environment } from '@repo/cloud-manifest';
 import type { Register } from '@repo/system';   // the canonical service id this Application carries
+import { AiFactory, Ai } from '@repo/ai';
+import { AiRouting }   from '@repo/api';
+import { ObjectUtils, Type } from '@repo/common';
 import { AppConfig }   from './aws/AppConfig';
 import { Kms }         from './aws/Kms';
 
@@ -45,6 +50,18 @@ export class Application
         this.log         = new Trace( this.serviceName, this.id );
         this.nbr_cpus    = os.cpus().length;
 
+        // the shared logger reads the current request/event transaction id from the ambient RequestContext,
+        // so every log line carries `txn` and correlates across services (no per-call-site logger threading)
+        Trace.setContextProvider( () => RequestContext.get() );
+
+        // server-side S2S REST calls forward the ambient request's transaction id (browser has no provider, so
+        // it mints its own) — one id across HTTP hops too
+        RestfulService.setContextProvider( () => RequestContext.transactionId() );
+
+        // Every deployable runs the AiFactory (media-17): resolve provider keys from the platform-shared
+        // Secrets Manager entries (ARNs injected as SECRET_AI_<PROVIDER>). One wiring for all services.
+        AiFactory.usePlatformSecrets();
+
         this.bindCallbacks();
     }
 
@@ -67,7 +84,7 @@ export class Application
     // eligibility. See packages/services/README.md "Shared send-compliance gate",
     // apps/core/contact/SPECS.md "Consent & suppression" (contact-5), apps/core/campaign/SPECS.md, and
     // packages/services/DISPATCH.md gap #12 (enforcement point = the channel).
-    //   canSend({ accountId, contactId, channel, content, at }) -> { allowed, reasons[] }
+    //   canSend({ accountId, contactId, channel, content, at }) -> { allowed, Array<reasons> }
     //   composes (aggregates, does not duplicate): per-contact PER-CHANNEL consent/suppression (contact svc) +
     //   account block-list (account) + global frequency cap/fatigue + quiet-hours + SHAFT/content screening.
     //   PER-CHANNEL CONSENT RULE (mirror of contact-5.3 / 5.7): effective state = the consent record with the
@@ -117,8 +134,8 @@ export class Application
     // DATA stays CO-LOCATED with each service (PII-dense; purges on GDPR forget); this is the shared MECHANISM,
     // typically invoked from each service's DDB-Streams CDC Job (it sees OldImage/NewImage). See
     // packages/services/README.md "Shared change-history" + apps/core/contact/SPECS.md (contact-13, contact-14.5).
-    //   changeHistory.record({ entity:{type,id}, version, actor, source, before, after }) -> diff[]   (append-only)
-    //   computes per-field { field, before, after }; supports compare(v1,v2) + revert(field[]) as a NEW guarded
+    //   changeHistory.record({ entity:{type,id}, version, actor, source, before, after }) -> Array<diff>   (append-only)
+    //   computes per-field { field, before, after }; supports compare(v1,v2) + revert(Array<field>) as a NEW guarded
     //   (version/etag) change. CONTRAST audit(): change-history HOLDS PII + purges on forget; audit() is PII-light
     //   + immutable. One per-service `change_history` table (PK accountId#entityId, SK version), NOT centralized.
     //   CHEAPEST PROVIDER: free MaxMind GeoLite2 (geo+ASN) + Tor exit-list + ASN datacenter heuristic ($0/call,
@@ -143,6 +160,34 @@ export class Application
 
     /** KMS facade — encrypt/decrypt + envelope data keys. Common to all services + jobs. */
     protected get kms() : Kms { return this._kms ??= new Kms( this.cloud ); }
+
+    ////////////////////////////////////////////////////////////////////////
+    /** This service's AI routing policy (its `config/ai` AppConfig profile): which provider handles each
+     *  modality. Falls back to (and fills gaps with) `AiRouting.DEFAULT` so a service works before the
+     *  profile is seeded. Every service runs the AiFactory, so this lives on the base (media-17). */
+    protected async aiRouting() : Promise<AiRouting.Config>
+    {
+        const got : Type.Result<AiRouting.Config | undefined> = await this.appConfig.json<AiRouting.Config>( "config", "ai" );
+        return got.ok && got.data ? ObjectUtils.withDefaults( got.data, AiRouting.DEFAULT ) : AiRouting.DEFAULT;
+    }
+
+    ////////////////////////////////////////////////////////////////////////
+    /** An AI client for a modality (chat, image, text-to-speech, …), per this service's routing config: the
+     *  configured provider (+model) with its key resolved from the platform Secrets. `undefined` when the
+     *  modality has no configured route (caller degrades gracefully). Provider keys never appear here.
+     *  `buckets` forwards S3 scratch locations that async providers need (Nova Reel video output / Amazon
+     *  Transcribe audio staging) — harmless for providers that don't use them. */
+    protected async aiFor( modality : AiRouting.Modality, buckets? : Application.AiBuckets ) : Promise<Ai | undefined>
+    {
+        const routing : AiRouting.Config = await this.aiRouting();
+        const route : AiRouting.Route | undefined = routing.routes[ modality ];
+        if( route === undefined ) return undefined;
+        // AiRouting.Provider is the config vocabulary; its values match Ai.Provider for providers that have a
+        // registered adapter. A provider named in config before its adapter lands (e.g. fish) makes create()
+        // throw — treat that as "unavailable" (undefined) so the caller degrades instead of erroring.
+        try { return AiFactory.create( { provider: route.provider as unknown as Ai.Provider, model: route.model, videoBucket: buckets?.videoBucket, transcribeBucket: buckets?.transcribeBucket } ); }
+        catch( error ) { this.log.warn( "aiFor: no adapter for configured provider", { modality, provider: route.provider, error: String( error ) } ); return undefined; }
+    }
 
     //
     // Everything else (S3, SQS, SNS, Secrets, EventBridge, Kafka, Dynamo, …) is wired by the
@@ -287,6 +332,13 @@ export class Application
 export namespace Application
 {
     export const ID_DIVIDER : string = ':';
+
+    /** S3 scratch locations forwarded to async AI providers via {@link Application.aiFor}. */
+    export interface AiBuckets
+    {
+        videoBucket?      : string;   // Bedrock Nova Reel async video output
+        transcribeBucket? : string;   // Amazon Transcribe audio staging (input)
+    }
 
     // extended by inherited services
     export interface Config

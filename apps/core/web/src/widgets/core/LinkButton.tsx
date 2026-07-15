@@ -5,13 +5,14 @@ import { Button } from '@mui/material';
 
 //
 export function LinkButton(props: LinkButton.Props): JSX.Element {
-    const { label, onClick, color = 'primary', sx } = props;
+    const { label, onClick, color = 'primary', disabled = false, sx } = props;
 
     return (
         <Button
             variant="text"
             color={color as any}
             fullWidth
+            disabled={disabled}
             sx={{
                 textTransform: 'none',
                 textDecoration: 'underline',
@@ -33,6 +34,7 @@ export namespace LinkButton {
         label: string;
         onClick: () => void;
         color?: string;
+        disabled?: boolean;
         sx?: object;
     }
 }

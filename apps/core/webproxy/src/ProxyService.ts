@@ -2,7 +2,7 @@
 // Proxy — a development front door. Serves the built web app (apps/core/web) as static files
 // with SPA fallback, and reverse-proxies API + WebSocket traffic to a configurable upstream:
 // LOCAL servers / LocalStack, or a deployed AWS environment (dev / staging / production).
-// Which one is purely a config choice (`upstreams[].target`); the same code serves all.
+// Which one is purely a config choice (`Array<upstreams>.target`); the same code serves all.
 //
 // Converted to the @repo/services `Service` base — which owns the Fastify instance, the
 // run/init/start lifecycle, OS-signal shutdown, error handling, and /health — so this class
@@ -35,6 +35,10 @@ export class ProxyService extends Service
         // proxy defaults to 8080 (the dev front door); PORT overrides. No role — single-instance proxy.
         super( Register.Service.WEBPROXY, undefined, parseInt( process.env.PORT ?? "8080" ) );
         this.wss = new WebSocketServer( { noServer: true } );
+
+        // report a real version on /version (was "unset") — read from apps/core/webproxy/package.json
+        const pkg : Application.PackageInfo = this.loadPackageInfo( __dirname );
+        this.setVersion( pkg.version );
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -48,9 +52,11 @@ export class ProxyService extends Service
         return this.cfg;
     }
 
+    /////////////////////////////////////////////////////////////////////////////////////////
     /** Directory holding the per-environment config files (override with PROXY_CONFIG_DIR). */
     private configDir() : string { return process.env.PROXY_CONFIG_DIR ?? path.join( __dirname, "config" ); }
 
+    /////////////////////////////////////////////////////////////////////////////////////////
     /** Pick the config name: `--config <name>` wins, else map ENVIRONMENT, else "production". */
     private selectConfigName() : string
     {
@@ -66,6 +72,7 @@ export class ProxyService extends Service
         return byEnv[ env ] ?? "production";
     }
 
+    /////////////////////////////////////////////////////////////////////////////////////////
     /** Read + parse the selected config file. */
     private loadConfig() : ProxyService.Config
     {
@@ -79,18 +86,153 @@ export class ProxyService extends Service
     // Server wiring — registered into the Fastify instance the base created
     // ──────────────────────────────────────────────────────────────────────────
 
+    /////////////////////////////////////////////////////////////////////////////////////////
     /** Base hook (after the Fastify server exists, before listen): register everything. */
     protected override addServerRegister() : void
     {
         super.addServerRegister();      // @fastify/formbody
 
+        this.forwardRawBodies();        // a proxy must forward request bodies verbatim — never parse them
+        this.registerErrorLog();        // surface proxy-level errors (a silent 500 here is otherwise invisible)
         this.registerStatic();
-        this.registerProxies();
+        this.registerRouteTable();      // LOCAL: per-endpoint → role-service dispatch (mirrors the gateway)
+        this.registerProxies();         // REMOTE/static: prefix → single upstream (cloud edge, ws holder)
         this.registerWebSocketUpgrade();
         this.registerExtraRoutes();
         this.registerSpaFallback();     // must be last — it's the not-found handler
     }
 
+    /////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Forward request bodies verbatim. The base registers body parsers (`@fastify/formbody` + Fastify's default
+     * JSON parser); those PARSE a POST body into an object BEFORE `@fastify/http-proxy` sees it, and the proxy
+     * then can't forward the parsed object as raw bytes — an empty POST becomes `{}` and http-proxy throws
+     * `ERR_INVALID_ARG_TYPE` ("string argument must be … Received Empty {}"). A pure reverse-proxy must not
+     * parse bodies at all: drop every parser and keep the raw Buffer so the body streams through untouched.
+     * (The proxy's own routes — /ping, /article, /health — are GETs with no body, so this is safe.)
+     */
+    private forwardRawBodies() : void
+    {
+        if( !this.server ) return;
+
+        // A bodyless POST/PUT/PATCH that still carries a content-type (e.g. the browser defaulting an empty
+        // action POST to `application/x-www-form-urlencoded`) gets PARSED into `{}` by a body parser, and
+        // @fastify/http-proxy's reply-from then throws ERR_INVALID_ARG_TYPE trying to forward that object.
+        // For an EMPTY body there's nothing to forward — drop the content-type/length headers before parsing
+        // so no parser runs and the request forwards clean.
+        this.server.addHook( "onRequest", async ( request : FastifyRequest ) : Promise<void> =>
+        {
+            const method : string = request.method;
+            if( method === "GET" || method === "HEAD" ) return;
+            const length : string | undefined = request.headers[ "content-length" ] as string | undefined;
+            if( length === undefined || length === "0" )
+            {
+                delete request.headers[ "content-type" ];
+                delete request.headers[ "content-length" ];
+            }
+        } );
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////
+    /** Log a proxy-level error for an /api request. Without this a forwarding failure surfaces to the client as
+     *  a bare 500 with nothing in the proxy log — which is what made the archive body-forwarding bug so hard to
+     *  pin down. Keeps error visibility without per-request noise. */
+    private registerErrorLog() : void
+    {
+        if( !this.server ) return;
+        this.server.addHook( "onError", async ( request : FastifyRequest, _reply : FastifyReply, error : Error ) : Promise<void> =>
+        {
+            if( request.url.startsWith( "/api/" ) ) this.log.error( "proxy request error", { method: request.method, url: request.url, error: String( error ) } );
+        } );
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * LOCAL mode: a generated per-endpoint route table. Each endpoint (method + path, with :params)
+     * resolves to the role-service that registers it — so /api/auth/v1/login can hit the WRITER while
+     * /api/auth/v1/session hits the READER, exactly as the production gateway routes per-route. One
+     * proxy is mounted on /api; the upstream is chosen PER REQUEST via getUpstream, so the path is
+     * forwarded unchanged. The role lives only in the target, never in the path — so splitting a
+     * service into more roles just re-generates this table; URLs don't change.
+     *
+     * Generated by the console from the endpoint→role bindings. REMOTE mode emits no routes (the cloud
+     * edge does the dispatch) — there a single /api prefix upstream (registerProxies) forwards to it.
+     */
+    private registerRouteTable() : void
+    {
+        if( !this.server || !this.cfg.routes?.length ) return;
+
+        // Build PREFIX proxies from the per-endpoint route table. A service whose endpoints span multiple ports
+        // (e.g. media MAIN 8240 + BROWSE 8241) can't be one `/api/{service}` prefix — so for each service we
+        // mount its PRIMARY target (the one serving the most endpoints) at `/api/{service}`, and each OTHER
+        // target at the LONGEST COMMON PATH-PREFIX of its endpoints (e.g. `/api/media/v1/browse` → 8241).
+        // Fastify's router matches the most-specific prefix, so `/api/media/v1/browse/*` → 8241 while everything
+        // else under `/api/media/*` → 8240 — per-sub-service routing without @fastify/http-proxy's `getUpstream`
+        // (broken in 11.5.0: the returned upstream is computed but never applied, so every request 404s).
+        const byService : Map<string, Map<string, Array<string>>> = new Map<string, Map<string, Array<string>>>();   // service → target → paths
+        for( const route of this.cfg.routes )
+        {
+            const segments : Array<string> = route.path.split( "/" ).filter( Boolean );   // ["api","media","v1",…]
+            if( segments[ 0 ] !== "api" || segments.length < 2 ) continue;
+            const service : string = segments[ 1 ];
+            if( !byService.has( service ) ) byService.set( service, new Map<string, Array<string>>() );
+            const targets : Map<string, Array<string>> = byService.get( service )!;
+            if( !targets.has( route.target ) ) targets.set( route.target, [] );
+            targets.get( route.target )!.push( route.path );
+        }
+
+        // resolve (prefix → target) mounts: primary target at the service root, each other target at its
+        // endpoints' common prefix. Register longest prefixes LAST so a more-specific mount wins the match.
+        const mounts : Array<{ prefix : string; target : string }> = [];
+        for( const [ service, targets ] of byService )
+        {
+            const ranked : Array<[ string, Array<string> ]> = [ ...targets.entries() ].sort( ( left, right ) => right[ 1 ].length - left[ 1 ].length );
+            mounts.push( { prefix: `/api/${ service }`, target: ranked[ 0 ][ 0 ] } );   // primary → service root
+            for( let index : number = 1; index < ranked.length; index++ )
+            {
+                const [ target, paths ] : [ string, Array<string> ] = ranked[ index ];
+                const prefix : string = ProxyService.commonPathPrefix( paths );
+                if( prefix === `/api/${ service }` )   // can't disambiguate — would collide with the primary mount
+                    this.log.warn( "proxy route: sub-service shares the service prefix — cannot split-route", { service, target } );
+                else
+                    mounts.push( { prefix, target } );
+            }
+        }
+
+        for( const { prefix, target } of mounts.sort( ( left, right ) => left.prefix.length - right.prefix.length ) )
+        {
+            this.log.info( "proxy route", { prefix, target } );
+            this.server.register( fastifyHttpProxy, {
+                upstream      : target,
+                prefix,
+                rewritePrefix : prefix,                   // forward the full /api/{service}/v{N}/… path unchanged
+                http2         : false,
+                replyOptions  : {
+                    rewriteRequestHeaders : ( _req, headers ) => ( { ...headers, origin: target } ),
+                },
+            } );
+        }
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////
+    /** The longest common leading path (by whole segments) across the given paths — used to mount a
+     *  sub-service's endpoints at the deepest prefix they all share (e.g. `/api/media/v1/browse`). */
+    private static commonPathPrefix( paths : Array<string> ) : string
+    {
+        if( paths.length === 0 ) return "";
+        const segmented : Array<Array<string>> = paths.map( ( path : string ) => path.split( "/" ).filter( Boolean ) );
+        const first : Array<string> = segmented[ 0 ];
+        let shared : number = first.length;
+        for( const segments of segmented )
+        {
+            let index : number = 0;
+            while( index < shared && index < segments.length && segments[ index ] === first[ index ] ) index++;
+            shared = index;
+        }
+        return "/" + first.slice( 0, shared ).join( "/" );
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////
     /** Serve the built web app (apps/core/web) as static files. */
     private registerStatic() : void
     {
@@ -115,9 +257,16 @@ export class ProxyService extends Service
             wildcard     : true,
             cacheControl : false,       // dev: never cache the SPA shell/assets
             maxAge       : 0,
+            // The SPA shell (index.html) MUST NOT be browser-cached, or a normal refresh keeps loading the
+            // old hashed asset refs (→ stale app even after a rebuild). Force revalidation on every HTML hit.
+            setHeaders   : ( res : { setHeader( name : string, value : string ) : void }, filePath : string ) : void =>
+            {
+                if( filePath.endsWith( ".html" ) ) res.setHeader( "Cache-Control", "no-store, must-revalidate" );
+            },
         } );
     }
 
+    /////////////////////////////////////////////////////////////////////////////////////////
     /** Resolve the web root: absolute as-is, else relative to this module (PROXY_WEB_ROOT overrides). */
     private resolveWebRoot() : string
     {
@@ -125,10 +274,13 @@ export class ProxyService extends Service
         return path.isAbsolute( root ) ? root : path.resolve( __dirname, root );
     }
 
+    /////////////////////////////////////////////////////////////////////////////////////////
     /** Reverse-proxy each upstream's path prefixes to its target (local / LocalStack / AWS). */
     private registerProxies() : void
     {
         if( !this.server ) return;
+
+        const hasRouteTable : boolean = !!this.cfg.routes?.length;
 
         for( const up of this.cfg.upstreams )
         {
@@ -139,6 +291,9 @@ export class ProxyService extends Service
 
             for( const prefix of up.prefixes )
             {
+                // the route table owns /api in LOCAL mode — don't also register a prefix proxy on it
+                if( hasRouteTable && ( prefix === "/api" || prefix.startsWith( "/api/" ) ) ) continue;
+
                 this.log.info( "proxy upstream", { prefix, target: up.target } );
                 this.server.register( fastifyHttpProxy, {
                     upstream      : up.target,
@@ -155,6 +310,7 @@ export class ProxyService extends Service
         }
     }
 
+    /////////////////////////////////////////////////////////////////////////////////////////
     /** Turn an upstream's HTTP(S) target + ws path into the backend WS URL parts. */
     private resolveWsRoute( up : ProxyService.Upstream ) : ProxyService.WsRoute
     {
@@ -166,6 +322,7 @@ export class ProxyService extends Service
         };
     }
 
+    /////////////////////////////////////////////////////////////////////////////////////////
     /** SPA fallback: any unmatched GET returns index.html so client-side routing works. */
     private registerSpaFallback() : void
     {
@@ -178,10 +335,14 @@ export class ProxyService extends Service
             // also a real 404 if the SPA shell isn't built yet (web root has no index.html).
             if( request.method !== "GET" || request.url.startsWith( "/assets/" ) || !fs.existsSync( indexPath ) )
             {
+                // DIAGNOSTIC: a request reached the SPA not-found handler — if this fires for an /api path,
+                // the route table / upstream prefix did NOT claim it (e.g. routes empty + /api prefix skipped).
+                this.log.warn( "proxy 404 (not-found handler)", { method: request.method, url: request.url } );
                 reply.status( 404 ).send( { error: "Not Found" } );
                 return;
             }
-            reply.type( "text/html" ).send( fs.readFileSync( indexPath ) );
+            // no-store: the SPA shell must always revalidate so a rebuild's new asset refs load on refresh
+            reply.header( "Cache-Control", "no-store, must-revalidate" ).type( "text/html" ).send( fs.readFileSync( indexPath ) );
         } );
     }
 
@@ -189,6 +350,7 @@ export class ProxyService extends Service
     // Extra routes (liveness + optional Zendesk article passthrough)
     // ──────────────────────────────────────────────────────────────────────────
 
+    /////////////////////////////////////////////////////////////////////////////////////////
     private registerExtraRoutes() : void
     {
         if( !this.server ) return;
@@ -203,6 +365,7 @@ export class ProxyService extends Service
         if( this.cfg.zendesk ) this.registerZendeskArticle( this.cfg.zendesk );
     }
 
+    /////////////////////////////////////////////////////////////////////////////////////////
     private registerZendeskArticle( zd : ProxyService.ZendeskConfig ) : void
     {
         if( !this.server ) return;
@@ -241,6 +404,7 @@ export class ProxyService extends Service
     // WebSocket proxy — bridge a client socket to the upstream's WS endpoint
     // ──────────────────────────────────────────────────────────────────────────
 
+    /////////////////////////////////////////////////////////////////////////////////////////
     /** Hook the raw HTTP server's `upgrade` event to our noServer WSS for the configured ws path. */
     private registerWebSocketUpgrade() : void
     {
@@ -265,6 +429,7 @@ export class ProxyService extends Service
         } );
     }
 
+    /////////////////////////////////////////////////////////////////////////////////////////
     /** Pipe one accepted client socket bidirectionally to a fresh upstream backend socket. */
     private onClientSocket( client : WebSocket, request : IncomingMessage ) : void
     {
@@ -292,6 +457,7 @@ export class ProxyService extends Service
 
     // ──────────────────────────────────────────────────────────────────────────
 
+    /////////////////////////////////////////////////////////////////////////////////////////
     /** Base hook: close the WSS so in-flight upgrades drain on shutdown. */
     protected override async aboutToQuit() : Promise<void>
     {
@@ -306,7 +472,16 @@ export namespace ProxyService
     {
         web       : WebConfig;
         upstreams : Array<Upstream>;
+        routes?   : Array<Route>;       // LOCAL: per-endpoint → role-service dispatch (mounted on /api)
         zendesk?  : ZendeskConfig;
+    }
+
+    /** One generated route in the LOCAL per-endpoint table: method + path (with :params) → role target. */
+    export interface Route
+    {
+        method : string;        // GET / POST / …
+        path   : string;        // e.g. "/api/auth/v1/login" (may contain :params)
+        target : string;        // role-service base URL, e.g. "http://localhost:8111"
     }
 
     /** The built web app (apps/core/web) to serve as static files + SPA fallback. */

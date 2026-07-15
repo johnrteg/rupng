@@ -3,10 +3,16 @@
     "//paths": "editor + typecheck), this clears `paths` so @repo/* resolves to each dependency's",
     "//built": "built .d.ts (via node_modules), and pins rootDir to ./src — so output emits FLAT to",
     "//flat": "bin/ instead of nesting under bin/<pkg>/src when sibling source is pulled in.",
+    "//emit": "These packages are CommonJS (no \"type\":\"module\") and are loaded by plain Node as well as bundlers. Dev/typecheck uses Bundler/ESNext (base.json), but the BUILD must emit CJS (module/moduleResolution Node16 below): ESNext emit writes `export … from './x'` into .js files, which Node treats as ESM and then can't resolve the extensionless relative path — breaking every Node consumer.",
     "extends": "./tsconfig.json",
     "compilerOptions": {
         "rootDir": "./src",
-        "paths": {}
+        "outDir": "./bin",
+        "declaration": true,
+        "declarationMap": true,
+        "paths": {},
+        "module": "Node16",
+        "moduleResolution": "Node16"
     },
     "include": ["src/**/*"],
     "exclude": ["src/tests/**", "src/**/*.test.ts", "src/**/*.spec.ts"]

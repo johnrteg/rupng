@@ -3,9 +3,10 @@ import { request as httpsRequest, type RequestOptions } from "node:https";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ApiEndpointDef, ApiRequestSpec, ApiResponse, SavedRequest } from "../shared/types";
+import type { ApiEndpointDef, ApiRequestSpec, ApiResponse, ProxyRoute, SavedRequest } from "../shared/types";
 import { REPO_ROOT, serviceDir } from "./paths";
 import { servicePorts } from "./ports";
+import { listServices } from "./registry";
 
 //
 // API tester — the data side of the per-service "API" tab (a Postman-style client):
@@ -21,34 +22,55 @@ const API_SRC = join( REPO_ROOT, "packages", "api", "src" );
 const RE_CLASS  = /export\s+class\s+(\w+)\s+extends\s+RestfulEndpoint/;
 const RE_METHOD = /method\s*[^=]*=\s*NetworkUtils\.Method\.(\w+)/;
 const RE_URI_INLINE = /readonly\s+uri\s*[^=]*=\s*["']([^"']+)["']/;       // uri = "/health"
-const RE_URI_CONST  = /export\s+const\s+URI\s*[^=]*=\s*["']([^"']+)["']/; // namespace URI = "/app/bootstrap"
+const RE_URI_CONST  = /export\s+const\s+URI\s*[^=]*=\s*["']([^"']+)["']/; // namespace URI = "/version"
+// versioned paths are composed via apiPath("service", N, "/resource") → /api/service/vN/resource
+const RE_API_PATH   = /apiPath\(\s*["']([^"']+)["']\s*,\s*(\d+)\s*,\s*["']([^"']+)["']\s*\)/;
+// audience governs edge-reachability: APP/PUBLIC = edge (browser), INTERNAL = VPC-only (inter-service)
+const RE_AUDIENCE   = /audience\b[^=]*=\s*RestfulEndpoint\.Audience\.(\w+)/;
 
-/** api source folders to scan for a service: its own (app→app) + shared `common`. */
-function groupsFor( service : string ) : string[]
+/** Resolve an endpoint's path from the source: a string literal, or an apiPath(svc, v, res) call. */
+function uriFrom( text : string ) : string | undefined
 {
-    return [ service, "common" ].filter( ( g ) => existsSync( join( API_SRC, g ) ) );
+    const apiPathMatch : RegExpExecArray | null = RE_API_PATH.exec( text );
+    if ( apiPathMatch )
+    {
+        // apiPath groups: [1] service, [2] version, [3] resource — compose /api/<svc>/v<N>/<resource>
+        const resource : string = apiPathMatch[ 3 ].startsWith( "/" ) ? apiPathMatch[ 3 ] : `/${apiPathMatch[ 3 ]}`;
+        return `/api/${apiPathMatch[ 1 ]}/v${apiPathMatch[ 2 ]}${resource}`;
+    }
+    return RE_URI_INLINE.exec( text )?.[ 1 ] ?? RE_URI_CONST.exec( text )?.[ 1 ];
 }
 
+/** api source folders to scan for a service: its own (app→app) + shared `common`. */
+function groupsFor( service : string ) : Array<string>
+{
+    return [ service, "common" ].filter( ( group ) => existsSync( join( API_SRC, group ) ) );
+}
+
+/** Parse one api source file into an endpoint def (class name, method, path, audience), or null if it isn't a RestfulEndpoint. */
 function parseEndpoint( group : string, file : string ) : ApiEndpointDef | null
 {
     let text : string;
     try { text = readFileSync( join( API_SRC, group, file ), "utf8" ); }
     catch { return null; }
 
-    const cls = RE_CLASS.exec( text );
-    if ( !cls ) return null;                                  // not an endpoint definition
+    const classMatch : RegExpExecArray | null = RE_CLASS.exec( text );
+    if ( !classMatch ) return null;                           // not an endpoint definition
 
     const methodEnum : string = RE_METHOD.exec( text )?.[ 1 ] ?? "GET";
-    const path : string | undefined = RE_URI_INLINE.exec( text )?.[ 1 ] ?? RE_URI_CONST.exec( text )?.[ 1 ];
+    const path : string | undefined = uriFrom( text );
     if ( !path ) return null;
 
     const method : string = methodEnum.toUpperCase();
+    // audience defaults to INTERNAL (the RestfulEndpoint base default) when not declared
+    const audience : ApiEndpointDef[ "audience" ] = ( RE_AUDIENCE.exec( text )?.[ 1 ] as ApiEndpointDef[ "audience" ] ) ?? "INTERNAL";
     return {
-        name    : cls[ 1 ],
+        name    : classMatch[ 1 ],
         method,
         path,
         group,
         hasBody : method === "POST" || method === "PUT" || method === "PATCH",
+        audience,
     };
 }
 
@@ -59,16 +81,16 @@ function parseEndpoint( group : string, file : string ) : ApiEndpointDef | null
  */
 function variantBindings( service : string ) : Map<string, { role : string; port : number }>
 {
-    const out = new Map<string, { role : string; port : number }>();
+    const bindings = new Map<string, { role : string; port : number }>();
     const dir : string = join( serviceDir( service ), "src", "services" );
-    if ( !existsSync( dir ) ) return out;
+    if ( !existsSync( dir ) ) return bindings;
 
     const ports : Record<string, number> = servicePorts()[ service.toUpperCase() ] ?? {};
 
-    for ( const f of readdirSync( dir ).filter( ( f ) => f.endsWith( ".ts" ) && !f.endsWith( ".test.ts" ) ) )
+    for ( const file of readdirSync( dir ).filter( ( name ) => name.endsWith( ".ts" ) && !name.endsWith( ".test.ts" ) ) )
     {
         let text : string;
-        try { text = readFileSync( join( dir, f ), "utf8" ); } catch { continue; }
+        try { text = readFileSync( join( dir, file ), "utf8" ); } catch { continue; }
 
         const roleMatch : RegExpExecArray | null = /super\s*\(\s*[^)]*Role\.(\w+)/.exec( text );
         if ( !roleMatch ) continue;                          // not a concrete role-service
@@ -77,39 +99,89 @@ function variantBindings( service : string ) : Map<string, { role : string; port
         if ( port === undefined ) continue;
 
         // each `new <Endpoint>Impl(` binds that endpoint class to this role (convention: <Def> + "Impl")
-        for ( const m of text.matchAll( /new\s+(\w+)Impl\s*\(/g ) )
-            out.set( m[ 1 ], { role, port } );
+        for ( const implMatch of text.matchAll( /new\s+(\w+)Impl\s*\(/g ) )
+            bindings.set( implMatch[ 1 ], { role, port } );
     }
-    return out;
+    return bindings;
 }
 
 /** Discover the service's endpoints (its api group + common), with the variant they're bound to. */
-export function discoverEndpoints( service : string ) : ApiEndpointDef[]
+export function discoverEndpoints( service : string ) : Array<ApiEndpointDef>
 {
-    const out : ApiEndpointDef[] = [];
+    const endpoints : Array<ApiEndpointDef> = [];
     for ( const group of groupsFor( service ) )
     {
         const dir : string = join( API_SRC, group );
-        const files : string[] = readdirSync( dir ).filter( ( f ) => f.endsWith( ".ts" ) && !f.endsWith( ".test.ts" ) && f !== "index.ts" );
-        for ( const f of files )
+        const files : Array<string> = readdirSync( dir ).filter( ( name ) => name.endsWith( ".ts" ) && !name.endsWith( ".test.ts" ) && name !== "index.ts" );
+        for ( const file of files )
         {
-            const ep : ApiEndpointDef | null = parseEndpoint( group, f );
-            if ( ep ) out.push( ep );
+            const endpoint : ApiEndpointDef | null = parseEndpoint( group, file );
+            if ( endpoint ) endpoints.push( endpoint );
         }
     }
 
     // attach the service variant (role + port) each endpoint is registered on
     const bindings = variantBindings( service );
-    for ( const ep of out )
+    for ( const endpoint of endpoints )
     {
-        const b = bindings.get( ep.name );
-        if ( b ) { ep.role = b.role; ep.port = b.port; }
+        const binding = bindings.get( endpoint.name );
+        if ( binding ) { endpoint.role = binding.role; endpoint.port = binding.port; }
     }
 
-    return out.sort( ( a, b ) => a.path.localeCompare( b.path ) || a.method.localeCompare( b.method ) );
+    return endpoints.sort( ( left, right ) => left.path.localeCompare( right.path ) || left.method.localeCompare( right.method ) );
+}
+
+// The DEV-LOCAL port each service serves its `/api/{service}` on. The dev proxy routes per-SERVICE
+// (one combined process per service locally); the production reader/writer/scale-out split is the real
+// API Gateway's job, not the dev proxy's. This map is the SINGLE declared source — derived from
+// `Ports.ts` (the same port registry the services bind to), NOT by scraping `new <X>Impl(` out of
+// service files (that role-parsing was brittle and silently broke routing on a refactor).
+//
+// Default = the service's MAIN role port. A few services serve their API from a non-main role locally
+// (app's public edge, account's read role); override those here. Add a line only when a service's local
+// API port isn't its MAIN role.
+const LOCAL_API_ROLE : Record<string, string> = { app: "public", account: "read" };
+
+/** The dev-local port a service serves its `/api` on (its MAIN role, or the declared override). */
+function localApiPort( service : string ) : number | undefined
+{
+    const ports : Record<string, number> = servicePorts()[ service.toUpperCase() ] ?? {};
+    const roleKey : string = LOCAL_API_ROLE[ service ] ?? "main";
+    return ports[ roleKey ] ?? ports.main ?? globalThis.Object.values( ports )[ 0 ];
+}
+
+/**
+ * Generate the LOCAL route table for the webproxy — the BROWSER edge (north-south). Only EDGE-REACHABLE
+ * endpoints (audience APP/PUBLIC) are included; INTERNAL endpoints are VPC-only inter-service calls and
+ * must never be reachable from the browser. Every endpoint of a service targets that service's single
+ * dev-local port (`localApiPort`) — the proxy collapses these to one `/api/{service}` prefix. Endpoint
+ * PATHS come from the `@repo/api` contracts (`discoverEndpoints`); the TARGET is the declared port map
+ * above (no longer the brittle per-endpoint role parsing), so a service-side refactor can't break routing.
+ */
+export function localApiRoutes() : Array<ProxyRoute>
+{
+    const routes : Array<ProxyRoute> = [];
+    for ( const svc of listServices() )
+    {
+        if ( !svc.capabilities.scaffolded || svc.capabilities.isFrontend ) continue;
+        const port : number | undefined = localApiPort( svc.id );
+        if ( port === undefined ) continue;
+        for ( const endpoint of discoverEndpoints( svc.id ) )
+        {
+            if ( !endpoint.path.startsWith( "/api/" ) ) continue;                            // versioned API only
+            if ( endpoint.audience !== "APP" && endpoint.audience !== "PUBLIC" ) continue;   // edge only — INTERNAL is inter-service
+            // route to the endpoint's OWN role port when known (discoverEndpoints binds each endpoint to the
+            // role that registers it) — so a service whose edge endpoints span roles (e.g. media MAIN + BROWSE)
+            // reaches each role's process. Falls back to the service's main/declared local API port.
+            const target : number = endpoint.port && endpoint.port > 0 ? endpoint.port : port;
+            routes.push( { method: endpoint.method, path: endpoint.path, target: `http://localhost:${target}` } );
+        }
+    }
+    return routes;
 }
 
 // ── sending a request (from the main process) ────────────────────────────────────────────────────
+/** Perform the HTTP(S) call described by `spec` from the main process and resolve a structured response (never rejects). */
 export function sendRequest( spec : ApiRequestSpec ) : Promise<ApiResponse>
 {
     const started : number = Date.now();
@@ -119,29 +191,30 @@ export function sendRequest( spec : ApiRequestSpec ) : Promise<ApiResponse>
         try { url = new URL( spec.url ); }
         catch ( err ) { resolve( errorResponse( `bad URL: ${( err as Error ).message}`, started ) ); return; }
 
-        const lib = url.protocol === "https:" ? httpsRequest : httpRequest;
+        const requestFn : typeof httpRequest = url.protocol === "https:" ? httpsRequest : httpRequest;
         const options : RequestOptions = { method: spec.method, headers: spec.headers };
 
-        const req = lib( url, options, ( res ) =>
+        const req : ReturnType<typeof httpRequest> = requestFn( url, options, ( res ) =>
         {
-            const chunks : Buffer[] = [];
-            res.on( "data", ( c : Buffer ) => chunks.push( c ) );
+            const chunks : Array<Buffer> = [];
+            res.on( "data", ( chunk : Buffer ) => chunks.push( chunk ) );
             res.on( "end", () =>
             {
-                const buf : Buffer = Buffer.concat( chunks );
+                const buffer : Buffer = Buffer.concat( chunks );
                 const headers : Record<string, string> = {};
-                for ( const [ k, v ] of globalThis.Object.entries( res.headers ) )
-                    headers[ k ] = Array.isArray( v ) ? v.join( ", " ) : String( v ?? "" );
+                // flatten node's string | Array<string> header values into a single string per key
+                for ( const [ key, value ] of globalThis.Object.entries( res.headers ) )
+                    headers[ key ] = Array.isArray( value ) ? value.join( ", " ) : String( value ?? "" );
                 const status : number = res.statusCode ?? 0;
                 resolve( {
                     ok          : status >= 200 && status < 400,
                     status,
                     statusText  : res.statusMessage ?? "",
                     headers,
-                    body        : buf.toString( "utf8" ),
+                    body        : buffer.toString( "utf8" ),
                     contentType : headers[ "content-type" ],
                     timeMs      : Date.now() - started,
-                    size        : buf.length,
+                    size        : buffer.length,
                 } );
             } );
         } );
@@ -153,47 +226,52 @@ export function sendRequest( spec : ApiRequestSpec ) : Promise<ApiResponse>
     } );
 }
 
+/** Build a failed-call ApiResponse carrying the elapsed time and an error message. */
 function errorResponse( error : string, started : number ) : ApiResponse
 {
     return { ok: false, status: 0, statusText: "", headers: {}, body: "", timeMs: Date.now() - started, size: 0, error };
 }
 
 // ── saved requests (committed in the repo, per service) ──────────────────────────────────────────
+/** Path to the service's committed saved-requests file (apps/core/<svc>/api-requests.json). */
 function savedPath( service : string ) : string
 {
     return join( serviceDir( service ), "api-requests.json" );
 }
 
-export function listSaved( service : string ) : SavedRequest[]
+/** Read the service's saved requests (empty list if the file is missing or unparseable). */
+export function listSaved( service : string ) : Array<SavedRequest>
 {
-    const p : string = savedPath( service );
-    if ( !existsSync( p ) ) return [];
+    const path : string = savedPath( service );
+    if ( !existsSync( path ) ) return [];
     try
     {
-        const parsed = JSON.parse( readFileSync( p, "utf8" ) ) as { requests? : SavedRequest[] };
+        const parsed = JSON.parse( readFileSync( path, "utf8" ) ) as { requests? : Array<SavedRequest> };
         return parsed.requests ?? [];
     }
     catch { return []; }
 }
 
-function writeSaved( service : string, requests : SavedRequest[] ) : void
+/** Persist the full saved-requests list back to the service's api-requests.json. */
+function writeSaved( service : string, requests : Array<SavedRequest> ) : void
 {
     writeFileSync( savedPath( service ), JSON.stringify( { requests }, null, 4 ) + "\n" );
 }
 
 /** Upsert a saved request by id (or append if new); returns the full list. */
-export function saveRequest( service : string, req : SavedRequest ) : SavedRequest[]
+export function saveRequest( service : string, req : SavedRequest ) : Array<SavedRequest>
 {
-    const list : SavedRequest[] = listSaved( service );
-    const idx : number = list.findIndex( ( r ) => r.id === req.id );
+    const list : Array<SavedRequest> = listSaved( service );
+    const idx : number = list.findIndex( ( saved ) => saved.id === req.id );
     if ( idx >= 0 ) list[ idx ] = req; else list.push( req );
     writeSaved( service, list );
     return list;
 }
 
-export function deleteRequest( service : string, id : string ) : SavedRequest[]
+/** Remove the saved request with the given id; returns the remaining list. */
+export function deleteRequest( service : string, id : string ) : Array<SavedRequest>
 {
-    const list : SavedRequest[] = listSaved( service ).filter( ( r ) => r.id !== id );
+    const list : Array<SavedRequest> = listSaved( service ).filter( ( saved ) => saved.id !== id );
     writeSaved( service, list );
     return list;
 }

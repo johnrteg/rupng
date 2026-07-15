@@ -25,7 +25,8 @@ import CloseIcon from "@mui/icons-material/Close";
 import FolderIcon from "@mui/icons-material/Folder";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 
-import type { ApiGwInfo, CloudCategory, CloudEdge, CloudGraph, CloudHealth, CloudNode, ContainerInfo, DiagFinding, DiagLevel, EcsServiceState, LogEvent, RouteTest, S3Listing, TargetInfo, VpcLinkDiagnosis } from "../../shared/types";
+import type { ApiGwInfo, ClockSkew, CloudCategory, CloudEdge, CloudGraph, CloudHealth, CloudNode, ContainerInfo, DiagFinding, DiagLevel, EcsServiceState, LogEvent, RouteTest, S3Listing, TargetInfo, VpcLinkDiagnosis } from "../../shared/types";
+import { TargetKind } from "../../shared/types";
 import { api } from "../api";
 import { useMetrics, type MetricHistory } from "../metricsStore";
 import { targetStore, useTarget } from "../targetStore";
@@ -61,45 +62,82 @@ const CATEGORY_LABEL : Record<CloudCategory, string> =
 const NODE_W = 204;
 const NODE_H = 50;
 
+// clock-skew thresholds (seconds): amber past WARN, red past FAIL (TOTP's ±30s window is the hard wall)
+const CLOCK_WARN_SEC = 10;
+const CLOCK_FAIL_SEC = 30;
+
+/** Header badge: host↔LocalStack clock skew. Hidden off-LocalStack / until the first sample lands. */
+function ClockSkewChip( { clock } : { clock : ClockSkew | null } ) : ReactNode
+{
+    if ( !clock ) return null;
+
+    if ( !clock.ok )
+        return (
+            <Tooltip title={clock.detail ?? "clock unavailable"}>
+                <Chip size="small" variant="outlined" label="clock —" sx={{ color: "text.disabled" }} />
+            </Tooltip>
+        );
+
+    const skew : number = clock.skewSec ?? 0;
+    const abs  : number = Math.abs( skew );
+    const color : "success" | "warning" | "error" = abs >= CLOCK_FAIL_SEC ? "error" : abs >= CLOCK_WARN_SEC ? "warning" : "success";
+    const sign : string = skew >= 0 ? "+" : "-";
+    const hint : string = abs >= CLOCK_FAIL_SEC
+        ? "Time-based codes (TOTP MFA) will fail. Restart Docker Desktop to resync the VM clock."
+        : abs >= CLOCK_WARN_SEC
+            ? "Approaching the ±30s TOTP window — consider restarting Docker Desktop."
+            : "Within the ±30s TOTP window.";
+
+    return (
+        <Tooltip title={`Host ↔ ${clock.container ?? "LocalStack"} clock differ by ${sign}${abs}s.\n${hint}`}>
+            <Chip size="small" color={color} variant={abs >= CLOCK_FAIL_SEC ? "filled" : "outlined"} label={`clock ${sign}${abs}s`} />
+        </Tooltip>
+    );
+}
+
 interface ViewTransform { tx : number; ty : number; scale : number; }
 
 interface Placed { node : CloudNode; x : number; y : number; }
-interface Laid { placed : Placed[]; edges : { points : { x : number; y : number }[] }[]; width : number; height : number; }
+interface Laid { placed : Array<Placed>; edges : { points : { x : number; y : number }[] }[]; width : number; height : number; }
 
+/** Lay out the raw reference graph left-to-right with dagre, returning placed nodes + routed edges. */
 function layout( graph : CloudGraph ) : Laid
 {
-    // `g`/`gg`/the edge param are left inferred: dagre's Graph is generic and annotating it as
-    // Graph<unknown,…> fights dagre.layout's GraphLabel constraint. Inference yields the correct types.
-    const g = new dagre.graphlib.Graph();
-    g.setGraph( { rankdir: "LR", nodesep: 26, ranksep: 70, marginx: 24, marginy: 24 } );
-    g.setDefaultEdgeLabel( () => ( {} ) );
+    // `graphLayout`/`graphLabel`/the edge param are left inferred: dagre's Graph is generic and
+    // annotating it as Graph<unknown,…> fights dagre.layout's GraphLabel constraint. Inference yields
+    // the correct types.
+    const graphLayout = new dagre.graphlib.Graph();
+    graphLayout.setGraph( { rankdir: "LR", nodesep: 26, ranksep: 70, marginx: 24, marginy: 24 } );
+    graphLayout.setDefaultEdgeLabel( () => ( {} ) );
 
-    const ids : Set<string> = new Set( graph.nodes.map( ( n ) => n.id ) );
-    for ( const n of graph.nodes ) g.setNode( n.id, { width: NODE_W, height: NODE_H } );
-    for ( const e of graph.edges ) if ( ids.has( e.from ) && ids.has( e.to ) ) g.setEdge( e.from, e.to );
+    const ids : Set<string> = new Set( graph.nodes.map( ( node ) => node.id ) );
+    for ( const node of graph.nodes ) graphLayout.setNode( node.id, { width: NODE_W, height: NODE_H } );
+    for ( const edge of graph.edges ) if ( ids.has( edge.from ) && ids.has( edge.to ) ) graphLayout.setEdge( edge.from, edge.to );
 
-    dagre.layout( g );
+    dagre.layout( graphLayout );
 
-    const placed : Placed[] = graph.nodes.map( ( node : CloudNode ) : Placed =>
+    const placed : Array<Placed> = graph.nodes.map( ( node : CloudNode ) : Placed =>
     {
-        const p : { x : number; y : number } | undefined = g.node( node.id ) as { x : number; y : number } | undefined;
-        return { node, x: p?.x ?? 0, y: p?.y ?? 0 };
+        const placement : { x : number; y : number } | undefined = graphLayout.node( node.id ) as { x : number; y : number } | undefined;
+        return { node, x: placement?.x ?? 0, y: placement?.y ?? 0 };
     } );
 
-    const edges : Laid[ "edges" ] = g.edges().map( ( e ) =>
+    const edges : Laid[ "edges" ] = graphLayout.edges().map( ( edge ) =>
     {
-        const pts : { x : number; y : number }[] = ( g.edge( e ) as { points? : { x : number; y : number }[] } ).points ?? [];
-        return { points: pts };
+        const points : { x : number; y : number }[] = ( graphLayout.edge( edge ) as { points? : { x : number; y : number }[] } ).points ?? [];
+        return { points };
     } );
 
-    const gg = g.graph();
-    return { placed, edges, width: gg.width ?? 1000, height: gg.height ?? 600 };
+    const graphLabel = graphLayout.graph();
+    return { placed, edges, width: graphLabel.width ?? 1000, height: graphLabel.height ?? 600 };
 }
 
+/** The Monitor tab — LocalStack/AWS observability: graph, architecture, containers, and diagnose views. */
 export function CloudView()
 {
     const [ graph, setGraph ]     = useState<CloudGraph | null>( null );
     const [ health, setHealth ]   = useState<CloudHealth | null>( null );
+    const [ clock, setClock ]     = useState<ClockSkew | null>( null );   // host↔container clock (LocalStack only)
     const [ loading, setLoading ] = useState<boolean>( false );
     const [ selectedId, setSelectedId ] = useState<string | null>( null );
 
@@ -108,28 +146,41 @@ export function CloudView()
     const drag = useRef<{ x : number; y : number; moved : boolean } | null>( null );
     const svgRef = useRef<SVGSVGElement | null>( null );
 
+    /** Pull the CloudFormation graph + LocalStack health together, toggling the loading flag. */
     const refresh = useCallback( async () : Promise<void> =>
     {
         setLoading( true );
-        try { const [ g, h ] = await Promise.all( [ api.cloudGraph(), api.cloudHealth() ] ); setGraph( g ); setHealth( h ); }
+        try { const [ nextGraph, nextHealth ] = await Promise.all( [ api.cloudGraph(), api.cloudHealth() ] ); setGraph( nextGraph ); setHealth( nextHealth ); }
         finally { setLoading( false ); }
     }, [] );
 
     // refresh the graph + health when the view opens AND whenever the target (LocalStack/AWS) changes
     const targetInfo : TargetInfo = useTarget();
     useEffect( () => { void refresh(); }, [ refresh, targetInfo.target.kind, targetInfo.target.profile, targetInfo.target.region ] );
-    useEffect( () => { const id = setInterval( () => { void api.cloudHealth().then( setHealth ); }, 15000 ); return () => clearInterval( id ); }, [] );
+    // poll health on a 15s interval so the status strip stays current without a full graph refresh
+    useEffect( () => { const intervalId = setInterval( () => { void api.cloudHealth().then( setHealth ); }, 15000 ); return () => clearInterval( intervalId ); }, [] );
+    // clock-skew check — LocalStack only (a real AWS target has no container to exec). Drift here silently
+    // breaks time-based codes (TOTP MFA, ±30s), so surface it. Poll every 30s.
+    useEffect( () =>
+    {
+        if ( targetInfo.target.kind !== TargetKind.LOCALSTACK ) { setClock( null ); return; }
+        const tick = () : void => { void api.localstackClockSkew().then( setClock ); };
+        tick();
+        const intervalId = setInterval( tick, 30000 );
+        return () => clearInterval( intervalId );
+    }, [ targetInfo.target.kind ] );
 
     const [ cats, setCats ] = useState<Set<CloudCategory>>( new Set() );
-    const toggleCat = ( c : CloudCategory ) : void =>
-        setCats( ( prev ) => { const n = new Set( prev ); n.has( c ) ? n.delete( c ) : n.add( c ); return n; } );
+    /** Toggle a category in/out of the active filter set. */
+    const toggleCat = ( category : CloudCategory ) : void =>
+        setCats( ( prev ) => { const next = new Set( prev ); next.has( category ) ? next.delete( category ) : next.add( category ); return next; } );
 
     // per-category node counts (over the full graph), used for the toolbar filter chips
     const catCounts : Record<CloudCategory, number> = useMemo<Record<CloudCategory, number>>( () =>
     {
-        const m : Record<CloudCategory, number> = {} as Record<CloudCategory, number>;
-        for ( const n of graph?.nodes ?? [] ) m[ n.category ] = ( m[ n.category ] ?? 0 ) + 1;
-        return m;
+        const counts : Record<CloudCategory, number> = {} as Record<CloudCategory, number>;
+        for ( const node of graph?.nodes ?? [] ) counts[ node.category ] = ( counts[ node.category ] ?? 0 ) + 1;
+        return counts;
     }, [ graph ] );
 
     // graph filtered to the selected categories (empty selection = show all)
@@ -137,41 +188,45 @@ export function CloudView()
     {
         if ( !graph ) return null;
         if ( cats.size === 0 ) return graph;
-        const nodes : CloudNode[] = graph.nodes.filter( ( n ) => cats.has( n.category ) );
-        const ids : Set<string> = new Set( nodes.map( ( n ) => n.id ) );
-        const edges : CloudEdge[] = graph.edges.filter( ( e ) => ids.has( e.from ) && ids.has( e.to ) );
+        const nodes : Array<CloudNode> = graph.nodes.filter( ( node ) => cats.has( node.category ) );
+        const ids : Set<string> = new Set( nodes.map( ( node ) => node.id ) );
+        const edges : Array<CloudEdge> = graph.edges.filter( ( edge ) => ids.has( edge.from ) && ids.has( edge.to ) );
         return { ...graph, nodes, edges };
     }, [ graph, cats ] );
 
     const laid : Laid | null = useMemo<Laid | null>( () => ( visible ? layout( visible ) : null ), [ visible ] );
-    const selected : CloudNode | null = useMemo<CloudNode | null>( () => graph?.nodes.find( ( n ) => n.id === selectedId ) ?? null, [ graph, selectedId ] );
+    const selected : CloudNode | null = useMemo<CloudNode | null>( () => graph?.nodes.find( ( node ) => node.id === selectedId ) ?? null, [ graph, selectedId ] );
 
     // pan / zoom
-    const onWheel = ( e : React.WheelEvent ) : void =>
+    /** Zoom toward the cursor: keep the world point under the pointer fixed as scale changes. */
+    const onWheel = ( event : React.WheelEvent ) : void =>
     {
         const rect : DOMRect | undefined = svgRef.current?.getBoundingClientRect();
         if ( !rect ) return;
-        const cx : number = e.clientX - rect.left, cy : number = e.clientY - rect.top;
-        setView( ( v : ViewTransform ) : ViewTransform =>
+        const cursorX : number = event.clientX - rect.left, cursorY : number = event.clientY - rect.top;
+        setView( ( prev : ViewTransform ) : ViewTransform =>
         {
-            const next : number = Math.min( 2.5, Math.max( 0.2, v.scale * ( e.deltaY < 0 ? 1.1 : 0.9 ) ) );
-            const wx : number = ( cx - v.tx ) / v.scale, wy : number = ( cy - v.ty ) / v.scale;
-            return { scale: next, tx: cx - wx * next, ty: cy - wy * next };
+            const next : number = Math.min( 2.5, Math.max( 0.2, prev.scale * ( event.deltaY < 0 ? 1.1 : 0.9 ) ) );
+            // world coords under the cursor before zoom — re-anchor the translation so they stay put
+            const worldX : number = ( cursorX - prev.tx ) / prev.scale, worldY : number = ( cursorY - prev.ty ) / prev.scale;
+            return { scale: next, tx: cursorX - worldX * next, ty: cursorY - worldY * next };
         } );
     };
-    const onDown = ( e : React.MouseEvent ) : void => { drag.current = { x: e.clientX, y: e.clientY, moved: false }; };
-    const onMove = ( e : React.MouseEvent ) : void =>
+    const onDown = ( event : React.MouseEvent ) : void => { drag.current = { x: event.clientX, y: event.clientY, moved: false }; };
+    /** Pan by the pointer delta; flag `moved` past a small threshold so a drag isn't read as a click. */
+    const onMove = ( event : React.MouseEvent ) : void =>
     {
         if ( !drag.current ) return;
-        const dx : number = e.clientX - drag.current.x, dy : number = e.clientY - drag.current.y;
-        if ( Math.abs( dx ) + Math.abs( dy ) > 3 ) drag.current.moved = true;
-        drag.current.x = e.clientX; drag.current.y = e.clientY;
-        setView( ( v ) => ( { ...v, tx: v.tx + dx, ty: v.ty + dy } ) );
+        const deltaX : number = event.clientX - drag.current.x, deltaY : number = event.clientY - drag.current.y;
+        if ( Math.abs( deltaX ) + Math.abs( deltaY ) > 3 ) drag.current.moved = true;
+        drag.current.x = event.clientX; drag.current.y = event.clientY;
+        setView( ( prev ) => ( { ...prev, tx: prev.tx + deltaX, ty: prev.ty + deltaY } ) );
     };
     const onUp = () : void => { drag.current = null; };
+    /** Reset pan + zoom to the default framing. */
     const fit = () : void => setView( { tx: 24, ty: 24, scale: 0.85 } );
 
-    const runningServices : [ string, string ][] = health ? globalThis.Object.entries( health.services ).filter( ( [ , s ] ) => s === "running" || s === "available" ) : [];
+    const runningServices : Array<[ string, string ]> = health ? globalThis.Object.entries( health.services ).filter( ( [ , status ] ) => status === "running" || status === "available" ) : [];
 
     return (
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -181,14 +236,15 @@ export function CloudView()
                 <Chip color={health?.reachable ? "success" : "error"} variant={health?.reachable ? "filled" : "outlined"}
                       label={health?.reachable ? `LocalStack reachable${health.edition ? ` · ${health.edition}` : ""}` : "LocalStack unreachable"} />
                 {health?.reachable && (
-                    <Tooltip title={runningServices.map( ( [ k, s ] ) => `${k}: ${s}` ).join( "\n" ) || "no services reported"}>
+                    <Tooltip title={runningServices.map( ( [ name, status ] ) => `${name}: ${status}` ).join( "\n" ) || "no services reported"}>
                         <Chip variant="outlined" label={`${runningServices.length} services up`} />
                     </Tooltip>
                 )}
+                <ClockSkewChip clock={clock} />
                 {graph && <Chip variant="outlined" label={`${graph.stacks.length} stacks`} />}
                 {graph && <Chip variant="outlined" label={`${graph.nodes.length} resources`} />}
                 <Box sx={{ flexGrow: 1 }} />
-                <ToggleButtonGroup size="small" exclusive value={mode} onChange={( _e, v ) => v && setMode( v )}>
+                <ToggleButtonGroup size="small" exclusive value={mode} onChange={( _event, nextMode ) => nextMode && setMode( nextMode )}>
                     <ToggleButton value="architecture" sx={{ px: 1.25 }}><SchemaIcon fontSize="small" sx={{ mr: 0.5 }} />Architecture</ToggleButton>
                     <ToggleButton value="graph" sx={{ px: 1.25 }}><AccountTreeIcon fontSize="small" sx={{ mr: 0.5 }} />Graph</ToggleButton>
                     <ToggleButton value="containers" sx={{ px: 1.25 }}><ViewListIcon fontSize="small" sx={{ mr: 0.5 }} />Containers</ToggleButton>
@@ -202,22 +258,22 @@ export function CloudView()
             {mode === "graph" && graph && graph.nodes.length > 0 && (
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, px: 1.5, py: 0.6, borderBottom: "1px solid", borderColor: "divider", flexWrap: "wrap", bgcolor: "background.paper" }}>
                     <Typography variant="caption" sx={{ color: "text.disabled", mr: 0.5 }}>{cats.size === 0 ? "showing all" : "filter:"}</Typography>
-                    {( globalThis.Object.keys( CATEGORY_LABEL ) as CloudCategory[] )
-                        .filter( ( c ) => ( catCounts[ c ] ?? 0 ) > 0 )
-                        .map( ( c ) =>
+                    {( globalThis.Object.keys( CATEGORY_LABEL ) as Array<CloudCategory> )
+                        .filter( ( category ) => ( catCounts[ category ] ?? 0 ) > 0 )
+                        .map( ( category ) =>
                         {
-                            const on : boolean = cats.has( c );
+                            const active : boolean = cats.has( category );
                             return (
                                 <Chip
-                                    key={c}
-                                    onClick={() => toggleCat( c )}
-                                    variant={on ? "filled" : "outlined"}
-                                    label={`${CATEGORY_LABEL[ c ]} ${catCounts[ c ]}`}
+                                    key={category}
+                                    onClick={() => toggleCat( category )}
+                                    variant={active ? "filled" : "outlined"}
+                                    label={`${CATEGORY_LABEL[ category ]} ${catCounts[ category ]}`}
                                     sx={{
                                         cursor      : "pointer",
-                                        borderColor : CATEGORY_COLOR[ c ],
-                                        color       : on ? "#0d1117" : CATEGORY_COLOR[ c ],
-                                        bgcolor     : on ? CATEGORY_COLOR[ c ] : "transparent",
+                                        borderColor : CATEGORY_COLOR[ category ],
+                                        color       : active ? "#0d1117" : CATEGORY_COLOR[ category ],
+                                        bgcolor     : active ? CATEGORY_COLOR[ category ] : "transparent",
                                         fontWeight  : 600,
                                         "& .MuiChip-label": { px: 1 }
                                     }}
@@ -265,36 +321,36 @@ export function CloudView()
                                 </marker>
                             </defs>
                             <g transform={`translate(${view.tx},${view.ty}) scale(${view.scale})`}>
-                                {laid.edges.map( ( e, i ) => (
+                                {laid.edges.map( ( edge, index ) => (
                                     <path
-                                        key={i}
-                                        d={smoothPath( e.points )}
+                                        key={index}
+                                        d={smoothPath( edge.points )}
                                         fill="none" stroke="#30363d" strokeWidth={1.5} markerEnd="url(#arrow)"
                                     />
                                 ) )}
                                 {laid.placed.map( ( { node, x, y } ) =>
                                 {
                                     const { color, Icon } = awsStyle( node.type, node.category );
-                                    const sel : boolean = node.id === selectedId;
+                                    const selected : boolean = node.id === selectedId;
                                     const tile : number = 30;
-                                    const ty : number = ( NODE_H - tile ) / 2;
+                                    const tileInset : number = ( NODE_H - tile ) / 2;   // vertically center the icon tile in the node
                                     return (
                                         <g key={node.id} transform={`translate(${x - NODE_W / 2},${y - NODE_H / 2})`}
                                            style={{ cursor: "pointer" }}
-                                           onClick={( ev ) => { ev.stopPropagation(); if ( !drag.current?.moved ) setSelectedId( node.id ); }}>
+                                           onClick={( event ) => { event.stopPropagation(); if ( !drag.current?.moved ) setSelectedId( node.id ); }}>
                                             <title>{`${node.type}\n${node.physicalId ?? node.logicalId}\n${node.stack}`}</title>
                                             <rect width={NODE_W} height={NODE_H} rx={7}
-                                                  fill={sel ? color : "#161b22"} fillOpacity={sel ? 0.22 : 1}
-                                                  stroke={color} strokeWidth={sel ? 2.5 : 1.5} />
+                                                  fill={selected ? color : "#161b22"} fillOpacity={selected ? 0.22 : 1}
+                                                  stroke={color} strokeWidth={selected ? 2.5 : 1.5} />
                                             {/* AWS service icon tile (official-ish color + glyph) */}
-                                            <rect x={ty} y={ty} width={tile} height={tile} rx={6} fill={color} />
-                                            <foreignObject x={ty} y={ty} width={tile} height={tile}>
+                                            <rect x={tileInset} y={tileInset} width={tile} height={tile} rx={6} fill={color} />
+                                            <foreignObject x={tileInset} y={tileInset} width={tile} height={tile}>
                                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: tile, height: tile }}>
                                                     <Icon style={{ color: "#fff", fontSize: 19 }} />
                                                 </div>
                                             </foreignObject>
-                                            <text x={ty + tile + 8} y={20} fill="#e6edf3" fontSize={13} fontWeight={700}>{trunc( node.typeLabel, 18 )}</text>
-                                            <text x={ty + tile + 8} y={37} fill="#8b949e" fontSize={10.5} fontFamily={MONO}>{trunc( nodeName( node ), 20 )}</text>
+                                            <text x={tileInset + tile + 8} y={20} fill="#e6edf3" fontSize={13} fontWeight={700}>{trunc( node.typeLabel, 18 )}</text>
+                                            <text x={tileInset + tile + 8} y={37} fill="#8b949e" fontSize={10.5} fontFamily={MONO}>{trunc( nodeName( node ), 20 )}</text>
                                         </g>
                                     );
                                 } )}
@@ -324,13 +380,13 @@ const KIND_LABEL : Record<ContainerInfo[ "kind" ], string> =
     { service: "Service", "ecs-task": "ECS", lambda: "Lambda", localstack: "LocalStack", infra: "Infra" };
 
 /** Derive the application-service label for a container (best-effort, for the filter). */
-function appOf( c : ContainerInfo ) : string
+function appOf( container : ContainerInfo ) : string
 {
-    const n : string = c.name;
-    if ( n.startsWith( "rupapp-" ) ) return n.slice( 7 ).split( "-" )[ 0 ];   // rupapp-app-app-main-1 → "app"
-    if ( c.kind === "ecs-task" ) return n.startsWith( "ls-ecs-" ) ? "ecs" : n.split( "-" )[ 0 ];
-    if ( c.kind === "localstack" ) return "localstack";
-    return n.replace( /-\d+$/, "" );   // strip a trailing compose index
+    const name : string = container.name;
+    if ( name.startsWith( "rupapp-" ) ) return name.slice( 7 ).split( "-" )[ 0 ];   // rupapp-app-app-main-1 → "app"
+    if ( container.kind === "ecs-task" ) return name.startsWith( "ls-ecs-" ) ? "ecs" : name.split( "-" )[ 0 ];
+    if ( container.kind === "localstack" ) return "localstack";
+    return name.replace( /-\d+$/, "" );   // strip a trailing compose index
 }
 
 const CPU_COLOR = "#58c4ff";   // CPU charts + donut
@@ -340,26 +396,27 @@ const MEM_COLOR = "#b07cff";   // memory charts + donut
 function TargetSelector()
 {
     const info : TargetInfo = useTarget();
-    const isAws : boolean = info.target.kind === "aws";
+    const isAws : boolean = info.target.kind === TargetKind.AWS;
     const value : string = isAws ? `aws:${info.target.profile}` : "localstack";
     const region : string = info.target.region ?? info.regions[ 0 ] ?? "us-east-1";
 
-    const onTarget = ( v : string ) : void =>
+    /** Apply a selection from the target dropdown: "localstack" or an "aws:<profile>" value. */
+    const onTarget = ( selection : string ) : void =>
     {
-        if ( v === "localstack" ) void targetStore.setTarget( { kind: "localstack" } );
-        else void targetStore.setTarget( { kind: "aws", profile: v.slice( 4 ), region } );
+        if ( selection === "localstack" ) void targetStore.setTarget( { kind: TargetKind.LOCALSTACK } );
+        else void targetStore.setTarget( { kind: TargetKind.AWS, profile: selection.slice( 4 ), region } );
     };
 
     return (
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-            <Select size="small" value={value} onChange={( e ) => onTarget( e.target.value )} sx={{ minWidth: 150, fontFamily: MONO, fontSize: 12 }}>
+            <Select size="small" value={value} onChange={( event ) => onTarget( event.target.value )} sx={{ minWidth: 150, fontFamily: MONO, fontSize: 12 }}>
                 <MenuItem value="localstack">LocalStack</MenuItem>
                 {info.profiles.length === 0 && <MenuItem disabled value="__none">(no ~/.aws profiles)</MenuItem>}
-                {info.profiles.map( ( p ) => <MenuItem key={p} value={`aws:${p}`} sx={{ fontFamily: MONO, fontSize: 12 }}>AWS · {p}</MenuItem> )}
+                {info.profiles.map( ( profile ) => <MenuItem key={profile} value={`aws:${profile}`} sx={{ fontFamily: MONO, fontSize: 12 }}>AWS · {profile}</MenuItem> )}
             </Select>
             {isAws && (
-                <Select size="small" value={region} onChange={( e ) => void targetStore.setTarget( { kind: "aws", profile: info.target.profile, region: e.target.value } )} sx={{ minWidth: 130, fontFamily: MONO, fontSize: 12 }}>
-                    {info.regions.map( ( r ) => <MenuItem key={r} value={r} sx={{ fontFamily: MONO, fontSize: 12 }}>{r}</MenuItem> )}
+                <Select size="small" value={region} onChange={( event ) => void targetStore.setTarget( { kind: TargetKind.AWS, profile: info.target.profile, region: event.target.value } )} sx={{ minWidth: 130, fontFamily: MONO, fontSize: 12 }}>
+                    {info.regions.map( ( regionName ) => <MenuItem key={regionName} value={regionName} sx={{ fontFamily: MONO, fontSize: 12 }}>{regionName}</MenuItem> )}
                 </Select>
             )}
             {info.readOnly && <Chip size="small" color="warning" variant="outlined" label="read-only" />}
@@ -367,33 +424,35 @@ function TargetSelector()
     );
 }
 
+/** The Containers view — live docker stats (or ECS CloudWatch on AWS) with type + service filters. */
 function ContainersPanel()
 {
     // history + polling live in the central singleton, so it keeps recording across tab switches
     const { containers, error, loaded, history, bins } = useMetrics();
-    const isAws : boolean = useTarget().target.kind === "aws";
+    const isAws : boolean = useTarget().target.kind === TargetKind.AWS;
     const windowMin : HistogramWindowMin = useSettings().histogramWindowMin;
 
     // multi-select filters: by type (kind) and by application service (empty set = show all)
     const [ typeSel, setTypeSel ] = useState<Set<ContainerInfo[ "kind" ]>>( new Set() );
     const [ appSel, setAppSel ]   = useState<Set<string>>( new Set() );
 
-    const kinds : ContainerInfo[ "kind" ][] = useMemo<ContainerInfo[ "kind" ][]>(
-        () => [ ...new Set( containers.map( ( c ) => c.kind ) ) ].sort(),
+    const kinds : Array<ContainerInfo[ "kind" ]> = useMemo<Array<ContainerInfo[ "kind" ]>>(
+        () => [ ...new Set( containers.map( ( container ) => container.kind ) ) ].sort(),
         [ containers ] );
-    const apps : string[] = useMemo<string[]>(
+    const apps : Array<string> = useMemo<Array<string>>(
         () => [ ...new Set( containers.map( appOf ) ) ].sort(),
         [ containers ] );
 
-    const visible : ContainerInfo[] = containers.filter( ( c ) =>
-        ( typeSel.size === 0 || typeSel.has( c.kind ) ) &&
-        ( appSel.size === 0 || appSel.has( appOf( c ) ) ) );
+    const visible : Array<ContainerInfo> = containers.filter( ( container ) =>
+        ( typeSel.size === 0 || typeSel.has( container.kind ) ) &&
+        ( appSel.size === 0 || appSel.has( appOf( container ) ) ) );
 
-    const toggle = <T,>( set : Set<T>, v : T, apply : ( s : Set<T> ) => void ) : void =>
+    /** Toggle `value` in/out of a filter set, then push the new set through `apply`. */
+    const toggle = <T,>( set : Set<T>, value : T, apply : ( next : Set<T> ) => void ) : void =>
     {
-        const n : Set<T> = new Set( set );
-        n.has( v ) ? n.delete( v ) : n.add( v );
-        apply( n );
+        const next : Set<T> = new Set( set );
+        next.has( value ) ? next.delete( value ) : next.add( value );
+        apply( next );
     };
 
     return (
@@ -407,23 +466,23 @@ function ContainersPanel()
             {containers.length > 0 && (
                 <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 0.75, mb: 1 }}>
                     <Typography variant="caption" sx={{ color: "text.disabled" }}>type</Typography>
-                    {kinds.map( ( k ) =>
+                    {kinds.map( ( kind ) =>
                     {
-                        const on : boolean = typeSel.has( k );
+                        const active : boolean = typeSel.has( kind );
                         return (
-                            <Chip key={k} size="small" label={KIND_LABEL[ k ]} onClick={() => toggle( typeSel, k, setTypeSel )}
-                                  variant={on ? "filled" : "outlined"}
-                                  sx={{ cursor: "pointer", borderColor: KIND_COLOR[ k ], color: on ? "#0d1117" : KIND_COLOR[ k ], bgcolor: on ? KIND_COLOR[ k ] : "transparent", fontWeight: 600 }} />
+                            <Chip key={kind} size="small" label={KIND_LABEL[ kind ]} onClick={() => toggle( typeSel, kind, setTypeSel )}
+                                  variant={active ? "filled" : "outlined"}
+                                  sx={{ cursor: "pointer", borderColor: KIND_COLOR[ kind ], color: active ? "#0d1117" : KIND_COLOR[ kind ], bgcolor: active ? KIND_COLOR[ kind ] : "transparent", fontWeight: 600 }} />
                         );
                     } )}
                     <Box sx={{ width: "1px", height: 18, bgcolor: "divider", mx: 0.5 }} />
                     <Typography variant="caption" sx={{ color: "text.disabled" }}>service</Typography>
-                    {apps.map( ( a ) =>
+                    {apps.map( ( app ) =>
                     {
-                        const on : boolean = appSel.has( a );
+                        const active : boolean = appSel.has( app );
                         return (
-                            <Chip key={a} size="small" label={a} onClick={() => toggle( appSel, a, setAppSel )}
-                                  variant={on ? "filled" : "outlined"} color={on ? "primary" : "default"}
+                            <Chip key={app} size="small" label={app} onClick={() => toggle( appSel, app, setAppSel )}
+                                  variant={active ? "filled" : "outlined"} color={active ? "primary" : "default"}
                                   sx={{ cursor: "pointer", fontFamily: MONO }} />
                         );
                     } )}
@@ -437,28 +496,28 @@ function ContainersPanel()
                 <Typography variant="caption" sx={{ color: "text.disabled" }}>no containers match the filter</Typography>
             )}
 
-            {visible.map( ( c ) =>
+            {visible.map( ( container ) =>
             {
-                const mem : { used : string; limit : string } = splitMem( c.memUsage );
-                const cpu : number = parseFloat( c.cpuPercent ?? "0" ) || 0;
-                const memP : number = parseFloat( c.memPercent ?? "0" ) || 0;
-                const hist : MetricHistory | undefined = history.get( c.id || c.name );
+                const mem : { used : string; limit : string } = splitMem( container.memUsage );
+                const cpuPct : number = parseFloat( container.cpuPercent ?? "0" ) || 0;
+                const memPct : number = parseFloat( container.memPercent ?? "0" ) || 0;
+                const hist : MetricHistory | undefined = history.get( container.id || container.name );
                 return (
-                    <Box key={c.id || c.name} sx={{ display: "grid", gridTemplateColumns: "1fr auto 1.8fr", gap: 2, alignItems: "center", px: 1, py: 1, borderTop: "1px solid", borderColor: "divider" }}>
+                    <Box key={container.id || container.name} sx={{ display: "grid", gridTemplateColumns: "1fr auto 1.8fr", gap: 2, alignItems: "center", px: 1, py: 1, borderTop: "1px solid", borderColor: "divider" }}>
                         {/* name + image stacked */}
                         <Box sx={{ minWidth: 0 }}>
                             <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-                                <Tooltip title={KIND_LABEL[ c.kind ]}><Box sx={{ width: 8, height: 8, borderRadius: "2px", bgcolor: KIND_COLOR[ c.kind ], flexShrink: 0 }} /></Tooltip>
-                                <Typography variant="caption" noWrap sx={{ fontFamily: MONO, fontWeight: 700 }}>{c.name}</Typography>
+                                <Tooltip title={KIND_LABEL[ container.kind ]}><Box sx={{ width: 8, height: 8, borderRadius: "2px", bgcolor: KIND_COLOR[ container.kind ], flexShrink: 0 }} /></Tooltip>
+                                <Typography variant="caption" noWrap sx={{ fontFamily: MONO, fontWeight: 700 }}>{container.name}</Typography>
                             </Box>
-                            <Typography variant="caption" noWrap sx={{ display: "block", pl: 1.6, fontFamily: MONO, color: "text.disabled" }}>{c.image}</Typography>
-                            <Typography variant="caption" noWrap sx={{ display: "block", pl: 1.6, color: "text.secondary" }}>{c.status}</Typography>
+                            <Typography variant="caption" noWrap sx={{ display: "block", pl: 1.6, fontFamily: MONO, color: "text.disabled" }}>{container.image}</Typography>
+                            <Typography variant="caption" noWrap sx={{ display: "block", pl: 1.6, color: "text.secondary" }}>{container.status}</Typography>
                         </Box>
 
                         {/* CPU + memory donut gauges */}
                         <Box sx={{ display: "flex", gap: 1.5 }}>
-                            <Donut label="CPU" value={c.cpuPercent ?? "—"} fill={cpu} color={CPU_COLOR} />
-                            <Donut label="MEM" value={mem.used} percent={c.memPercent ?? "—"} max={mem.limit} fill={memP} color={MEM_COLOR} />
+                            <Donut label="CPU" value={container.cpuPercent ?? "—"} fill={cpuPct} color={CPU_COLOR} />
+                            <Donut label="MEM" value={mem.used} percent={container.memPercent ?? "—"} max={mem.limit} fill={memPct} color={MEM_COLOR} />
                         </Box>
 
                         {/* CPU + memory history charts (window from settings) */}
@@ -525,11 +584,11 @@ function Donut(
 // A history chart (MUI X SparkLineChart, smoothed line). The x-axis is a FIXED number of bins (the
 // whole window); samples fill from the left and the line progresses rightward as data arrives, rather
 // than a short line stretched across the full width. CPU/memory use distinct colors.
-function MetricChart( { label, data, bins, color } : { label : string; data : number[]; bins : number; color : string } )
+function MetricChart( { label, data, bins, color } : { label : string; data : Array<number>; bins : number; color : string } )
 {
     const last : number = data.length > 0 ? data[ data.length - 1 ] : 0;
     // pad to `bins` with nulls on the right → constant width, line grows left→right (then rolls)
-    const padded : ( number | null )[] = data.length >= bins
+    const padded : Array<number | null> = data.length >= bins
         ? data.slice( -bins )
         : [ ...data, ...new Array( bins - data.length ).fill( null ) ];
 
@@ -541,7 +600,7 @@ function MetricChart( { label, data, bins, color } : { label : string; data : nu
             </Box>
             <Box sx={{ height: 30 }}>
                 {data.length > 1
-                    ? <SparkLineChart plotType="line" curve="natural" data={padded as unknown as number[]} height={30} colors={[ color ]} showHighlight showTooltip />
+                    ? <SparkLineChart plotType="line" curve="natural" data={padded as unknown as Array<number>} height={30} colors={[ color ]} showHighlight showTooltip />
                     : <Box sx={{ height: 30, borderRadius: 1, border: "1px dashed", borderColor: "divider", display: "grid", placeItems: "center" }}>
                           <Typography variant="caption" sx={{ fontSize: 9, color: "text.disabled" }}>collecting…</Typography>
                       </Box>}
@@ -553,33 +612,35 @@ function MetricChart( { label, data, bins, color } : { label : string; data : nu
 /** Format one docker memory figure ("7.75GiB") to one decimal + a space + decimal unit ("7.7 GB"). */
 function fmtMem( part : string ) : string
 {
-    const m : RegExpMatchArray | null = part.trim().match( /^([\d.]+)\s*([KMGT]?)i?B$/i );
-    if ( !m ) return part.trim();
-    return `${parseFloat( m[ 1 ] ).toFixed( 1 )} ${m[ 2 ].toUpperCase()}B`;
+    const match : RegExpMatchArray | null = part.trim().match( /^([\d.]+)\s*([KMGT]?)i?B$/i );
+    if ( !match ) return part.trim();
+    return `${parseFloat( match[ 1 ] ).toFixed( 1 )} ${match[ 2 ].toUpperCase()}B`;
 }
 
 /** Split docker's "24.68MiB / 7.75GiB" into used + limit, each formatted ("24.7 MB" / "7.7 GB"). */
 function splitMem( memUsage : string | undefined ) : { used : string; limit : string }
 {
     if ( !memUsage ) return { used: "—", limit: "—" };
-    const [ used, limit ] = memUsage.split( "/" ).map( ( s ) => s.trim() );
+    const [ used, limit ] = memUsage.split( "/" ).map( ( segment ) => segment.trim() );
     return { used: used ? fmtMem( used ) : "—", limit: limit ? fmtMem( limit ) : "—" };
 }
 
 // ── detail panel ─────────────────────────────────────────────────────────────────────────────────
+/** Right-hand detail panel for a selected resource: identity fields, type-specific views, log tail. */
 function NodeDetail( { node, onClose } : { node : CloudNode; onClose : () => void } )
 {
-    const [ events, setEvents ] = useState<LogEvent[] | null>( null );
+    const [ events, setEvents ] = useState<Array<LogEvent> | null>( null );
     const [ logErr, setLogErr ] = useState<string | undefined>();
     const [ busy, setBusy ]     = useState<boolean>( false );
 
     useEffect( () => { setEvents( null ); setLogErr( undefined ); }, [ node.id ] );
 
+    /** Fetch the latest CloudWatch log events for this node's log group. */
     const tail = async () : Promise<void> =>
     {
         if ( !node.logGroup ) return;
         setBusy( true );
-        try { const { events: ev, error } = await api.cloudTail( node.logGroup ); setEvents( ev ); setLogErr( error ); }
+        try { const { events: tailedEvents, error } = await api.cloudTail( node.logGroup ); setEvents( tailedEvents ); setLogErr( error ); }
         finally { setBusy( false ); }
     };
 
@@ -614,9 +675,9 @@ function NodeDetail( { node, onClose } : { node : CloudNode; onClose : () => voi
                                 <Box sx={{ mt: 1, p: 1, bgcolor: "#0a0d12", borderRadius: 1.5, border: "1px solid", borderColor: "divider", maxHeight: 320, overflow: "auto" }}>
                                     {events.length === 0
                                         ? <Typography variant="caption" sx={{ color: "text.disabled" }}>no recent log events</Typography>
-                                        : events.map( ( e, i ) => (
-                                              <Box key={i} component="pre" sx={{ m: 0, fontFamily: MONO, fontSize: 11, color: "#c9d1d9", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                                                  {e.message}
+                                        : events.map( ( event, index ) => (
+                                              <Box key={index} component="pre" sx={{ m: 0, fontFamily: MONO, fontSize: 11, color: "#c9d1d9", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                                  {event.message}
                                               </Box>
                                           ) )}
                                 </Box>
@@ -630,30 +691,31 @@ function NodeDetail( { node, onClose } : { node : CloudNode; onClose : () => voi
 }
 
 // ── ECS service live state ────────────────────────────────────────────────────────────────────
+/** Live ECS service counts (running/desired/pending), polled every 5s while mounted. */
 function EcsServiceDetail( { arn } : { arn : string } )
 {
-    const [ st, setSt ] = useState<EcsServiceState | null>( null );
+    const [ state, setState ] = useState<EcsServiceState | null>( null );
 
     useEffect( () =>
     {
         let active = true;
-        const load = () : void => { void api.ecsService( arn ).then( ( s : EcsServiceState ) => { if ( active ) setSt( s ); } ); };
+        const load = () : void => { void api.ecsService( arn ).then( ( next : EcsServiceState ) => { if ( active ) setState( next ); } ); };
         load();
-        const id : ReturnType<typeof setInterval> = setInterval( load, 5000 );
-        return () => { active = false; clearInterval( id ); };
+        const intervalId : ReturnType<typeof setInterval> = setInterval( load, 5000 );
+        return () => { active = false; clearInterval( intervalId ); };
     }, [ arn ] );
 
-    if ( !st ) return null;
-    if ( st.error ) return <Typography variant="caption" sx={{ display: "block", mt: 1, color: "warning.main" }}>{st.error}</Typography>;
+    if ( !state ) return null;
+    if ( state.error ) return <Typography variant="caption" sx={{ display: "block", mt: 1, color: "warning.main" }}>{state.error}</Typography>;
 
-    const healthy : boolean = ( st.runningCount ?? 0 ) >= ( st.desiredCount ?? 0 ) && ( st.desiredCount ?? 0 ) > 0;
+    const healthy : boolean = ( state.runningCount ?? 0 ) >= ( state.desiredCount ?? 0 ) && ( state.desiredCount ?? 0 ) > 0;
 
     return (
         <Box sx={{ mt: 1.5, mb: 0.5 }}>
             <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
-                <Chip size="small" color={healthy ? "success" : "warning"} label={`running ${st.runningCount ?? 0}/${st.desiredCount ?? 0}`} />
-                {( st.pendingCount ?? 0 ) > 0 && <Chip size="small" variant="outlined" label={`pending ${st.pendingCount}`} />}
-                {st.status && <Typography variant="caption" sx={{ color: "text.secondary" }}>{st.status}</Typography>}
+                <Chip size="small" color={healthy ? "success" : "warning"} label={`running ${state.runningCount ?? 0}/${state.desiredCount ?? 0}`} />
+                {( state.pendingCount ?? 0 ) > 0 && <Chip size="small" variant="outlined" label={`pending ${state.pendingCount}`} />}
+                {state.status && <Typography variant="caption" sx={{ color: "text.secondary" }}>{state.status}</Typography>}
             </Box>
             <Typography variant="caption" sx={{ display: "block", mt: 0.5, color: "text.disabled" }}>
                 Per-task CPU/memory is in the <b>Containers</b> view (docker stats).
@@ -663,11 +725,13 @@ function EcsServiceDetail( { arn } : { arn : string } )
 }
 
 // ── S3 bucket browser ─────────────────────────────────────────────────────────────────────────
+/** Prefix-by-prefix S3 object browser with a clickable breadcrumb. */
 function S3Browser( { bucket } : { bucket : string } )
 {
     const [ listing, setListing ] = useState<S3Listing | null>( null );
     const [ busy, setBusy ]       = useState<boolean>( false );
 
+    /** List the bucket at the given prefix into state. */
     const load = useCallback( async ( prefix : string ) : Promise<void> =>
     {
         setBusy( true );
@@ -678,7 +742,7 @@ function S3Browser( { bucket } : { bucket : string } )
     useEffect( () => { void load( "" ); }, [ load ] );
 
     const prefix : string = listing?.prefix ?? "";
-    const segs : string[] = prefix.split( "/" ).filter( Boolean );
+    const segments : Array<string> = prefix.split( "/" ).filter( Boolean );
 
     return (
         <Box sx={{ mt: 1.5 }}>
@@ -690,10 +754,10 @@ function S3Browser( { bucket } : { bucket : string } )
             {/* breadcrumb */}
             <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 0.25, mb: 0.5 }}>
                 <Button size="small" sx={{ minWidth: 0, px: 0.5, fontFamily: MONO, fontSize: 11 }} onClick={() => void load( "" )}>{bucket}</Button>
-                {segs.map( ( s, i ) => (
-                    <Box key={i} sx={{ display: "flex", alignItems: "center" }}>
+                {segments.map( ( segment, index ) => (
+                    <Box key={index} sx={{ display: "flex", alignItems: "center" }}>
                         <Typography variant="caption" sx={{ color: "text.disabled" }}>/</Typography>
-                        <Button size="small" sx={{ minWidth: 0, px: 0.5, fontFamily: MONO, fontSize: 11 }} onClick={() => void load( segs.slice( 0, i + 1 ).join( "/" ) + "/" )}>{s}</Button>
+                        <Button size="small" sx={{ minWidth: 0, px: 0.5, fontFamily: MONO, fontSize: 11 }} onClick={() => void load( segments.slice( 0, index + 1 ).join( "/" ) + "/" )}>{segment}</Button>
                     </Box>
                 ) )}
             </Box>
@@ -705,18 +769,18 @@ function S3Browser( { bucket } : { bucket : string } )
                         ? <Typography variant="caption" sx={{ color: "text.disabled", p: 1, display: "block" }}>empty</Typography>
                         : (
                             <>
-                                {listing?.folders.map( ( f ) => (
-                                    <Box key={f} onClick={() => void load( f )}
+                                {listing?.folders.map( ( folder ) => (
+                                    <Box key={folder} onClick={() => void load( folder )}
                                          sx={{ display: "flex", alignItems: "center", gap: 0.75, px: 1, py: 0.5, cursor: "pointer", "&:hover": { bgcolor: "action.hover" } }}>
                                         <FolderIcon sx={{ fontSize: 15, color: "primary.main" }} />
-                                        <Typography variant="caption" sx={{ fontFamily: MONO }}>{basename( f )}/</Typography>
+                                        <Typography variant="caption" sx={{ fontFamily: MONO }}>{basename( folder )}/</Typography>
                                     </Box>
                                 ) )}
-                                {listing?.objects.map( ( o ) => (
-                                    <Box key={o.key} sx={{ display: "flex", alignItems: "center", gap: 0.75, px: 1, py: 0.5 }}>
+                                {listing?.objects.map( ( object ) => (
+                                    <Box key={object.key} sx={{ display: "flex", alignItems: "center", gap: 0.75, px: 1, py: 0.5 }}>
                                         <InsertDriveFileIcon sx={{ fontSize: 15, color: "text.disabled" }} />
-                                        <Typography variant="caption" sx={{ fontFamily: MONO, flexGrow: 1, wordBreak: "break-all" }}>{basename( o.key )}</Typography>
-                                        <Typography variant="caption" sx={{ color: "text.disabled" }}>{humanSize( o.size )}</Typography>
+                                        <Typography variant="caption" sx={{ fontFamily: MONO, flexGrow: 1, wordBreak: "break-all" }}>{basename( object.key )}</Typography>
+                                        <Typography variant="caption" sx={{ color: "text.disabled" }}>{humanSize( object.size )}</Typography>
                                     </Box>
                                 ) )}
                             </>
@@ -728,6 +792,7 @@ function S3Browser( { bucket } : { bucket : string } )
 }
 
 // ── API Gateway routes ────────────────────────────────────────────────────────────────────────
+/** Lists an API Gateway's routes + endpoint for the selected API resource (fetched once on mount). */
 function ApiGatewayRoutes( { apiId } : { apiId : string } )
 {
     const [ info, setInfo ] = useState<ApiGwInfo | null>( null );
@@ -737,7 +802,7 @@ function ApiGatewayRoutes( { apiId } : { apiId : string } )
     {
         let active = true;
         setBusy( true );
-        void api.apigwRoutes( apiId ).then( ( i ) => { if ( active ) setInfo( i ); } ).finally( () => { if ( active ) setBusy( false ); } );
+        void api.apigwRoutes( apiId ).then( ( result ) => { if ( active ) setInfo( result ); } ).finally( () => { if ( active ) setBusy( false ); } );
         return () => { active = false; };
     }, [ apiId ] );
 
@@ -752,10 +817,10 @@ function ApiGatewayRoutes( { apiId } : { apiId : string } )
             {info?.error && <Typography variant="caption" sx={{ color: "warning.main" }}>{info.error}</Typography>}
             {info && info.routes.length > 0 && (
                 <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, maxHeight: 280, overflow: "auto" }}>
-                    {info.routes.map( ( r ) => (
-                        <Box key={r.routeKey} sx={{ px: 1, py: 0.5, borderBottom: "1px solid", borderColor: "divider" }}>
-                            <Typography variant="caption" sx={{ fontFamily: MONO, fontWeight: 600, display: "block" }}>{r.routeKey}</Typography>
-                            {r.target && <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: MONO }}>{r.target}</Typography>}
+                    {info.routes.map( ( route ) => (
+                        <Box key={route.routeKey} sx={{ px: 1, py: 0.5, borderBottom: "1px solid", borderColor: "divider" }}>
+                            <Typography variant="caption" sx={{ fontFamily: MONO, fontWeight: 600, display: "block" }}>{route.routeKey}</Typography>
+                            {route.target && <Typography variant="caption" sx={{ color: "text.disabled", fontFamily: MONO }}>{route.target}</Typography>}
                         </Box>
                     ) )}
                 </Box>
@@ -765,20 +830,23 @@ function ApiGatewayRoutes( { apiId } : { apiId : string } )
     );
 }
 
+/** Last path segment of an S3 key (trailing slash stripped) — the displayed file/folder name. */
 function basename( key : string ) : string
 {
-    const parts : string[] = key.replace( /\/$/, "" ).split( "/" );
+    const parts : Array<string> = key.replace( /\/$/, "" ).split( "/" );
     return parts[ parts.length - 1 ] ?? key;
 }
 
-function humanSize( n : number ) : string
+/** Format a byte count as a human-readable size (B / KB / MB / GB). */
+function humanSize( bytes : number ) : string
 {
-    if ( n < 1024 ) return `${n} B`;
-    if ( n < 1024 * 1024 ) return `${( n / 1024 ).toFixed( 1 )} KB`;
-    if ( n < 1024 * 1024 * 1024 ) return `${( n / 1024 / 1024 ).toFixed( 1 )} MB`;
-    return `${( n / 1024 / 1024 / 1024 ).toFixed( 1 )} GB`;
+    if ( bytes < 1024 ) return `${bytes} B`;
+    if ( bytes < 1024 * 1024 ) return `${( bytes / 1024 ).toFixed( 1 )} KB`;
+    if ( bytes < 1024 * 1024 * 1024 ) return `${( bytes / 1024 / 1024 ).toFixed( 1 )} MB`;
+    return `${( bytes / 1024 / 1024 / 1024 ).toFixed( 1 )} GB`;
 }
 
+/** A labeled read-only key/value row in the detail panel (mono font for IDs/ARNs). */
 function Field( { label, value, mono } : { label : string; value : string; mono? : boolean } )
 {
     return (
@@ -789,7 +857,8 @@ function Field( { label, value, mono } : { label : string; value : string; mono?
     );
 }
 
-function trunc( s : string, n : number ) : string { return s.length > n ? s.slice( 0, n - 1 ) + "…" : s; }
+/** Truncate `text` to at most `max` chars, appending an ellipsis when shortened. */
+function trunc( text : string, max : number ) : string { return text.length > max ? text.slice( 0, max - 1 ) + "…" : text; }
 
 /** Smooth an edge's routed points into a bezier SVG path (Catmull-Rom → cubic bezier). */
 function smoothPath( points : { x : number; y : number }[] ) : string
@@ -799,49 +868,52 @@ function smoothPath( points : { x : number; y : number }[] ) : string
     // two points → a single horizontal-ish cubic curve (rankdir is LR)
     if ( points.length === 2 )
     {
-        const [ a, b ] = points;
-        const mx : number = ( a.x + b.x ) / 2;
-        return `M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`;
+        const [ start, end ] = points;
+        const midX : number = ( start.x + end.x ) / 2;
+        return `M${start.x},${start.y} C${midX},${start.y} ${midX},${end.y} ${end.x},${end.y}`;
     }
 
-    const p : { x : number; y : number }[] = points;
-    let d : string = `M${p[ 0 ].x},${p[ 0 ].y}`;
-    for ( let i : number = 0; i < p.length - 1; i++ )
+    let path : string = `M${points[ 0 ].x},${points[ 0 ].y}`;
+    for ( let index : number = 0; index < points.length - 1; index++ )
     {
-        const p0 : { x : number; y : number } = p[ i - 1 ] ?? p[ i ];
-        const p1 : { x : number; y : number } = p[ i ];
-        const p2 : { x : number; y : number } = p[ i + 1 ];
-        const p3 : { x : number; y : number } = p[ i + 2 ] ?? p2;
-        const cp1x : number = p1.x + ( p2.x - p0.x ) / 6;
-        const cp1y : number = p1.y + ( p2.y - p0.y ) / 6;
-        const cp2x : number = p2.x - ( p3.x - p1.x ) / 6;
-        const cp2y : number = p2.y - ( p3.y - p1.y ) / 6;
-        d += ` C${cp1x},${cp1y} ${cp2x},${cp2y} ${p2.x},${p2.y}`;
+        // prev / current / next / next-next, clamped at the ends — the four points the curve interpolates
+        const prev : { x : number; y : number } = points[ index - 1 ] ?? points[ index ];
+        const curr : { x : number; y : number } = points[ index ];
+        const next : { x : number; y : number } = points[ index + 1 ];
+        const after : { x : number; y : number } = points[ index + 2 ] ?? next;
+        // control points placed 1/6 along the neighbor tangents (Catmull-Rom → bezier conversion)
+        const control1X : number = curr.x + ( next.x - prev.x ) / 6;
+        const control1Y : number = curr.y + ( next.y - prev.y ) / 6;
+        const control2X : number = next.x - ( after.x - curr.x ) / 6;
+        const control2Y : number = next.y - ( after.y - curr.y ) / 6;
+        path += ` C${control1X},${control1Y} ${control2X},${control2Y} ${next.x},${next.y}`;
     }
-    return d;
+    return path;
 }
 
 /** Readable node subtitle: the physical name, unless it's an opaque ARN — then the logical id. */
 function nodeName( node : CloudNode ) : string
 {
-    const p : string | undefined = node.physicalId;
-    if ( !p || p.startsWith( "arn:" ) ) return node.logicalId;
-    return p;
+    const physicalId : string | undefined = node.physicalId;
+    if ( !physicalId || physicalId.startsWith( "arn:" ) ) return node.logicalId;
+    return physicalId;
 }
 
 // ── VpcLink data-path diagnosis (API Gateway → VpcLink → ALB → ECS) ─────────────────────────────
 const DIAG_COLOR : Record<DiagLevel, string> = { ok: "#3fb950", warn: "#d29922", error: "#f85149" };
 const DIAG_ICON  : Record<DiagLevel, string> = { ok: "✓", warn: "!", error: "✕" };
 
+/** The Diagnose view — read-only walk of the API Gateway → VpcLink → ALB → ECS request path. */
 function DiagnosePanel()
 {
     const targetInfo : TargetInfo = useTarget();
     const [ diag, setDiag ] = useState<VpcLinkDiagnosis | null>( null );
     const [ busy, setBusy ] = useState<boolean>( false );
     const [ copied, setCopied ] = useState<boolean>( false );
-    const [ tests, setTests ] = useState<RouteTest[] | null>( null );
+    const [ tests, setTests ] = useState<Array<RouteTest> | null>( null );
     const [ testing, setTesting ] = useState<boolean>( false );
 
+    /** Run the read-only data-path diagnosis, clearing any prior routing-test results. */
     const run = useCallback( async () : Promise<void> =>
     {
         setBusy( true );
@@ -856,34 +928,36 @@ function DiagnosePanel()
     // invoke every route through its gateway URL — the actual end-to-end routing test
     const testRoutes : { apiId : string; routeKey : string; method : string; url : string }[] = useMemo( () =>
     {
-        const out : { apiId : string; routeKey : string; method : string; url : string }[] = [];
-        for ( const a of diag?.apis ?? [] )
+        const routes : { apiId : string; routeKey : string; method : string; url : string }[] = [];
+        for ( const apiEntry of diag?.apis ?? [] )
         {
-            if ( !a.endpoint ) continue;
-            for ( const routeKey of a.routes )
+            if ( !apiEntry.endpoint ) continue;
+            for ( const routeKey of apiEntry.routes )
             {
+                // "$default" has no method/path; otherwise routeKey is "METHOD /path". ANY → GET to probe.
                 const [ rawMethod, rawPath = "/" ] = routeKey === "$default" ? [ "GET", "/" ] : routeKey.split( /\s+/ );
                 const method : string = rawMethod === "ANY" ? "GET" : rawMethod;
-                out.push( { apiId: a.apiId, routeKey, method, url: a.endpoint + rawPath } );
+                routes.push( { apiId: apiEntry.apiId, routeKey, method, url: apiEntry.endpoint + rawPath } );
             }
         }
-        return out;
+        return routes;
     }, [ diag ] );
 
+    /** Invoke each candidate route through its gateway URL and record the results. */
     const runTests = async () : Promise<void> =>
     {
         setTesting( true );
         try
         {
-            const results : RouteTest[] = [];
-            for ( const t of testRoutes )
+            const results : Array<RouteTest> = [];
+            for ( const route of testRoutes )
             {
-                const r = await api.apiSend( { method: t.method, url: t.url, headers: {} } );
+                const response = await api.apiSend( { method: route.method, url: route.url, headers: {} } );
                 results.push( {
-                    apiId: t.apiId, routeKey: t.routeKey, method: t.method, url: t.url,
-                    ok: r.ok, status: r.status, timeMs: r.timeMs,
-                    bodySnippet: r.body ? r.body.slice( 0, 200 ) : undefined,
-                    error: r.error
+                    apiId: route.apiId, routeKey: route.routeKey, method: route.method, url: route.url,
+                    ok: response.ok, status: response.status, timeMs: response.timeMs,
+                    bodySnippet: response.body ? response.body.slice( 0, 200 ) : undefined,
+                    error: response.error
                 } );
             }
             setTests( results );
@@ -891,6 +965,7 @@ function DiagnosePanel()
         finally { setTesting( false ); }
     };
 
+    /** Copy a pasteable markdown report of the diagnosis (+ any tests) to the clipboard. */
     const copyReport = () : void =>
     {
         if ( !diag ) return;
@@ -932,13 +1007,13 @@ function DiagnosePanel()
             {/* findings — the verdict */}
             {diag && (
                 <Box sx={{ mb: 2 }}>
-                    {diag.findings.map( ( f : DiagFinding, i : number ) => (
-                        <Box key={i} sx={{ display: "flex", gap: 1, mb: 0.75, p: 1, borderRadius: 1.5,
-                                           border: "1px solid", borderColor: DIAG_COLOR[ f.level ], bgcolor: `${DIAG_COLOR[ f.level ]}14` }}>
-                            <Typography sx={{ color: DIAG_COLOR[ f.level ], fontWeight: 800, lineHeight: 1.4 }}>{DIAG_ICON[ f.level ]}</Typography>
+                    {diag.findings.map( ( finding : DiagFinding, index : number ) => (
+                        <Box key={index} sx={{ display: "flex", gap: 1, mb: 0.75, p: 1, borderRadius: 1.5,
+                                           border: "1px solid", borderColor: DIAG_COLOR[ finding.level ], bgcolor: `${DIAG_COLOR[ finding.level ]}14` }}>
+                            <Typography sx={{ color: DIAG_COLOR[ finding.level ], fontWeight: 800, lineHeight: 1.4 }}>{DIAG_ICON[ finding.level ]}</Typography>
                             <Box>
-                                <Typography variant="body2" sx={{ fontWeight: 700, color: DIAG_COLOR[ f.level ] }}>{f.title}</Typography>
-                                {f.detail && <Typography variant="caption" sx={{ color: "text.secondary" }}>{f.detail}</Typography>}
+                                <Typography variant="body2" sx={{ fontWeight: 700, color: DIAG_COLOR[ finding.level ] }}>{finding.title}</Typography>
+                                {finding.detail && <Typography variant="caption" sx={{ color: "text.secondary" }}>{finding.detail}</Typography>}
                             </Box>
                         </Box>
                     ) )}
@@ -952,22 +1027,22 @@ function DiagnosePanel()
                         Routing test — invoked through the gateway URL
                     </Typography>
                     {tests.length === 0 && <Empty />}
-                    {tests.map( ( t : RouteTest, i : number ) =>
+                    {tests.map( ( test : RouteTest, index : number ) =>
                     {
-                        const good : boolean = t.ok && !t.error;
+                        const good : boolean = test.ok && !test.error;
                         const color : string = good ? DIAG_COLOR.ok : DIAG_COLOR.error;
                         return (
-                            <Box key={i} sx={{ mb: 0.75, p: 1, borderRadius: 1.5, border: "1px solid", borderColor: color, bgcolor: `${color}14` }}>
+                            <Box key={index} sx={{ mb: 0.75, p: 1, borderRadius: 1.5, border: "1px solid", borderColor: color, bgcolor: `${color}14` }}>
                                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                                    <Chip size="small" label={good ? `${t.status} OK` : ( t.error ? "FAILED" : `${t.status}` )}
+                                    <Chip size="small" label={good ? `${test.status} OK` : ( test.error ? "FAILED" : `${test.status}` )}
                                           sx={{ bgcolor: color, color: "#0d1117", fontWeight: 700 }} />
-                                    <Typography variant="body2" sx={{ fontFamily: MONO }}>{t.method} {t.routeKey}</Typography>
+                                    <Typography variant="body2" sx={{ fontFamily: MONO }}>{test.method} {test.routeKey}</Typography>
                                     <Box sx={{ flexGrow: 1 }} />
-                                    <Typography variant="caption" sx={{ color: "text.disabled" }}>{t.timeMs} ms</Typography>
+                                    <Typography variant="caption" sx={{ color: "text.disabled" }}>{test.timeMs} ms</Typography>
                                 </Box>
-                                <Typography variant="caption" sx={{ display: "block", color: "text.disabled", fontFamily: MONO, wordBreak: "break-all" }}>{t.url}</Typography>
-                                {t.error && <Typography variant="caption" sx={{ display: "block", color: DIAG_COLOR.error }}>{t.error}</Typography>}
-                                {!t.error && t.bodySnippet && <Typography variant="caption" sx={{ display: "block", color: "text.secondary", fontFamily: MONO, wordBreak: "break-all" }}>{t.bodySnippet}</Typography>}
+                                <Typography variant="caption" sx={{ display: "block", color: "text.disabled", fontFamily: MONO, wordBreak: "break-all" }}>{test.url}</Typography>
+                                {test.error && <Typography variant="caption" sx={{ display: "block", color: DIAG_COLOR.error }}>{test.error}</Typography>}
+                                {!test.error && test.bodySnippet && <Typography variant="caption" sx={{ display: "block", color: "text.secondary", fontFamily: MONO, wordBreak: "break-all" }}>{test.bodySnippet}</Typography>}
                             </Box>
                         );
                     } )}
@@ -979,14 +1054,14 @@ function DiagnosePanel()
                 <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.5 }}>
                     <DiagSection title={`ECS services (${diag.services.length})`}>
                         {diag.services.length === 0 && <Empty />}
-                        {diag.services.map( ( s ) => (
-                            <Box key={`${s.cluster}/${s.service}`} sx={{ mb: 0.75 }}>
+                        {diag.services.map( ( service ) => (
+                            <Box key={`${service.cluster}/${service.service}`} sx={{ mb: 0.75 }}>
                                 <Typography variant="body2" sx={{ fontFamily: MONO }}>
-                                    {s.service} <span style={{ color: s.running > 0 ? DIAG_COLOR.ok : DIAG_COLOR.error }}>{s.running}/{s.desired} running</span>
+                                    {service.service} <span style={{ color: service.running > 0 ? DIAG_COLOR.ok : DIAG_COLOR.error }}>{service.running}/{service.desired} running</span>
                                 </Typography>
-                                {s.tasks.map( ( t ) => (
-                                    <Typography key={t.taskArn} variant="caption" sx={{ display: "block", color: "text.disabled", fontFamily: MONO, pl: 1 }}>
-                                        {t.taskArn.slice( 0, 12 )} · {t.lastStatus} · {t.healthStatus}{t.ip ? ` · ${t.ip}` : ""}
+                                {service.tasks.map( ( task ) => (
+                                    <Typography key={task.taskArn} variant="caption" sx={{ display: "block", color: "text.disabled", fontFamily: MONO, pl: 1 }}>
+                                        {task.taskArn.slice( 0, 12 )} · {task.lastStatus} · {task.healthStatus}{task.ip ? ` · ${task.ip}` : ""}
                                     </Typography>
                                 ) )}
                             </Box>
@@ -995,17 +1070,17 @@ function DiagnosePanel()
 
                     <DiagSection title={`ALB target groups (${diag.targetGroups.length})`}>
                         {diag.targetGroups.length === 0 && <Empty />}
-                        {diag.targetGroups.map( ( tg ) => (
-                            <Box key={tg.name} sx={{ mb: 0.75 }}>
+                        {diag.targetGroups.map( ( targetGroup ) => (
+                            <Box key={targetGroup.name} sx={{ mb: 0.75 }}>
                                 <Typography variant="body2" sx={{ fontFamily: MONO }}>
-                                    {tg.name} <span style={{ color: "#8b949e" }}>{tg.protocol}:{tg.port} {tg.targetType}</span>
+                                    {targetGroup.name} <span style={{ color: "#8b949e" }}>{targetGroup.protocol}:{targetGroup.port} {targetGroup.targetType}</span>
                                 </Typography>
-                                {tg.targets.length === 0
+                                {targetGroup.targets.length === 0
                                     ? <Typography variant="caption" sx={{ display: "block", color: DIAG_COLOR.error, pl: 1 }}>no registered targets</Typography>
-                                    : tg.targets.map( ( t, i ) => (
-                                        <Typography key={i} variant="caption" sx={{ display: "block", pl: 1, fontFamily: MONO,
-                                                    color: /healthy/i.test( t.state ) ? DIAG_COLOR.ok : DIAG_COLOR.warn }}>
-                                            {t.id}{t.port ? `:${t.port}` : ""} · {t.state}{t.reason ? ` (${t.reason})` : ""}
+                                    : targetGroup.targets.map( ( target, index ) => (
+                                        <Typography key={index} variant="caption" sx={{ display: "block", pl: 1, fontFamily: MONO,
+                                                    color: /healthy/i.test( target.state ) ? DIAG_COLOR.ok : DIAG_COLOR.warn }}>
+                                            {target.id}{target.port ? `:${target.port}` : ""} · {target.state}{target.reason ? ` (${target.reason})` : ""}
                                         </Typography>
                                     ) )}
                             </Box>
@@ -1014,33 +1089,33 @@ function DiagnosePanel()
 
                     <DiagSection title={`Load balancers (${diag.loadBalancers.length})`}>
                         {diag.loadBalancers.length === 0 && <Empty />}
-                        {diag.loadBalancers.map( ( lb ) => (
-                            <Typography key={lb.name} variant="caption" sx={{ display: "block", fontFamily: MONO, color: "text.secondary" }}>
-                                {lb.name} · {lb.type} · {lb.scheme} · {lb.state}
+                        {diag.loadBalancers.map( ( loadBalancer ) => (
+                            <Typography key={loadBalancer.name} variant="caption" sx={{ display: "block", fontFamily: MONO, color: "text.secondary" }}>
+                                {loadBalancer.name} · {loadBalancer.type} · {loadBalancer.scheme} · {loadBalancer.state}
                             </Typography>
                         ) )}
                     </DiagSection>
 
                     <DiagSection title={`VpcLinks (${diag.vpcLinks.length})`}>
                         {diag.vpcLinks.length === 0 && <Empty />}
-                        {diag.vpcLinks.map( ( l ) => (
-                            <Typography key={l.id} variant="caption" sx={{ display: "block", fontFamily: MONO,
-                                        color: /AVAILABLE/i.test( l.status ?? "" ) ? DIAG_COLOR.ok : DIAG_COLOR.warn }}>
-                                {l.name ?? l.id} · {l.status}
+                        {diag.vpcLinks.map( ( vpcLink ) => (
+                            <Typography key={vpcLink.id} variant="caption" sx={{ display: "block", fontFamily: MONO,
+                                        color: /AVAILABLE/i.test( vpcLink.status ?? "" ) ? DIAG_COLOR.ok : DIAG_COLOR.warn }}>
+                                {vpcLink.name ?? vpcLink.id} · {vpcLink.status}
                             </Typography>
                         ) )}
                     </DiagSection>
 
                     <DiagSection title={`HTTP APIs (${diag.apis.length})`} wide>
                         {diag.apis.length === 0 && <Empty />}
-                        {diag.apis.map( ( a ) => (
-                            <Box key={a.apiId} sx={{ mb: 0.75 }}>
-                                <Typography variant="body2" sx={{ fontFamily: MONO }}>{a.name ?? a.apiId} <span style={{ color: "#8b949e" }}>{a.protocol} · {a.apiId}</span></Typography>
-                                <Typography variant="caption" sx={{ display: "block", color: "text.disabled", pl: 1 }}>routes: {a.routes.join( ", " ) || "—"}</Typography>
-                                {a.integrations.map( ( ig ) => (
-                                    <Typography key={ig.id} variant="caption" sx={{ display: "block", pl: 1, fontFamily: MONO,
-                                                color: /VPC_LINK/i.test( ig.connectionType ?? "" ) ? DIAG_COLOR.ok : "text.disabled" }}>
-                                        {ig.connectionType ?? "—"}{ig.connectionId ? ` (${ig.connectionId})` : ""} → {trunc( ig.uri ?? "—", 60 )}
+                        {diag.apis.map( ( apiEntry ) => (
+                            <Box key={apiEntry.apiId} sx={{ mb: 0.75 }}>
+                                <Typography variant="body2" sx={{ fontFamily: MONO }}>{apiEntry.name ?? apiEntry.apiId} <span style={{ color: "#8b949e" }}>{apiEntry.protocol} · {apiEntry.apiId}</span></Typography>
+                                <Typography variant="caption" sx={{ display: "block", color: "text.disabled", pl: 1 }}>routes: {apiEntry.routes.join( ", " ) || "—"}</Typography>
+                                {apiEntry.integrations.map( ( integration ) => (
+                                    <Typography key={integration.id} variant="caption" sx={{ display: "block", pl: 1, fontFamily: MONO,
+                                                color: /VPC_LINK/i.test( integration.connectionType ?? "" ) ? DIAG_COLOR.ok : "text.disabled" }}>
+                                        {integration.connectionType ?? "—"}{integration.connectionId ? ` (${integration.connectionId})` : ""} → {trunc( integration.uri ?? "—", 60 )}
                                     </Typography>
                                 ) )}
                             </Box>
@@ -1052,6 +1127,7 @@ function DiagnosePanel()
     );
 }
 
+/** A titled bordered section in the diagnose grid; `wide` spans both columns. */
 function DiagSection( { title, wide, children } : { title : string; wide? : boolean; children : ReactNode } )
 {
     return (
@@ -1062,52 +1138,53 @@ function DiagSection( { title, wide, children } : { title : string; wide? : bool
     );
 }
 
+/** Placeholder shown when a diagnose section has no entries. */
 function Empty() { return <Typography variant="caption" sx={{ color: "text.disabled" }}>none found</Typography>; }
 
 /** Build a markdown report from a diagnosis — pasteable into a support ticket. */
-function diagReport( d : VpcLinkDiagnosis, tests : RouteTest[] | null ) : string
+function diagReport( diagnosis : VpcLinkDiagnosis, tests : Array<RouteTest> | null ) : string
 {
-    const L : string[] = [];
-    L.push( `# API Gateway → VpcLink → ALB → ECS diagnosis (${d.targetKind})` );
-    L.push( "" );
-    L.push( "## Findings" );
-    for ( const f of d.findings ) L.push( `- [${f.level.toUpperCase()}] ${f.title}${f.detail ? ` — ${f.detail}` : ""}` );
-    L.push( "" );
+    const lines : Array<string> = [];
+    lines.push( `# API Gateway → VpcLink → ALB → ECS diagnosis (${diagnosis.targetKind})` );
+    lines.push( "" );
+    lines.push( "## Findings" );
+    for ( const finding of diagnosis.findings ) lines.push( `- [${finding.level.toUpperCase()}] ${finding.title}${finding.detail ? ` — ${finding.detail}` : ""}` );
+    lines.push( "" );
     if ( tests && tests.length > 0 )
     {
-        L.push( "## Routing test (invoked through the gateway URL)" );
-        for ( const t of tests )
-            L.push( `- ${t.method} ${t.routeKey} → ${t.url}\n    - ${t.error ? `FAILED: ${t.error}` : `${t.status} (${t.timeMs} ms)`}` );
-        L.push( "" );
+        lines.push( "## Routing test (invoked through the gateway URL)" );
+        for ( const test of tests )
+            lines.push( `- ${test.method} ${test.routeKey} → ${test.url}\n    - ${test.error ? `FAILED: ${test.error}` : `${test.status} (${test.timeMs} ms)`}` );
+        lines.push( "" );
     }
-    L.push( "## ECS services" );
-    if ( d.services.length === 0 ) L.push( "- none" );
-    for ( const s of d.services )
+    lines.push( "## ECS services" );
+    if ( diagnosis.services.length === 0 ) lines.push( "- none" );
+    for ( const service of diagnosis.services )
     {
-        L.push( `- ${s.service} (${s.cluster}): ${s.running}/${s.desired} running` );
-        for ( const t of s.tasks ) L.push( `    - ${t.taskArn} · ${t.lastStatus} · ${t.healthStatus}${t.ip ? ` · ${t.ip}` : ""}` );
+        lines.push( `- ${service.service} (${service.cluster}): ${service.running}/${service.desired} running` );
+        for ( const task of service.tasks ) lines.push( `    - ${task.taskArn} · ${task.lastStatus} · ${task.healthStatus}${task.ip ? ` · ${task.ip}` : ""}` );
     }
-    L.push( "" );
-    L.push( "## ALB target groups (registration + health)" );
-    if ( d.targetGroups.length === 0 ) L.push( "- none" );
-    for ( const tg of d.targetGroups )
+    lines.push( "" );
+    lines.push( "## ALB target groups (registration + health)" );
+    if ( diagnosis.targetGroups.length === 0 ) lines.push( "- none" );
+    for ( const targetGroup of diagnosis.targetGroups )
     {
-        L.push( `- ${tg.name} (${tg.protocol}:${tg.port} ${tg.targetType}): ${tg.targets.length} target(s)` );
-        for ( const t of tg.targets ) L.push( `    - ${t.id}${t.port ? `:${t.port}` : ""} · ${t.state}${t.reason ? ` (${t.reason})` : ""}` );
+        lines.push( `- ${targetGroup.name} (${targetGroup.protocol}:${targetGroup.port} ${targetGroup.targetType}): ${targetGroup.targets.length} target(s)` );
+        for ( const target of targetGroup.targets ) lines.push( `    - ${target.id}${target.port ? `:${target.port}` : ""} · ${target.state}${target.reason ? ` (${target.reason})` : ""}` );
     }
-    L.push( "" );
-    L.push( "## Load balancers" );
-    for ( const lb of d.loadBalancers ) L.push( `- ${lb.name} · ${lb.type} · ${lb.scheme} · ${lb.state} · ${lb.dnsName ?? ""}` );
-    L.push( "" );
-    L.push( "## VpcLinks" );
-    for ( const l of d.vpcLinks ) L.push( `- ${l.name ?? l.id} (${l.id}): ${l.status}` );
-    L.push( "" );
-    L.push( "## HTTP APIs + integrations" );
-    for ( const a of d.apis )
+    lines.push( "" );
+    lines.push( "## Load balancers" );
+    for ( const loadBalancer of diagnosis.loadBalancers ) lines.push( `- ${loadBalancer.name} · ${loadBalancer.type} · ${loadBalancer.scheme} · ${loadBalancer.state} · ${loadBalancer.dnsName ?? ""}` );
+    lines.push( "" );
+    lines.push( "## VpcLinks" );
+    for ( const vpcLink of diagnosis.vpcLinks ) lines.push( `- ${vpcLink.name ?? vpcLink.id} (${vpcLink.id}): ${vpcLink.status}` );
+    lines.push( "" );
+    lines.push( "## HTTP APIs + integrations" );
+    for ( const apiEntry of diagnosis.apis )
     {
-        L.push( `- ${a.name ?? a.apiId} (${a.apiId}, ${a.protocol}) routes: ${a.routes.join( ", " ) || "—"}` );
-        for ( const ig of a.integrations ) L.push( `    - ${ig.connectionType ?? "—"}${ig.connectionId ? ` (${ig.connectionId})` : ""} → ${ig.uri ?? "—"}` );
+        lines.push( `- ${apiEntry.name ?? apiEntry.apiId} (${apiEntry.apiId}, ${apiEntry.protocol}) routes: ${apiEntry.routes.join( ", " ) || "—"}` );
+        for ( const integration of apiEntry.integrations ) lines.push( `    - ${integration.connectionType ?? "—"}${integration.connectionId ? ` (${integration.connectionId})` : ""} → ${integration.uri ?? "—"}` );
     }
-    if ( d.error ) { L.push( "" ); L.push( `> error: ${d.error}` ); }
-    return L.join( "\n" );
+    if ( diagnosis.error ) { lines.push( "" ); lines.push( `> error: ${diagnosis.error}` ); }
+    return lines.join( "\n" );
 }

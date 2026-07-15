@@ -26,8 +26,8 @@ export interface CatalogEntry
 export const CATALOG : Record<string, CatalogEntry> =
 {
     app          : { label: "App",          icon: "Hub",              blurb: "BFF / front door — main + public roles", roles: { main: 8100, public: 8101 } },
-    auth         : { label: "Auth",         icon: "VpnKey",           blurb: "Identity — reader + writer roles",        roles: { reader: 8110, writer: 8111 } },
-    account      : { label: "Account",      icon: "AccountCircle",    blurb: "Accounts & billing",                      roles: { main: 8120 } },
+    auth         : { label: "Auth",         icon: "VpnKey",           blurb: "Identity — combined (reader/writer split in prod)", roles: { main: 8110 } },
+    account      : { label: "Account",      icon: "AccountCircle",    blurb: "Accounts & billing",                      roles: { main: 8120, read: 8121 } },
     registration : { label: "Registration", icon: "HowToReg",         blurb: "Sign-up & onboarding",                    roles: { main: 8130 } },
     contact      : { label: "Contact",      icon: "Contacts",         blurb: "Contacts & lists",                        roles: { main: 8140 } },
     campaign     : { label: "Campaign",     icon: "Campaign",         blurb: "Campaign orchestration",                  roles: { main: 8150 } },
@@ -48,17 +48,19 @@ export const CATALOG : Record<string, CatalogEntry> =
     search       : { label: "Search",       icon: "Search",           blurb: "Search / indexing",                       roles: { main: 8300 } },
     realtime     : { label: "Realtime",     icon: "Bolt",             blurb: "Realtime push / WebSocket",               roles: { main: 8310 } },
     collab       : { label: "Collab",       icon: "Groups",           blurb: "Collaboration",                           roles: { main: 8320 } },
+    "fake-email" : { label: "Fake Email",   icon: "Science",          blurb: "DEV-ONLY simulated email provider (fake ESP)", roles: { main: 9100 } },
     web          : { label: "Web",          icon: "Language",         blurb: "React SPA (Vite dev server)",             roles: { main: 5173 }, frontend: true }
 };
 
 /** Order services appear in the top bar (groups related services; unknown ids append at the end). */
-export const CATALOG_ORDER : string[] =
+export const CATALOG_ORDER : Array<string> =
 [
     "web", "app",
-    "auth", "account", "registration",
+    "auth", "account", "media", "registration",
     "contact", "campaign", "workflow", "marketplace",
     "texting", "email", "voice", "print", "social", "survey",
-    "media", "links",
+    "links",
     "analytics", "report", "monitor", "audit", "search",
-    "realtime", "collab"
+    "realtime", "collab",
+    "fake-email"
 ];

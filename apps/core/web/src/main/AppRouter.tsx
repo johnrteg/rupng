@@ -2,45 +2,6 @@
 import React, { Suspense } from 'react';
 import { JSX } from "react";
 
-//import ReactGA from "react-ga4";
-
-/*
-import Analytics                            from '@common/utils/Analytics';
-import PubSub                               from '@common/data/PubSub';
-
-import Subscriber                           from '../app/widgets/Subscriber';
-import PageWaiting                          from '../app/pages/PageWaiting';
-
-// Critical pages (loaded immediately)
-import ErrorPage                            from "../app/pages/ErrorPage";
-import Login                                from "../app/pages/login/Login";
-import Dashboard                            from "../app/pages/dashboard/Dashboard";
-*/
-
-// Lazy-loaded pages (loaded on demand)
-/*
-const SignUp            : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/register/SignUp"));
-const Reports           : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/reports/Reports"));
-const ForgotPassword    : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/login/ForgotPassword"));
-const Conversations     : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/conversations/Conversations"));
-const Contacts          : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/contacts/Contacts"));
-const Tools             : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/tools/Tools"));
-const Projects          : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/projects/Projects"));
-const Profile           : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/profile/Profile"));
-const Admins            : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/account/admins/AccountAdmins"));
-const Billing           : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/account/billing/Billing"));
-const AccountInfo       : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/account/info/AccountInfo"));
-const Registry          : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/registry/Registry"));
-const Teams             : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/teams/Teams"));
-const Kitchen           : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import("@pages/kitchen/Kitchen"));
-const Optin             : React.LazyExoticComponent<React.ComponentType<{id: string}>>  = React.lazy(() => import('@pages/optin/Optin'));
-const OptinSample       : React.LazyExoticComponent<React.ComponentType<{id: string}>>  = React.lazy(() => import('@pages/optin/OptinSample'));
-const Send              : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import('@pages/send/Send'));
-const AccountStatus     : React.LazyExoticComponent<React.ComponentType<{}>> = React.lazy(() => import('@pages/dashboard/AccountStatus'));
-const ResetPassword     : React.LazyExoticComponent<React.ComponentType<{token:string}>> = React.lazy(() => import('@pages/login/ResetPassword'));
-const AccountCancelled     : React.LazyExoticComponent<React.ComponentType<{token:string}>> = React.lazy(() => import('@pages/account/info/AccountCancelled'));
-*/
-
 
 
 // others
@@ -48,9 +9,39 @@ import AppModel         from '@model/AppModel';
 import PubSubService    from '@model/service/PubSubService';
 import PageWaiting      from '@pages/common/PageWaiting';
 import { Dashboard }    from '@pages/dashboard/Dashboard';
+import { ProfileDetails } from '@pages/profile/ProfileDetails';
+import { ProfileDisplay } from '@pages/profile/ProfileDisplay';
+import { ProfileSecurity } from '@pages/profile/ProfileSecurity';
+import { ProfileNotifications } from '@pages/profile/ProfileNotifications';
+import { AccountDetails } from '@pages/account/AccountDetails';
+import { AccountBranding } from '@pages/account/AccountBranding';
+import { AccountBilling } from '@pages/account/AccountBilling';
+import { AccountUsers } from '@pages/account/AccountUsers';
+import { AccountSubAccounts } from '@pages/account/AccountSubAccounts';
+import { ContactsList } from '@pages/contacts/ContactsList';
+import { Segments } from '@pages/contacts/Segments';
+import { Campaigns } from '@pages/campaigns/Campaigns';
+import { Schedule } from '@pages/schedule/Schedule';
+import { MediaLibrary } from '@pages/media/MediaLibrary';
+import { MediaBrowse } from '@pages/media/browse/MediaBrowse';
+import { MediaAiGen } from '@pages/media/MediaAiGen';
+import { MediaDownloads } from '@pages/media/MediaDownloads';
+import { MediaStudio } from '@pages/media/MediaStudio';
+import { Help } from '@pages/help/Help';
+import { SettingsApi } from '@pages/settings/SettingsApi';
+import { SettingsContacts } from '@pages/settings/SettingsContacts';
+import { SettingsEmail } from '@pages/settings/SettingsEmail';
+import { SettingsActions } from '@pages/settings/SettingsActions';
+import { EmailTemplates } from '@pages/email/EmailTemplates';
 import { Login }        from '@pages/login/Login';
+import { Register }     from '@pages/register/Register';
+import { ForgotPassword }   from '@pages/login/ForgotPassword';
+import { ActionLanding }    from '@pages/landing/ActionLanding';
+import { AuthAction }       from '@repo/api';
 import Subscriber       from '@widgets/core/Subscriber';
 import ErrorPage        from '@pages/common/ErrorPage';
+import StubPage         from '@widgets/app/StubPage';
+import navModel         from '@widgets/app/navigation/navModel';
 
 
 interface RouteMatch
@@ -115,96 +106,56 @@ export function AppRouter( props : AppRouter.Props ) : JSX.Element
         // dashboard (loaded immediately - most common)
         new_routes.push( { path: AppRouter.Route.DASHBOARD, component: () => <Dashboard /> } );
 
+        // real nav destinations (built pages) — registered explicitly; skipped by the stub loop below
+        new_routes.push( { path: "/profile/details", component: () => <ProfileDetails /> } );
+        new_routes.push( { path: "/profile/display", component: () => <ProfileDisplay /> } );
+        new_routes.push( { path: "/profile/security", component: () => <ProfileSecurity /> } );
+        new_routes.push( { path: "/profile/notifications", component: () => <ProfileNotifications /> } );
+        new_routes.push( { path: "/account/details", component: () => <AccountDetails /> } );
+        new_routes.push( { path: "/account/branding", component: () => <AccountBranding /> } );
+        new_routes.push( { path: "/account/billing", component: () => <AccountBilling /> } );
+        new_routes.push( { path: "/account/users", component: () => <AccountUsers /> } );
+        new_routes.push( { path: "/account/sub-accounts", component: () => <AccountSubAccounts /> } );
+        new_routes.push( { path: "/campaigns", component: () => <Campaigns /> } );
+        new_routes.push( { path: "/contacts/list", component: () => <ContactsList /> } );
+        new_routes.push( { path: "/contacts/segments", component: () => <Segments /> } );
+        new_routes.push( { path: "/schedule", component: () => <Schedule /> } );
+        new_routes.push( { path: "/media/library", component: () => <MediaLibrary /> } );
+        new_routes.push( { path: "/media/browse", component: () => <MediaBrowse /> } );
+        new_routes.push( { path: "/media/ai-gen", component: () => <MediaAiGen /> } );
+        new_routes.push( { path: "/media/downloads", component: () => <MediaDownloads /> } );
+        new_routes.push( { path: "/media/studio", component: () => <MediaStudio /> } );
+        new_routes.push( { path: "/help", component: () => <Help /> } );
+        new_routes.push( { path: "/settings/api", component: () => <SettingsApi /> } );
+        new_routes.push( { path: "/settings/contacts", component: () => <SettingsContacts /> } );
+        new_routes.push( { path: "/settings/email", component: () => <SettingsEmail /> } );
+        new_routes.push( { path: "/settings/actions", component: () => <SettingsActions /> } );
+        new_routes.push( { path: "/studio/email-templates", component: () => <EmailTemplates /> } );
+
         // least common (mixed - some critical, some lazy)
         new_routes.push( { path: AppRouter.Route.ROOT     , component: () => <Dashboard /> } );
         //new_routes.push( { path: AppRouter.Route.REGISTER , component: withLazyWrapper(SignUp) } );
         //new_routes.push( { path: AppRouter.Route.FORGOT   , component: withLazyWrapper(ForgotPassword) } );
         new_routes.push( { path: AppRouter.Route.LOGIN    , component: ( params : Login.Props ) => <Login {...params} /> } );
+        new_routes.push( { path: AppRouter.Route.REGISTER , component: () => <Register /> } );
+        new_routes.push( { path: AppRouter.Route.FORGOT_PASSWORD , component: () => <ForgotPassword /> } );
+        // no-auth landing pages (opened from email links) — parse the token from the path; one component per type
+        new_routes.push( { path: `${ AuthAction.PATHS[ AuthAction.Type.EMAIL_VERIFICATION ] }/:token`, component: ( params : { token : string } ) => <ActionLanding token={ params.token } type={ AuthAction.Type.EMAIL_VERIFICATION } /> } );
+        new_routes.push( { path: `${ AuthAction.PATHS[ AuthAction.Type.PASSWORD_RESET ] }/:token`,     component: ( params : { token : string } ) => <ActionLanding token={ params.token } type={ AuthAction.Type.PASSWORD_RESET } /> } );
+        new_routes.push( { path: `${ AuthAction.PATHS[ AuthAction.Type.MFA_CODE ] }/:token`,            component: ( params : { token : string } ) => <ActionLanding token={ params.token } type={ AuthAction.Type.MFA_CODE } /> } );
+        new_routes.push( { path: `${ AuthAction.PATHS[ AuthAction.Type.ACCOUNT_INVITE ] }/:token`,      component: ( params : { token : string } ) => <ActionLanding token={ params.token } type={ AuthAction.Type.ACCOUNT_INVITE } /> } );
+        new_routes.push( { path: `${ AuthAction.PATHS[ AuthAction.Type.UNSUBSCRIBE ] }/:token`,         component: ( params : { token : string } ) => <ActionLanding token={ params.token } type={ AuthAction.Type.UNSUBSCRIBE } /> } );
         //new_routes.push( { path: AppRouter.Route.REGISTRY , component: withLazyWrapper(Registry) } );
 
-/*
-        // conversations (lazy loaded)
-        new_routes.push( { path: AppRouter.Route.CONVERSATIONS + "/:cid", component: withLazyWrapper(Conversations) } );
-        new_routes.push( { path: AppRouter.Route.CONVERSATIONS + "/:cid/:project", component: withLazyWrapper(Conversations) } );
-        new_routes.push( { path: AppRouter.Route.CONVERSATIONS, component: withLazyWrapper(Conversations) } );
-
-        // send (lazy loaded)
-        new_routes.push( { path: AppRouter.Route.SEND + "/:cid", component: withLazyWrapper(Send) } );
-        new_routes.push( { path: AppRouter.Route.SEND + "/:cid/:project", component: withLazyWrapper(Send) } );
-        new_routes.push( { path: AppRouter.Route.SEND , component: withLazyWrapper(Send) } );
-
-        // projects (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.PROJECTS ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.ACTIONS + "/:cid", component: withLazyWrapper(Projects) } );
-            new_routes.push( { path: AppRouter.Route.ACTIONS + "/:cid/:project", component: withLazyWrapper(Projects) } );
-            new_routes.push( { path: AppRouter.Route.ACTIONS , component: withLazyWrapper(Projects) } );
-            new_routes.push( { path: AppRouter.Route.PROJECTS , component: withLazyWrapper(Projects) } );
-        //}
-
-        // contacts (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.CONTACTS ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.CONTACTS + "/:tab", component: withLazyWrapper(Contacts) } );
-            new_routes.push( { path: AppRouter.Route.CONTACTS , component: withLazyWrapper(Contacts) } );
-        //}
-
-        // tools (lazy loaded)
-        new_routes.push( { path: AppRouter.Route.TOOLS + "/:tool", component: withLazyWrapper(Tools) } );
-        new_routes.push( { path: AppRouter.Route.TOOLS , component: withLazyWrapper(Tools) } );
-
-        // reports (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.REPORTS ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.REPORTS + "/:tab", component: withLazyWrapper(Reports) } );
-            new_routes.push( { path: AppRouter.Route.REPORTS , component: withLazyWrapper(Reports) } );
-        //}
-
-        // profile (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.ACCOUNT, AccountLogin.RoleType.TEXTER ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.PROFILE + "/:tab", component: withLazyWrapper(Profile) } );
-            new_routes.push( { path: AppRouter.Route.PROFILE , component: withLazyWrapper(Profile) } );
-        //}
-
-        // admin (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.ACCOUNT ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.ADMINS , component: withLazyWrapper(Admins) } );
-        //}
-
-        // billing (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.BILLING ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.BILLING , component: withLazyWrapper(Billing) } );
-        //}
-
-        // account info (lazy loaded)
-        //if( appdata.auth.hasLoginRoleSet([ AccountLogin.RoleType.ACCOUNT ], "any" ) )
-        //{
-            new_routes.push( { path: AppRouter.Route.INFORMATION + "/:section", component: withLazyWrapper(AccountInfo) } );
-            new_routes.push( { path: AppRouter.Route.INFORMATION , component: withLazyWrapper(AccountInfo) } );
-        //}
-
-        // teams (lazy loaded)
-        new_routes.push( { path: AppRouter.Route.TEAMS + "/:tab", component: withLazyWrapper(Teams) } );
-        new_routes.push( { path: AppRouter.Route.TEAMS , component: withLazyWrapper(Teams) } );
-
-        // optin (lazy loaded)
-        new_routes.push( { path: AppRouter.Route.OPTIN + "/:id", component: withLazyWrapper(Optin) } );
-        new_routes.push( { path: AppRouter.Route.OPTINSAMPLE + "/:id", component: withLazyWrapper(OptinSample) } );
-
-        
-
-        // optin (lazy loaded)
-        new_routes.push( { path: AppRouter.Route.RESET_PWD, component: withLazyWrapper(ResetPassword) } );
-
-        new_routes.push( { path: AppRouter.Route.DISABLED, component: () => <AccountStatus /> } );
-
-        new_routes.push( { path: AppRouter.Route.CANCEL, component: withLazyWrapper(AccountCancelled) } );
-
-        new_routes.push( { path: AppRouter.Route.KITCHEN , component: withLazyWrapper(Kitchen) } );
-        */
+        // nav destinations from the shared nav model — each renders a Dashboard-like page (StubPage until
+        // its real page exists), titled with a "Parent : Child" breadcrumb for children. /dashboard is
+        // already mapped to the real Dashboard above, so skip it.
+        const built : Set<string> = new Set( new_routes.map( ( r : Route ) => r.path ) );   // don't stub a real page
+        for( const page of navModel.pages() )
+        {
+            if( !page.route || built.has( page.route ) ) continue;
+            new_routes.push( { path: page.route, component: () => <StubPage title={ page.title } /> } );
+        }
 
         setRoutes( new_routes );
     }
@@ -333,6 +284,8 @@ export namespace AppRouter
     {
         ROOT            = `/`,
         LOGIN           = `/signin`,
+        REGISTER        = `/register`,
+        FORGOT_PASSWORD = `/forgot-password`,
         DASHBOARD       = `/dashboard`,
     }
 

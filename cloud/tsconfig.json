@@ -1,7 +1,8 @@
 {
     "extends": "@repo/tsconfig/base.json",
     "compilerOptions": {
-        "outDir": "./dist",
+        // no outDir — this config only typechecks (`tsc --noEmit`); with @repo/* mapped to source via
+        // `paths`, an outDir makes TS6 require every imported source file sit under cloud/ (TS6059).
         // Bundler resolution (what tsx/CDK use at runtime) so tsc reads each service package's
         // `exports` map — lets `import { manifest } from "<svc>/manifest"` resolve, like app/manifest.
         "moduleResolution": "Bundler",

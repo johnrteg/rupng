@@ -53,7 +53,7 @@ export enum AccessIntent
 
 /**
  * A reference to a resource owned by some service (possibly another), plus the
- * access intent. Used in a manifest's `uses[]` and as event/notification targets.
+ * access intent. Used in a manifest's `Array<uses>` and as event/notification targets.
  */
 export interface ResourceRef
 {

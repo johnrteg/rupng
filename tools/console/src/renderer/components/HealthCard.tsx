@@ -16,11 +16,12 @@ import { MONO } from "../theme";
 //
 export function HealthCard(
     { service, results, onResults } :
-    { service : ServiceInfo; results : HealthResult[]; onResults : ( r : HealthResult[] ) => void }
+    { service : ServiceInfo; results : Array<HealthResult>; onResults : ( r : Array<HealthResult> ) => void }
 )
 {
     const [ busy, setBusy ] = useState<boolean>( false );
 
+    /** Ping every role's /health endpoint and lift the results to the parent. */
     const ping = async () : Promise<void> =>
     {
         setBusy( true );
@@ -55,28 +56,28 @@ export function HealthCard(
 
             {service.roles.map( ( role ) =>
             {
-                const r : HealthResult | undefined = results.find( ( x ) => x.role === role.role );
+                const result : HealthResult | undefined = results.find( ( res ) => res.role === role.role );
                 return (
                     <Box key={role.role} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, p: 1 }}>
                         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                             <Chip
-                                label={r ? ( r.ok ? `${r.status} OK` : ( r.error ?? `${r.status}` ) ) : "—"}
-                                color={r ? ( r.ok ? "success" : "error" ) : "default"}
-                                variant={r ? "filled" : "outlined"}
+                                label={result ? ( result.ok ? `${result.status} OK` : ( result.error ?? `${result.status}` ) ) : "—"}
+                                color={result ? ( result.ok ? "success" : "error" ) : "default"}
+                                variant={result ? "filled" : "outlined"}
                             />
                             <Typography variant="caption" sx={{ fontFamily: MONO, color: "text.secondary", flexGrow: 1 }}>
                                 {role.role} · :{role.port}/health
                             </Typography>
-                            {r && <Typography variant="caption" sx={{ color: "text.disabled" }}>{r.latencyMs}ms</Typography>}
+                            {result && <Typography variant="caption" sx={{ color: "text.disabled" }}>{result.latencyMs}ms</Typography>}
                         </Box>
-                        {r && ( r.body !== undefined && r.body !== "" ) && (
+                        {result && ( result.body !== undefined && result.body !== "" ) && (
                             <Tooltip title="response body">
                                 <Box
                                     component="pre"
                                     sx={{ m: 0, mt: 0.5, fontFamily: MONO, fontSize: 11, color: "text.secondary",
                                           whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 120, overflow: "auto" }}
                                 >
-                                    {typeof r.body === "string" ? r.body : JSON.stringify( r.body, null, 2 )}
+                                    {typeof result.body === "string" ? result.body : JSON.stringify( result.body, null, 2 )}
                                 </Box>
                             </Tooltip>
                         )}
