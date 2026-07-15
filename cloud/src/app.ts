@@ -40,6 +40,7 @@ import {
     PostAssetArchive, GetArchives, GetArchiveUrl, DeleteArchive, PostAssetCompress,
     PostVoiceClone, GetVoices, DeleteVoice,
     GetStudioProjects, PostStudioProject, PatchStudioProject, DeleteStudioProject, GetStudioCanvas, PutStudioCanvas, PostStudioRender,
+    GetSvgCanvas, PutSvgCanvas, PostSvgRender, GetSvgRenderJob, GetSvgTemplates, PostSvgFromTemplate, PostSvgTemplate,
     PostLogin, PostLoginIdentify, PostLoginChallenge, PostLoginChallengeResend,
     PostRegister, PostRegisterVerify, PostVerifyResend, PostVerifyPhone,
     GetUsers, GetUserExists, GetUserMeta, PostUserMeta, PostUser, DeleteUserMeta,
@@ -100,7 +101,9 @@ if( mediaManifest.owns.api )
         // Voice cloning (media-21) — clone from an audio asset; list / delete account voices
         new PostVoiceClone(), new GetVoices(), new DeleteVoice(),
         // Studio projects (media-21) — the project tree (DDB) + canvas snapshot (S3): list / create / update / delete / canvas get+put
-        new GetStudioProjects(), new PostStudioProject(), new PatchStudioProject(), new DeleteStudioProject(), new GetStudioCanvas(), new PutStudioCanvas(), new PostStudioRender()
+        new GetStudioProjects(), new PostStudioProject(), new PatchStudioProject(), new DeleteStudioProject(), new GetStudioCanvas(), new PutStudioCanvas(), new PostStudioRender(),
+        // SVG design editor (SVG_EDITOR_SPEC) — canvas load/save (S3-backed doc), async export render + poll, template gallery + create-from / save-as
+        new GetSvgCanvas(), new PutSvgCanvas(), new PostSvgRender(), new GetSvgRenderJob(), new GetSvgTemplates(), new PostSvgFromTemplate(), new PostSvgTemplate()
     ] ) ];
 if( contactManifest.owns.api )
     contactManifest.owns.api.endpoints = [ ...( contactManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [

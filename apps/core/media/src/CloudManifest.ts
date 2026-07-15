@@ -152,6 +152,13 @@ export const manifest : ResourceManifest =
             // Studio projects (media-21) — the project tree metadata (name/kind/campaign/tags/page + the saved
             // library asset guid). The tldraw canvas snapshot lives in S3 (the media bucket), keyed by project.
             { key: "studio_projects", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "id", type: AttrType.STRING } },
+            // SVG editor templates (SVG_EDITOR_SPEC §16) — the template library, SEPARATE from projects. PK
+            // `owner` (the reserved "__system__" partition for platform templates, else the owning accountId)
+            // + SK `id`, so a query returns one scope's templates tenant-safely. The doc JSON lives in S3.
+            { key: "svg-templates", partitionKey: { name: "owner", type: AttrType.STRING }, sortKey: { name: "id", type: AttrType.STRING } },
+            // SVG editor export-render jobs (SVG_EDITOR_SPEC §10) — async job status polled by the client. PK
+            // `pk` = jobId; the row carries status + the presigned outputUrl (once DONE) / error.
+            { key: "svg-render-jobs", partitionKey: { name: "pk", type: AttrType.STRING } },
         ],
 
         // Work queues (auto-DLQ) — the ingest pipeline. On upload-complete (or an S3-created event) the item
@@ -169,6 +176,9 @@ export const manifest : ResourceManifest =
             { key: "media-video",      maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 900 },   // video compression (ffmpeg CRF ladder, media-10.10)
             { key: "studio-render",    maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 900 },   // Studio video render — ffmpeg composite of the timeline → mp4 (media-21)
             { key: "studio-render-remotion", maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 1800 },   // Studio video render — Remotion/Chromium exact-fidelity render (media-21.18); longer timeout (heavier)
+            // SVG editor export render (SVG_EDITOR_SPEC §10) — compile SvgDocument → SVG → PNG/PDF/JPEG via
+            // Puppeteer; a consumer flips the svg-render-jobs row to DONE/FAILED. Long timeout (Chromium).
+            { key: "svg-render",       maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 900 },
         ],
     },
 

@@ -87,6 +87,16 @@ export { default as DeleteStudioProject } from './media/DeleteStudioProject';
 export { default as GetStudioCanvas } from './media/GetStudioCanvas';
 export { default as PutStudioCanvas } from './media/PutStudioCanvas';
 export { default as PostStudioRender } from './media/PostStudioRender';
+export { SvgDocument } from './media/model/SvgDocument';       // SVG editor — the editable design model (S3-backed)
+export { SvgPlugin } from './media/model/SvgPlugin';           // SVG editor — plugin contract (QR/barcode/generated)
+export { SvgTemplate } from './media/model/SvgTemplate';       // SVG editor — template library (system + account scopes)
+export { default as GetSvgCanvas } from './media/GetSvgCanvas';
+export { default as PutSvgCanvas } from './media/PutSvgCanvas';
+export { default as PostSvgRender } from './media/PostSvgRender';
+export { default as GetSvgRenderJob } from './media/GetSvgRenderJob';
+export { default as GetSvgTemplates } from './media/GetSvgTemplates';
+export { default as PostSvgFromTemplate } from './media/PostSvgFromTemplate';
+export { default as PostSvgTemplate } from './media/PostSvgTemplate';
 export { default as GetAssets } from './media/GetAssets';
 export { default as GetAsset } from './media/GetAsset';
 export { default as GetAssetStatus } from './media/GetAssetStatus';

@@ -49,6 +49,13 @@ import DeleteStudioProjectImpl from "../endpoints/DeleteStudioProjectImpl";
 import GetStudioCanvasImpl from "../endpoints/GetStudioCanvasImpl";
 import PutStudioCanvasImpl from "../endpoints/PutStudioCanvasImpl";
 import PostStudioRenderImpl from "../endpoints/PostStudioRenderImpl";
+import GetSvgCanvasImpl from "../endpoints/GetSvgCanvasImpl";
+import PutSvgCanvasImpl from "../endpoints/PutSvgCanvasImpl";
+import PostSvgRenderImpl from "../endpoints/PostSvgRenderImpl";
+import GetSvgRenderJobImpl from "../endpoints/GetSvgRenderJobImpl";
+import GetSvgTemplatesImpl from "../endpoints/GetSvgTemplatesImpl";
+import PostSvgFromTemplateImpl from "../endpoints/PostSvgFromTemplateImpl";
+import PostSvgTemplateImpl from "../endpoints/PostSvgTemplateImpl";
 
 //
 // MAIN role — the /media/* API. Also DRAINS the ingest queues locally (scan → process) so the pipeline works
@@ -119,6 +126,13 @@ export class MediaMainService extends MediaService
         this.register( new GetStudioCanvasImpl( this ) );
         this.register( new PutStudioCanvasImpl( this ) );
         this.register( new PostStudioRenderImpl( this ) );
+        this.register( new GetSvgCanvasImpl( this ) );
+        this.register( new PutSvgCanvasImpl( this ) );
+        this.register( new PostSvgRenderImpl( this ) );
+        this.register( new GetSvgRenderJobImpl( this ) );
+        this.register( new GetSvgTemplatesImpl( this ) );
+        this.register( new PostSvgFromTemplateImpl( this ) );
+        this.register( new PostSvgTemplateImpl( this ) );
     }
 
     /////////////////////////////////////////////////////////////////////
