@@ -64,7 +64,7 @@ export class PostLoginChallengeImpl extends PostLoginChallenge
 
             if( loginResult.complete )
             {
-                void this.service.publishLogin( this.service.subFromToken( loginResult.tokens?.accessToken ), account );   // auth.session.created → lastLoginAt
+                void this.service.publishLogin( this.service.subFromToken( loginResult.tokens?.accessToken ), account );   // stamps users.lastLoginAt + auth.session.created
                 return { status: NetworkUtils.Status.OK, data: { complete: true, sessionToken: loginResult.tokens?.accessToken } };
             }
 

@@ -105,6 +105,34 @@ export namespace MediaAnalyzer
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
+    /** Rasterize an SVG to a single square PNG thumbnail — NOT {@link resizeImage} (which is for raster
+     *  photos and deliberately never enlarges). Sharp/libvips decodes a vector source at a flat 72 DPI by
+     *  default regardless of target size, so an icon with a small intrinsic size (e.g. a 12×12 viewBox)
+     *  decodes to a tiny raster BEFORE any resize step runs — `withoutEnlargement` then locks every
+     *  "variant" to that tiny size (this was the cause of an SVG's derived thumbnail coming out ~12×12).
+     *  This probes the SVG's own intrinsic size first, computes a `density` that decodes it large enough
+     *  to fill `targetSize` crisply, and explicitly ALLOWS enlargement (upscaling a vector is lossless). */
+    export async function rasterizeSvgToThumbnail( bytes : Uint8Array, targetSize : number ) : Promise<Rendition | null>
+    {
+        try
+        {
+            const sharp = await loadSharp();
+            const nativeMeta = await sharp( Buffer.from( bytes ), { failOn: "none" } ).metadata();
+            const nativeSize : number = Math.max( nativeMeta.width ?? 0, nativeMeta.height ?? 0, 1 );
+            // scale sharp's default 72 DPI decode up so the intrinsic size already meets targetSize; clamp
+            // to a sane ceiling so a pathologically tiny viewBox (e.g. 1×1) can't demand an absurd density
+            const density : number = Math.min( 2400, Math.max( 72, Math.round( 72 * ( targetSize / nativeSize ) ) ) );
+
+            const out = await sharp( Buffer.from( bytes ), { density, failOn: "none" } )
+                .resize( { width: targetSize, height: targetSize, fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 }, withoutEnlargement: false } )
+                .png()
+                .toBuffer( { resolveWithObject: true } );
+            return { bytes: out.data, width: out.info.width, height: out.info.height, size: out.info.size, format: out.info.format };
+        }
+        catch( error ) { console.error( "MediaAnalyzer.rasterizeSvgToThumbnail failed", error ); return null; }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
     /** Crop an image to a normalized rectangle (fractions of W/H) then resize to the spec — sharp `extract` +
      *  `resize` (cover). Used for the square avatar renditions framed by the pan/zoom crop. The source is
      *  EXIF-rotated FIRST so the crop rect maps to what the user actually saw. Returns null on failure. */

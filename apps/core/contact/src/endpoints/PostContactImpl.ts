@@ -22,6 +22,11 @@ export class PostContactImpl extends PostContact
         const accountId : string | undefined = auth.accountId;
         if( !accountId )     return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
 
+        // allocate the per-account sequential reference number (immutable once set) BEFORE the write — a failed
+        // allocation aborts the create so we never persist an unnumbered contact
+        const ref : Type.Result<number> = await this.service.nextRef( accountId, ContactService.SequenceKind.CONTACT );
+        if( !ref.ok )        return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "contact ref allocation failed" } };
+
         // assemble the record — server owns identity, status, and the audit stamp
         const now : Type.ISODateTime = new Date().toISOString();
         const id : Type.UUID = randomUUID();
@@ -30,6 +35,7 @@ export class PostContactImpl extends PostContact
             ...this.body,
             id,
             accountId,
+            ref:    ref.data,
             emails: this.body?.emails ?? [],
             phones: this.body?.phones ?? [],
             status: Contact.ContactStatus.ACTIVE,

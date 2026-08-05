@@ -12,6 +12,7 @@ import {
     AttrType,
     ManagedAiService,
     Ports,
+    AccessIntent, ResourceKind, JobRuntime,
 } from "@repo/cloud-manifest";
 import { Providers } from "@repo/system";
 
@@ -156,6 +157,18 @@ export const manifest : ResourceManifest =
             // `owner` (the reserved "__system__" partition for platform templates, else the owning accountId)
             // + SK `id`, so a query returns one scope's templates tenant-safely. The doc JSON lives in S3.
             { key: "svg-templates", partitionKey: { name: "owner", type: AttrType.STRING }, sortKey: { name: "id", type: AttrType.STRING } },
+            // SVG library graphics (icons/logos/clipart) — SEPARATE from svg-templates (whole documents) and
+            // from the general `media` table (raster/video pipeline doesn't apply to vector markup). Same
+            // owner-partition shape: PK `owner` (the reserved "__system__" partition for platform-wide, read-
+            // only graphics, else the owning accountId) + SK `id`. The markup itself lives in S3 (sanitized).
+            { key: "svg-assets", partitionKey: { name: "owner", type: AttrType.STRING }, sortKey: { name: "id", type: AttrType.STRING } },
+            // SVG upload quarantine (SvgThreatScanner) — raw markup rejected for carrying a genuine attack
+            // vector (script/event-handler/external-reference/external-stylesheet), kept for a review window
+            // rather than silently sanitized-and-stored. SEPARATE from svg-assets so a quarantined upload never
+            // appears in the library. TTL on `ttl` expires the row; no active sweep (matches this repo's other
+            // TTL tables — DynamoDB's native TTL deletion is the whole mechanism).
+            { key: "svg-asset-quarantine", partitionKey: { name: "owner", type: AttrType.STRING }, sortKey: { name: "id", type: AttrType.STRING },
+              ttlAttribute: "ttl" },
             // SVG editor export-render jobs (SVG_EDITOR_SPEC §10) — async job status polled by the client. PK
             // `pk` = jobId; the row carries status + the presigned outputUrl (once DONE) / error.
             { key: "svg-render-jobs", partitionKey: { name: "pk", type: AttrType.STRING } },
@@ -177,8 +190,28 @@ export const manifest : ResourceManifest =
             { key: "studio-render",    maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 900 },   // Studio video render — ffmpeg composite of the timeline → mp4 (media-21)
             { key: "studio-render-remotion", maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 1800 },   // Studio video render — Remotion/Chromium exact-fidelity render (media-21.18); longer timeout (heavier)
             // SVG editor export render (SVG_EDITOR_SPEC §10) — compile SvgDocument → SVG → PNG/PDF/JPEG via
-            // Puppeteer; a consumer flips the svg-render-jobs row to DONE/FAILED. Long timeout (Chromium).
-            { key: "svg-render",       maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 900 },
+            // Puppeteer; a consumer flips the svg-render-jobs row to DONE/FAILED. A render normally finishes in
+            // seconds, so the timeout stays short — if a consumer dies mid-render (a crash, or a dev-mode
+            // restart) the message becomes visible again quickly instead of leaving the job's row stuck at
+            // PENDING for a long, silent stretch.
+            { key: "svg-render",       maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 120 },
+        ],
+
+        // The Lambda worker for SVG export-render (SVG_EDITOR_SPEC §10) — decouples Puppeteer/Chromium's CPU
+        // + memory footprint from the MAIN role's API traffic and scales with queue depth. MAIN's own consumer
+        // (a full-`puppeteer` in-process poll loop) still drains this queue for local/LocalStack dev, matching
+        // this repo's "MAIN drains locally, Job owns it in a real deploy" convention for the other queues.
+        // Higher memory than the app service's jobs (256MB default) — Chromium needs real headroom.
+        jobs:
+        [
+            {
+                key        : "svgRender",
+                handler    : "jobs/SvgRenderJob.handler",
+                runtime    : JobRuntime.NODE_22,
+                memoryMB   : { default: 2048 },
+                timeoutSec : 300,
+                triggers   : [ { source: "queue", ref: { service: "media", kind: ResourceKind.QUEUE, key: "svg-render", access: AccessIntent.CONSUME }, batchSize: 1 } ],
+            },
         ],
     },
 

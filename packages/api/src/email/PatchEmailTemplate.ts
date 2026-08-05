@@ -2,6 +2,7 @@
 import { RestfulEndpoint, Access, apiPath } from "@repo/endpoint";
 import { NetworkUtils } from "@repo/common";
 import { EmailTemplate } from "./model/EmailTemplate";
+import { Email } from "./model/Email";
 
 //
 // Update an email template (name / subject / doc). Bumps version; keeps status. Recompiles MJML/HTML server-side
@@ -28,8 +29,11 @@ export class PatchEmailTemplate extends RestfulEndpoint< PatchEmailTemplate.Quer
     public getQuerySchema(): RestfulEndpoint.Schema | null { return null; }
     public getBodySchema(): RestfulEndpoint.Schema | null
     {
+        // from/replyTo accept either an address object or "" to clear a previously-set override
+        const address : RestfulEndpoint.Schema = { type: "object", properties: { email: { type: "string" }, name: { type: "string" } }, required: [ "email" ] };
         return { type: "object", additionalProperties: true, properties: {
-            name: { type: "string" }, subject: { type: "string" }, doc: { type: "object" }, notificationType: { type: "string" } } };
+            name: { type: "string" }, subject: { type: "string" }, doc: { type: "object" }, notificationType: { type: "string" },
+            from: { anyOf: [ address, { type: "string", const: "" } ] }, replyTo: { anyOf: [ address, { type: "string", const: "" } ] } } };
     }
 }
 
@@ -41,6 +45,8 @@ export namespace PatchEmailTemplate
     {
         name?             : string;
         subject?          : string;
+        from?             : Email.Address | "";       // "" clears a previously-set override
+        replyTo?          : Email.Address | "";       // "" clears a previously-set override
         doc?              : EmailTemplate.Doc;
         notificationType? : EmailTemplate.NotificationType;
     }

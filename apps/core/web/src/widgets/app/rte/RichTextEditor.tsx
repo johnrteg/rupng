@@ -30,6 +30,7 @@ import LocalOfferOutlinedIcon           from '@mui/icons-material/LocalOfferOutl
 import EmojiSymbolsOutlinedIcon         from '@mui/icons-material/EmojiSymbolsOutlined';
 import ClearOutlinedIcon                from '@mui/icons-material/ClearOutlined';
 import AddLinkOutlinedIcon              from '@mui/icons-material/AddLinkOutlined';
+import EmailOutlinedIcon                from '@mui/icons-material/EmailOutlined';
 import FormatClearOutlinedIcon          from '@mui/icons-material/FormatClearOutlined';
 import TextFormatOutlinedIcon           from '@mui/icons-material/TextFormatOutlined';
 import MicOffOutlinedIcon               from '@mui/icons-material/MicOffOutlined';
@@ -87,6 +88,7 @@ import RawHtmlEditor            from './RawHtmlEditor';
 import MenuBarButtonDropdown    from './MenuBarButtonDropdown';
 import RichTextEditorFooter     from './RichTextEditorFooter';
 import LinkEditor               from './LinkEditor';
+import EmailLinkEditor          from './EmailLinkEditor';
 import UnicodeFonts             from './UnicodeFonts';
 
 //
@@ -121,6 +123,7 @@ function RichTextMenuBar( props : RichTextMenuBarProps ) : JSX.Element | null
     const [emojiAnchor, setEmojiAnchor]             = React.useState<null | HTMLElement>(null);
     const [showAiEditor, setShowAiEditor]           = React.useState< boolean >( false );
     const [showLinkEditor, setShowLinkEditor]       = React.useState< string | undefined >( undefined );
+    const [showEmailLinkEditor, setShowEmailLinkEditor] = React.useState< string | undefined >( undefined );
     const [showRawEditor, setShowRawEditor]         = React.useState< boolean >( false );
     const [invisibleChars, setInvisibleChars]       = React.useState< boolean >( false );
     const [unicodeChars, setUnicodeChars]           = React.useState< boolean >( false );
@@ -448,6 +451,21 @@ function RichTextMenuBar( props : RichTextMenuBarProps ) : JSX.Element | null
         editor.chain().focus().insertContent( href ).run();
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    function openEmailLink() : void
+    {
+        const selected : string = editor.state.doc.textBetween( editor.state.selection.from, editor.state.selection.to, " " );
+        setShowEmailLinkEditor( selected );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // a mailto: link, unlike a regular link, opens the user's mail client in the SAME tab — no target='_blank'
+    function onSetEmailLink( text : string, email : string ) : void
+    {
+        const href : string = StringUtils.format( "<a href='mailto:{0}'>{1}</a>", email, text );
+        editor.chain().focus().insertContent( href ).run();
+    }
+
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////
     function onClear() : void
     {
@@ -638,6 +656,10 @@ function RichTextMenuBar( props : RichTextMenuBarProps ) : JSX.Element | null
                 <MenuBarPopupButton  id="link"   label={ "Link" + StringUtils.ELLIPSE } icon={ <AddLinkOutlinedIcon/> } selected={ false } onClick={ openLink } />
                 : null }
 
+                { hasTool( RichTextEditor.Tool.LINK ) ?
+                <MenuBarPopupButton  id="email-link"   label={ "Email Link" + StringUtils.ELLIPSE } icon={ <EmailOutlinedIcon/> } selected={ false } onClick={ openEmailLink } />
+                : null }
+
                 { hasTool( RichTextEditor.Tool.EMOJI ) ?
                 <MenuBarPopupButton  id="emoji"   label={ "Emojis" + StringUtils.ELLIPSE } disabled={ disabled } icon={ <SentimentSatisfiedOutlinedIcon/> } selected={ false } onClick={ openEmoji } />
                 : null }
@@ -743,6 +765,10 @@ function RichTextMenuBar( props : RichTextMenuBarProps ) : JSX.Element | null
         { showLinkEditor !== undefined ? <LinkEditor value={ showLinkEditor }
                                         onClose={ () => setShowLinkEditor( undefined ) }
                                         onSaved={ onSetLink } /> : null }
+
+        { showEmailLinkEditor !== undefined ? <EmailLinkEditor value={ showEmailLinkEditor }
+                                        onClose={ () => setShowEmailLinkEditor( undefined ) }
+                                        onSaved={ onSetEmailLink } /> : null }
     </Box>;
 }
 

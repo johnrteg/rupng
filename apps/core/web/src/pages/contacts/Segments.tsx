@@ -223,6 +223,7 @@ export function Segments( _props : Segments.Props ) : JSX.Element
     // ── TableInput config ──────────────────────────────────────────────────────────────────────
     const segmentColumns : Array<TableInput.Column> =
     [
+        { field: "ref",     label: "#",       type: TableInput.ColumnType.NUMBER },
         { field: "name",    label: "Name",    type: TableInput.ColumnType.STRING },
         { field: "kind",    label: "Kind",    type: TableInput.ColumnType.CUSTOM, renderer: kindRenderer },
         { field: "size",    label: "Members", type: TableInput.ColumnType.STRING },
@@ -251,6 +252,7 @@ export function Segments( _props : Segments.Props ) : JSX.Element
 
     const segmentRows : Array<TableInput.Row> = visible.map( ( segment : Segment.Entity ) => ( {
         id:          segment.id,
+        ref:         segment.ref ?? null,
         name:        segment.name,
         isExclusion: segment.isExclusion === true,
         kind:        segment.isExclusion === true,   // the CUSTOM cell renders when its field is defined

@@ -37,10 +37,28 @@ export class Trace
     {
         switch( level )
         {
+            case Trace.Level.TRACE:   return "TRACE";
             case Trace.Level.INFO:    return "INFO";
             case Trace.Level.WARNING: return "WARN";
             case Trace.Level.ERROR:   return "ERROR";
             default:                  return "UNKNOWN";
+        }
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////
+    /** Parse a per-service configured minimum level (a CloudManifest `environment` value, e.g.
+     *  `LOG_LEVEL: "trace"`, or the web build's `VITE_LOG_LEVEL`) into a {@link Trace.Level}.
+     *  Unrecognized/absent input falls back to `INFO` (trace stays off by default). */
+    public static parseLevel( value : string | undefined ) : Trace.Level
+    {
+        switch( ( value ?? "" ).trim().toUpperCase() )
+        {
+            case "TRACE":   return Trace.Level.TRACE;
+            case "INFO":    return Trace.Level.INFO;
+            case "WARN":
+            case "WARNING": return Trace.Level.WARNING;
+            case "ERROR":   return Trace.Level.ERROR;
+            default:        return Trace.Level.INFO;
         }
     }
 
@@ -85,6 +103,15 @@ export class Trace
     }
 
     /////////////////////////////////////////////////////////////////////////////////////
+    // Below INFO — routine activity (a REST call received, an item stored, a message sent/received). Off by
+    // default (services default to minLevel = INFO); a service turns it on via its own config (e.g. the
+    // CloudManifest `environment.LOG_LEVEL`) to diagnose what's happening without redeploying different code.
+    public trace( message: string, ...args: Array<unknown> ) : void
+    {
+        this.write( Trace.Level.TRACE, message, args );
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////
     public info( message: string, ...args: Array<unknown> ) : void
     {
         this.write( Trace.Level.INFO, message, args );
@@ -123,9 +150,10 @@ export namespace Trace
     }
     export enum Level
     {
-        INFO = 1,
+        TRACE   = 0,   // more verbose than INFO — routine activity, off by default
+        INFO    = 1,
         WARNING = 2,
-        ERROR = 3
+        ERROR   = 3
     }
 }
 

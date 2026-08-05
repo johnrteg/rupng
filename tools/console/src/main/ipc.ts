@@ -6,6 +6,7 @@ import {
 } from "../shared/types";
 import { getService, listServices } from "./registry";
 import { invalidatePorts } from "./ports";
+import { invalidateManifestEnv } from "./manifestEnv";
 import { processManager } from "./processManager";
 import { logStore } from "./logStore";
 import { pingAll, pingHealth } from "./health";
@@ -53,13 +54,17 @@ import { LOG_DIR, REPO_ROOT } from "./paths";
  *  Called once on app-ready; `getWindow` resolves the current window lazily (it can be recreated). */
 export function registerIpc( getWindow : () => BrowserWindow | null ) : void
 {
-    // forward an event to the renderer, dropping it if the window/webContents has gone (reload/close race)
+    // forward an event to the renderer, dropping it if the window/webContents has gone (reload/close race).
+    // We call mainFrame.send() directly instead of webContents.send() because in Electron v22+,
+    // webContents.send() wraps mainFrame.send() in a try/catch that console.error()s before rethrowing —
+    // meaning our outer catch can't suppress the noisy "Render frame was disposed" log.
+    // mainFrame.send() throws the same exception but without the internal logging.
     const send = ( channel : string, ...args : Array<unknown> ) : void =>
     {
         const win : BrowserWindow | null = getWindow();
-        if ( !win || win.isDestroyed() || win.webContents.isDestroyed() ) return;   // window/webContents gone (reload/close)
-        try { win.webContents.send( channel, ...args ); }
-        catch { /* webContents disposed between the check and the send (reload race) — drop the event */ }
+        if ( !win || win.isDestroyed() || win.webContents.isDestroyed() ) return;
+        try { win.webContents.mainFrame.send( channel, ...args ); }
+        catch { /* render frame disposed between the check and the send — drop silently */ }
     };
 
     // ── live event forwarding (main → renderer) ─────────────────────────────────────────────────
@@ -83,7 +88,7 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
 
     // ── services ────────────────────────────────────────────────────────────────────────────────
     ipcMain.handle( IPC.listServices, () => listServices() );
-    ipcMain.handle( IPC.rescanServices, () => { invalidatePorts(); buildOrchestrator.rescan(); return listServices(); } );
+    ipcMain.handle( IPC.rescanServices, () => { invalidatePorts(); invalidateManifestEnv(); buildOrchestrator.rescan(); return listServices(); } );
     ipcMain.handle( IPC.repoRoot, () => REPO_ROOT );
 
     // ── pipeline ────────────────────────────────────────────────────────────────────────────────
@@ -187,7 +192,7 @@ export function registerIpc( getWindow : () => BrowserWindow | null ) : void
 
     // ── local dev processes: vite dev server, webproxy edge, build-watch + S3 sync ─────────────────
     ipcMain.handle( IPC.devStart, ( _e, service : string ) => { void processManager.startLocal( service ); } );
-    ipcMain.handle( IPC.devStop, ( _e, service : string ) => { processManager.stopLocal( service ); } );
+    ipcMain.handle( IPC.devStop, ( _e, service : string ) => { void processManager.stopLocal( service ); } );
     ipcMain.handle( IPC.tailDeployedStart, ( _e, service : string ) => { processManager.tailDeployed( service ); } );
     ipcMain.handle( IPC.tailDeployedStop, ( _e, service : string ) => { processManager.stopTailDeployed( service ); } );
     ipcMain.handle( IPC.deployedPorts, ( _e, service : string ) => processManager.deployedPorts( service ) );

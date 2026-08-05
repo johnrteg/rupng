@@ -81,6 +81,9 @@ export function AccountBranding( props : AccountBranding.Props ) : JSX.Element
         {
             setAccount( reply.data );
             setOriginal( { palette, fonts, svgs } );
+            // refresh the app-wide brand cache so the image studio editor / color pickers / font choices see the
+            // new branding immediately (without a browser reload)
+            appmodel.account.applyBranding( reply.data );
             return true;
         }
         setSaveError( "Could not save branding. Please try again." );

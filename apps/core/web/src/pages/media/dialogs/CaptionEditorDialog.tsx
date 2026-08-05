@@ -39,8 +39,9 @@ export function CaptionEditorDialog( props : CaptionEditorDialog.Props ) : JSX.E
         const mediaReply : RestfulService.Reply<GetMediaUrl.Response> = await appmodel.server.fetch( new GetMediaUrl( props.asset.guid, "original" ) );
         if( captionReply.ok && captionReply.data )
         {
-            try { const response : Response = await fetch( captionReply.data.url ); setText( await response.text() ); }
-            catch { setText( "" ); }
+            // withCredentials: false — a presigned S3 URL's wildcard CORS policy rejects a credentialed request
+            const textReply : RestfulService.Reply<string> = await appmodel.server.get( captionReply.data.url, null, {}, null, { withCredentials: false } );
+            setText( textReply.ok && textReply.data !== undefined ? textReply.data : "" );
         }
         if( mediaReply.ok && mediaReply.data ) setMediaUrl( mediaReply.data.url );
         setLoading( false );

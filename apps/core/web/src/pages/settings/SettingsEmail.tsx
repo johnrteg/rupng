@@ -23,9 +23,11 @@ import TextInput    from '@widgets/core/TextInput';
 import TableInput   from '@widgets/core/TableInput';
 import WebFontListEditor from '@widgets/email/WebFontListEditor';
 import SystemSenderDialog from '@pages/settings/dialogs/SystemSenderDialog';
+import ProviderConfigDialog from '@pages/settings/dialogs/ProviderConfigDialog';
 
 // TableInput row-action ids
 enum SenderAction { EDIT = "edit", REMOVE = "remove" }
+enum ProviderRowAction { EDIT = "edit", REMOVE = "remove" }
 
 // the SYSTEM notification cases whose from-identity can be routed to a specific sender (system mail only)
 const SYSTEM_CASES : Array<Email.NotificationType> =
@@ -55,6 +57,7 @@ export function SettingsEmail( props : SettingsEmail.Props ) : JSX.Element
     const [saveError,setSaveError] = React.useState< string >( "" );
     const [snack,setSnack]       = React.useState< { message : string; severity : SnackAlert.Severity } | null >( null );
     const [sender,setSender]     = React.useState< { editing? : Email.Sender } | null >( null );   // sender dialog (null closed)
+    const [providerEntry,setProviderEntry] = React.useState< { editing? : EmailConfig.ProviderEntry } | null >( null );   // provider-config dialog (null closed)
     const [sysTemplates,setSysTemplates] = React.useState< Array<EmailTemplate.Entity> >( [] );   // SYSTEM-scope templates
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -182,6 +185,33 @@ export function SettingsEmail( props : SettingsEmail.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // upsert a provider registry entry (replace-in-place on edit, add on new provider)
+    function upsertProviderEntry( entry : EmailConfig.ProviderEntry ) : void
+    {
+        if( !form ) return;
+        set( { providers: { ...form.providers, [ entry.provider ]: entry } } );
+    }
+
+    // remove a provider's registry entry
+    function removeProviderEntry( provider : Email.Provider ) : void
+    {
+        if( !form ) return;
+        const next : Record<string, EmailConfig.ProviderEntry> = { ...form.providers };
+        delete next[ provider ];
+        set( { providers: next } );
+    }
+
+    // a provider row action → edit (open the dialog) or remove
+    function onProviderAction( action : string, row : TableInput.Row ) : void
+    {
+        if( !form ) return;
+        const entry : EmailConfig.ProviderEntry | undefined = form.providers[ String( row.id ) ];
+        if( !entry ) return;
+        if( action === ProviderRowAction.EDIT ) setProviderEntry( { editing: entry } );
+        else if( action === ProviderRowAction.REMOVE ) removeProviderEntry( entry.provider );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // provider + sender-key choices
     const providerChoices : Array<SelectInput.Choice> = SelectInput.enumToChoices( Email.Provider );
     const senderChoices : Array<SelectInput.Choice> = ( form?.systemSenders ?? [] )
@@ -206,6 +236,29 @@ export function SettingsEmail( props : SettingsEmail.Props ) : JSX.Element
         actions: [ SenderAction.EDIT, SenderAction.REMOVE ],
     } ) );
 
+    const configuredProviders : Array<Email.Provider> = Object.keys( form?.providers ?? {} ) as Array<Email.Provider>;
+    const providerColumns : Array<TableInput.Column> =
+    [
+        { field: "provider", label: "Provider",  type: TableInput.ColumnType.STRING },
+        { field: "enabled",  label: "Enabled",   type: TableInput.ColumnType.STRING },
+        { field: "from",     label: "From",      type: TableInput.ColumnType.STRING },
+        { field: "replyTo",  label: "Reply-to",  type: TableInput.ColumnType.STRING },
+        { field: "actions",  label: "",          type: TableInput.ColumnType.ACTION },
+    ];
+    const providerActions : Array<TableInput.Action> =
+    [
+        { id: ProviderRowAction.EDIT,   label: "Edit",   icon: <EditOutlinedIcon fontSize="small" /> },
+        { id: ProviderRowAction.REMOVE, label: "Remove", icon: <DeleteOutlineOutlinedIcon fontSize="small" /> },
+    ];
+    const providerRows : Array<TableInput.Row> = configuredProviders
+        .map( ( provider : Email.Provider ) : EmailConfig.ProviderEntry | undefined => form?.providers[ provider ] )
+        .filter( ( entry : EmailConfig.ProviderEntry | undefined ) : entry is EmailConfig.ProviderEntry => entry !== undefined )
+        .map( ( entry : EmailConfig.ProviderEntry ) : TableInput.Row => ( {
+            id: entry.provider, provider: entry.provider, enabled: entry.enabled ? "yes" : "no",
+            from: entry.from?.email ?? "(system default)", replyTo: entry.replyTo?.email ?? "(none)",
+            actions: [ ProviderRowAction.EDIT, ProviderRowAction.REMOVE ],
+        } ) );
+
     ////////////////////////////////////////////////////////////////////////////////////////////
     return  <AuthPage minAccess={ Access.AppRole.APPLICATION } title={"Settings : Email"}>
                 <Box sx={{ p: 2, mx: "auto", pb: editable ? 12 : 2 }}>
@@ -229,6 +282,25 @@ export function SettingsEmail( props : SettingsEmail.Props ) : JSX.Element
                                                      choices={ providerChoices } onChange={ ( value : string ) : void => set( { defaultProvider: value as Email.Provider } ) } sx={{ width: "100%" }} />
                                         <SelectInput id="email-system-provider" label={"System provider (platform mail)"} value={ form.systemProvider }
                                                      choices={ providerChoices } onChange={ ( value : string ) : void => set( { systemProvider: value as Email.Provider } ) } sx={{ width: "100%" }} />
+                                    </Stack>
+                                </CardContent>
+                            </Card>
+
+                            {/* ── Provider settings (per-provider default from/reply-to + secret/region) ─ */}
+                            <Card variant="outlined">
+                                <CardHeader title={"Provider settings"}
+                                            subheader={"Each configured provider's own default send identity — useful when testing several providers side by side (e.g. a Mailgun sandbox domain vs a verified SendGrid domain)."}
+                                            action={
+                                                <Stack direction="row" spacing={ 1 } sx={{ mt: 1, mr: 1 }}>
+                                                    <Button variant="contained" size="small" startIcon={ <AddOutlinedIcon /> } onClick={ () => setProviderEntry( {} ) }>{"Add provider"}</Button>
+                                                </Stack>
+                                            } />
+                                <Divider />
+                                <CardContent>
+                                    <Stack spacing={ 2 }>
+                                        { providerRows.length === 0
+                                            ? <Typography variant="body2" sx={{ color: "text.secondary" }}>{"No providers configured yet."}</Typography>
+                                            : <TableInput id="email-provider-settings" columns={ providerColumns } data={ providerRows } actions={ providerActions } onAction={ onProviderAction } selectable={ TableInput.Selectable.NONE } /> }
                                     </Stack>
                                 </CardContent>
                             </Card>
@@ -336,6 +408,13 @@ export function SettingsEmail( props : SettingsEmail.Props ) : JSX.Element
                                         existingKeys={ ( form?.systemSenders ?? [] ).map( ( item : Email.Sender ) : string => item.key ) }
                                         onSave={ ( entry : Email.Sender ) : void => { upsertSender( entry ); setSender( null ); } }
                                         onClose={ () => setSender( null ) } /> }
+
+                { providerEntry &&
+                    <ProviderConfigDialog entry={ providerEntry.editing }
+                                          existingProviders={ configuredProviders }
+                                          providerChoices={ providerChoices }
+                                          onSave={ ( entry : EmailConfig.ProviderEntry ) : void => { upsertProviderEntry( entry ); setProviderEntry( null ); } }
+                                          onClose={ () => setProviderEntry( null ) } /> }
 
                 { snack && <SnackAlert message={ snack.message } severity={ snack.severity } onClose={ () => setSnack( null ) } /> }
             </AuthPage>;

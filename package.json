@@ -80,5 +80,14 @@
         "pg": "8.22.0",
         "react-resizable": "4.0.2",
         "ws": "8.21.0"
+    },
+    "allowScripts": {
+        "core-js@3.49.0": true,
+        "core-js-pure@3.49.0": true,
+        "esbuild@0.28.1": true,
+        "ffmpeg-static@5.2.0": true,
+        "fsevents@2.3.3": true,
+        "puppeteer@25.3.0": true,
+        "sharp@0.34.4": true
     }
 }

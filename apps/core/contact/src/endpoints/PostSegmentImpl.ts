@@ -24,6 +24,11 @@ export class PostSegmentImpl extends PostSegment
         const name : string = this.body?.name ?? "";
         if( !name || !this.body?.query ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "name and query required" } };
 
+        // allocate the per-account sequential reference number (immutable once set) BEFORE the write — a failed
+        // allocation aborts the create so we never persist an unnumbered segment
+        const ref : Type.Result<number> = await this.service.nextRef( accountId, ContactService.SequenceKind.SEGMENT );
+        if( !ref.ok )        return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "segment ref allocation failed" } };
+
         const now : Type.ISODateTime = new Date().toISOString();
         const id : Type.UUID = randomUUID();
         // a segment with an actual filter starts PENDING (a job materializes its membership); a filterless
@@ -33,6 +38,7 @@ export class PostSegmentImpl extends PostSegment
         {
             id,
             accountId,
+            ref:         ref.data,
             name,
             query:       this.body.query,
             isExclusion: this.body.isExclusion ?? false,

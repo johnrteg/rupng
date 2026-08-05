@@ -94,6 +94,8 @@ export class Service extends Daemon
         // line + downstream call/event this request makes is stamped with it (console trace / CloudWatch / X-Ray).
         const transactionId : string = String( ( request.headers as Record<string, unknown> )[ RestfulEndpoint.RestfulHeaders.TRANSACTION_ID ] ?? "" ) || randomUUID();
         reply.header( RestfulEndpoint.RestfulHeaders.TRANSACTION_ID, transactionId );
+        const receivedAt : number = Date.now();
+        this.log.trace( "rest.received", { method: endpt.method, uri: endpt.uri } );
 
         await RequestContext.run( { transactionId }, async () : Promise<void> =>
         {
@@ -192,6 +194,7 @@ export class Service extends Daemon
             reply.header( NetworkUtils.HeaderType.CONTENT, NetworkUtils.MimeType.JSON )
                  .code( response.status )
                  .send( response.data );
+            this.log.trace( "rest.completed", { method: endpt.method, uri: endpt.uri, status: response.status, durationMs: Date.now() - receivedAt } );
         }
         catch( err : any )
         {

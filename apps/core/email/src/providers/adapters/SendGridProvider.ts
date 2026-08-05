@@ -37,6 +37,13 @@ export class SendGridProvider implements EmailProvider
                 content,
             };
 
+            // reply-to override, when present — SendGrid wants it as a structured top-level field
+            if( outbound.replyTo !== undefined )
+            {
+                const replyTo : ParsedAddress = parseAddress( outbound.replyTo );
+                payload.reply_to = { email: replyTo.email, name: replyTo.name };
+            }
+
             // send it
             const response : Response = await fetch( SendGridProvider.SEND_URL, {
                 method:  "POST",

@@ -27,6 +27,8 @@ export class SesProvider implements EmailProvider
             subject: outbound.subject,
             html:    outbound.html,
             text:    outbound.text,
+            // reply-to override, when present — SES v2 wants an array of addresses
+            replyTo: outbound.replyTo !== undefined ? [ outbound.replyTo ] : undefined,
         } );
         if( !sent.ok ) return { ok: false, error: sent.error, retryable: true };
         return { ok: true };

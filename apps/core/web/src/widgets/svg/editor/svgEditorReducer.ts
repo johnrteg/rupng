@@ -76,7 +76,7 @@ export function svgEditorReducer( state : SvgEditorState, action : SvgEditorActi
             return {
                 ...state, doc: action.doc, selectedIds: [], hoveredId: null,
                 activePage: firstPage?.id ?? "", activeLayer: firstLayer?.id ?? "",
-                history: { past: [], future: [], maxSize: HISTORY_MAX_SIZE }, dirtyFlag: false,
+                history: { past: [], future: [], maxSize: HISTORY_MAX_SIZE }, dirtyFlag: false, cropNodeId: null,
             };
         }
 
@@ -94,7 +94,7 @@ export function svgEditorReducer( state : SvgEditorState, action : SvgEditorActi
             const previous : SvgDocument.Doc = state.history.past[ state.history.past.length - 1 ];
             const past : Array<SvgDocument.Doc> = state.history.past.slice( 0, -1 );
             const future : Array<SvgDocument.Doc> = [ ...state.history.future, state.doc ].slice( -HISTORY_MAX_SIZE );
-            return { ...state, doc: previous, history: { past, future, maxSize: HISTORY_MAX_SIZE }, dirtyFlag: true, selectedIds: [] };
+            return { ...state, doc: previous, history: { past, future, maxSize: HISTORY_MAX_SIZE }, dirtyFlag: true, selectedIds: [], cropNodeId: null };
         }
 
         // redo — restore the newest future snapshot, pushing the current doc back onto the undo stack
@@ -104,7 +104,7 @@ export function svgEditorReducer( state : SvgEditorState, action : SvgEditorActi
             const next : SvgDocument.Doc = state.history.future[ state.history.future.length - 1 ];
             const future : Array<SvgDocument.Doc> = state.history.future.slice( 0, -1 );
             const past : Array<SvgDocument.Doc> = [ ...state.history.past, state.doc ].slice( -HISTORY_MAX_SIZE );
-            return { ...state, doc: next, history: { past, future, maxSize: HISTORY_MAX_SIZE }, dirtyFlag: true, selectedIds: [] };
+            return { ...state, doc: next, history: { past, future, maxSize: HISTORY_MAX_SIZE }, dirtyFlag: true, selectedIds: [], cropNodeId: null };
         }
 
         case SvgEditorActionType.SELECT_OBJECTS :
@@ -123,7 +123,13 @@ export function svgEditorReducer( state : SvgEditorState, action : SvgEditorActi
             return { ...state, panX: action.x, panY: action.y };
 
         case SvgEditorActionType.SET_ACTIVE_PAGE :
-            return { ...state, activePage: action.pageId, selectedIds: [] };
+        {
+            // also reset activeLayer to the first layer of the new page — each page owns its own layer IDs,
+            // so leaving activeLayer stale causes addObject/deleteObjects to silently target the wrong page
+            const newPage : SvgDocument.Page | undefined = state.doc?.pages.find( ( page : SvgDocument.Page ) : boolean => page.id === action.pageId );
+            const firstLayer : SvgDocument.Layer | undefined = newPage?.layers[ 0 ];
+            return { ...state, activePage: action.pageId, activeLayer: firstLayer?.id ?? state.activeLayer, selectedIds: [] };
+        }
 
         case SvgEditorActionType.SET_ACTIVE_LAYER :
             return { ...state, activeLayer: action.layerId };
@@ -152,6 +158,41 @@ export function svgEditorReducer( state : SvgEditorState, action : SvgEditorActi
 
         case SvgEditorActionType.SET_INSPECTOR_MODE :
             return { ...state, inspectorMode: action.mode };
+
+        case SvgEditorActionType.SET_CROP_NODE :
+            return { ...state, cropNodeId: action.nodeId };
+
+        case SvgEditorActionType.SET_EDITING_NODE :
+            return { ...state, editingNodeId: action.nodeId };
+
+        case SvgEditorActionType.SET_BEZIER_EDIT :
+            return { ...state, bezierEditNodeId: action.nodeId };
+
+        // live update during a drag — updates doc + dirty flag without an undo snapshot
+        case SvgEditorActionType.UPDATE_DOC_LIVE :
+            return { ...state, doc: action.doc, dirtyFlag: true };
+
+        // commit a drag — explicitly pushes the pre-drag snapshot so undo restores it cleanly
+        case SvgEditorActionType.COMMIT_DOC :
+        {
+            const past : Array<SvgDocument.Doc> = [ ...state.history.past, action.snapshot ].slice( -HISTORY_MAX_SIZE );
+            const history : HistoryStack = { past, future: [], maxSize: HISTORY_MAX_SIZE };
+            return { ...state, doc: action.doc, history, dirtyFlag: true };
+        }
+
+        // add a page — snapshot for undo, append, and switch to it
+        case SvgEditorActionType.ADD_PAGE :
+        {
+            if( state.doc === null ) return state;
+            const history : HistoryStack = pushHistory( state.history, state.doc );
+            const pages : Array<SvgDocument.Page> = [ ...state.doc.pages, action.page ];
+            const doc : SvgDocument.Doc = { ...state.doc, pages };
+            const firstLayer : SvgDocument.Layer | undefined = action.page.layers[ 0 ];
+            return {
+                ...state, doc, history, dirtyFlag: true,
+                activePage: action.page.id, activeLayer: firstLayer?.id ?? "", selectedIds: [],
+            };
+        }
 
         default :
             return state;

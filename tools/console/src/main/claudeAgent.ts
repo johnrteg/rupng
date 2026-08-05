@@ -227,6 +227,7 @@ class ClaudeAgent extends EventEmitter
                 cwd             : REPO_ROOT,
                 abortController : abort,
                 permissionMode  : "default",
+                model           : "claude-sonnet-5",
                 ...( resume ? { resume } : {} ),
                 // read-only modes simply can't use mutating tools; fix mode gates them via canUseTool
                 ...( fix ? {} : { disallowedTools: MUTATING_TOOLS } ),

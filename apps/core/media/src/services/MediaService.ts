@@ -203,7 +203,9 @@ export class MediaService extends Service
         const videoBucket : string | undefined = job.modality === AiRouting.Modality.VIDEO ? this.stagingBucketName() : undefined;
         this.log.info( "media.generate job start", { batchId: job.batchId, provider: job.provider, model: job.model, modality: job.modality, candidates: job.candidates.length } );
         void this.emitJobStage( job.accountId, job.batchId, "generate", Events.JobStage.STARTED, { userId: job.userId } );
-        const client : Ai = AiFactory.create( { provider: job.provider as unknown as Ai.Provider, model: job.model, videoBucket } );
+        // image generation is a slow, bursty operation — OpenAI gpt-image-1 occasionally returns transient
+        // 500s that resolve in seconds; 5 attempts with a 1 s base delay gives up to ~15 s of back-off time
+        const client : Ai = AiFactory.create( { provider: job.provider as unknown as Ai.Provider, model: job.model, videoBucket, maxAttempts: 5, retryBaseDelayMs: 1000 } );
 
         for( const candidate of job.candidates )
         {
@@ -1001,7 +1003,7 @@ export class MediaService extends Service
     ///////////////////////////////////////////////////////////////////////////////////////
     // ── Studio projects (media-21) — the project tree in DynamoDB; the canvas snapshot in S3 ──────────────
 
-    /** List an account's Studio projects, newest-modified first. */
+    /** List an account's (non-deleted) Studio projects, newest-modified first. */
     public async listStudioProjects( accountId : string ) : Promise<Array<StudioProject.Entity>>
     {
         const found : Type.Result<Array<StudioProject.Entity>> = await this.dynamo.query<StudioProject.Entity>( "studio_projects", {
@@ -1009,7 +1011,9 @@ export class MediaService extends Service
             ExpressionAttributeValues: { ":a": accountId },
         } );
         if( !found.ok ) return [];
-        return found.data.sort( ( first : StudioProject.Entity, second : StudioProject.Entity ) : number => second.modifiedAt.localeCompare( first.modifiedAt ) );
+        return found.data
+            .filter( ( project : StudioProject.Entity ) : boolean => !project.deleted )
+            .sort( ( first : StudioProject.Entity, second : StudioProject.Entity ) : number => second.modifiedAt.localeCompare( first.modifiedAt ) );
     }
 
     /** Read a single Studio project (undefined when missing). */
@@ -1025,12 +1029,14 @@ export class MediaService extends Service
         return this.dynamo.put( "studio_projects", { ...project } );
     }
 
-    /** Delete a Studio project record + its stored canvas (best-effort on the S3 object). */
+    /** SOFT-delete a Studio project: mark it `deleted` and stamp `deletedAt` rather than removing the row or
+     *  its canvas — so a mistaken delete stays recoverable until a later hard-purge. */
     public async removeStudioProject( accountId : string, id : string ) : Promise<Type.Result<void>>
     {
-        const removedCanvas : Type.Result<void> = await this.s3.remove( "media", this.studioCanvasKey( accountId, id ) );
-        if( !removedCanvas.ok ) { /* best-effort — a leftover canvas object is harmless */ }
-        return this.dynamo.remove( "studio_projects", { accountId, id } );
+        const existing : StudioProject.Entity | undefined = await this.getStudioProject( accountId, id );
+        if( !existing ) return ResultUtils.err( "not found" );
+        const now : string = new Date().toISOString();
+        return this.dynamo.put( "studio_projects", { ...existing, deleted: true, deletedAt: now, modifiedAt: now } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////

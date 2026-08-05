@@ -1,13 +1,14 @@
 //
 import { randomUUID } from "node:crypto";
 
-import { Media, MediaConfig } from "@repo/api";
+import { Media, MediaConfig, SvgAsset } from "@repo/api";
 import { Dynamo, S3, Sqs, Trace } from "@repo/services";
 import { FileUtils, type Type } from "@repo/common";
 import { Ai } from "@repo/ai";
 
 import { MediaAnalyzer } from "./MediaAnalyzer";
 import { Scanner } from "@repo/services";
+import SvgThreatScanner from "../utils/SvgThreatScanner";
 
 //
 // MediaPipeline — the ingest processing shared by both runtimes (the Main service drains the queues locally;
@@ -57,6 +58,7 @@ export namespace MediaPipeline
         return { domain: S3.Domain.MEDIA, accountId: asset.accountId, mediaId: asset.guid, variant: key, ext: extension };
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////
     /** The S3 key for a specific item (its usage[.profile] stem + its extension). */
     export function itemKey( asset : Media.Asset, item : Media.Item ) : S3.ObjectKey
     {
@@ -87,6 +89,24 @@ export namespace MediaPipeline
         const object : Type.Result<{ Body? : { transformToByteArray() : Promise<Uint8Array> } }> = await deps.s3.get( "media", itemKey( asset, original ) );
         if( !object.ok || !object.data.Body ) throw new Error( `original bytes unavailable ${ accountId }/${ guid }` );
         const bytes : Uint8Array = await object.data.Body.transformToByteArray();
+
+        // SVG-content gate — the malware scanner above is generic AV, not SVG-aware, so it won't catch a
+        // <script>/event-handler/external-reference that has no legitimate place in a static graphic (see
+        // SvgThreatScanner). Checked BEFORE the generic scanner so a hit never reaches MediaAnalyzer.
+        // rasterizeSvgToThumbnail (raw bytes piped straight into libvips/librsvg — a real SSRF surface for
+        // any external reference the markup carries).
+        if( original.mime === FileUtils.Mime.IMAGE_SVG )
+        {
+            const svgThreats : Array<SvgAsset.RejectReason> = SvgThreatScanner.scan( new TextDecoder().decode( bytes ) );
+            if( svgThreats.length > 0 )
+            {
+                deps.log.warn( "media.scan SVG THREAT — quarantined", { accountId, guid, reasons: svgThreats } );
+                const scannedAt : string = new Date().toISOString();
+                const threatScan : Media.ScanResult = { clean: false, provider: deps.config.scan.provider, engine: "svg-threat-scanner", threat: svgThreats.join( ", " ), scannedAt };
+                await deps.dynamo.put( TABLE, { ...asset, status: Media.Status.QUARANTINED, scanThreat: svgThreats.join( ", " ), scan: threatScan, modifiedAt: scannedAt } );
+                return;
+            }
+        }
 
         // scan with the config-selected engine (Noop = pass-through when disabled)
         const scanner : Scanner = deps.scanner ?? { provider: Scanner.Provider.NONE, scan: () => Promise.resolve( { ok: true, data: { clean: true, engine: "noop" } } ) };
@@ -301,12 +321,21 @@ export namespace MediaPipeline
         if( !onDemand && asset.status !== Media.Status.PROCESSING ) return;
         if( onDemand && asset.status !== Media.Status.OK && asset.status !== Media.Status.PROCESSING ) return;
 
+        // an SVG original is a vector, not a photo — one raster thumbnail is enough for grid previews (the
+        // mobile/tablet/desktop ladder is meaningless for something that scales natively), and it needs the
+        // SVG-aware rasterizer below (a plain resizeImage decodes a vector at a flat 72 DPI regardless of
+        // target size, so a small-viewBox icon comes out ~tiny at every "variant" width)
+        const isSvgOriginal : boolean = original.mime === "image/svg+xml";
+
         // pick the profile's specs FROM CONFIG (the generic `display` falls back to the model defaults), matched
         // to the original's mime. `ondemand` strategy defers the initial pass; an explicit request always runs.
-        const specsForProfile : Array<Media.VariantSpec> = deps.config.variants.profiles[ selected ]
-            ?? ( selected === DISPLAY_PROFILE ? [ ...Media.DISPLAY_VARIANTS ] : [] );
+        const specsForProfile : Array<Media.VariantSpec> = isSvgOriginal
+            ? [ Media.DISPLAY_VARIANTS[ 0 ] ]   // "thumb" only
+            : ( deps.config.variants.profiles[ selected ] ?? ( selected === DISPLAY_PROFILE ? [ ...Media.DISPLAY_VARIANTS ] : [] ) );
         const runNow : boolean = onDemand || deps.config.variants.strategy === "preprocess";
-        const specs : Array<Media.VariantSpec> = ( runNow && !isAvatarAsset ) ? specsForProfile.filter( ( spec ) => mimeMatches( spec.mime, original.mime ) ) : [];
+        const specs : Array<Media.VariantSpec> = ( runNow && !isAvatarAsset )
+            ? ( isSvgOriginal ? specsForProfile : specsForProfile.filter( ( spec ) => mimeMatches( spec.mime, original.mime ) ) )
+            : [];
 
         // fetch the original ONCE — reused to resize renditions + probe stats (image/video only)
         const isVisual : boolean = original.kind === Media.Kind.IMAGE || original.kind === Media.Kind.VIDEO;
@@ -320,7 +349,9 @@ export namespace MediaPipeline
             const profile : string | undefined = onDemand ? ( spec.label ? `${ selected }.${ spec.label }` : selected ) : ( spec.label ?? "default" );
             if( original.kind === Media.Kind.IMAGE && originalBytes )
             {
-                const rendition : MediaAnalyzer.Rendition | null = await MediaAnalyzer.resizeImage( originalBytes, spec );
+                const rendition : MediaAnalyzer.Rendition | null = isSvgOriginal
+                    ? await MediaAnalyzer.rasterizeSvgToThumbnail( originalBytes, spec.width ?? 256 )
+                    : await MediaAnalyzer.resizeImage( originalBytes, spec );
                 if( rendition )
                 {
                     const item : Media.Item = makeItem( {

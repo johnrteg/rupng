@@ -34,6 +34,8 @@ export class MailgunProvider implements EmailProvider
             form.set( "subject", outbound.subject );
             if( outbound.html !== undefined ) form.set( "html", outbound.html );
             if( outbound.text !== undefined ) form.set( "text", outbound.text );
+            // reply-to override, when present
+            if( outbound.replyTo !== undefined ) form.set( "h:Reply-To", outbound.replyTo );
 
             // Basic-authed send to the domain's messages endpoint
             const authorization : string = `Basic ${ Buffer.from( `api:${ ctx.apiKey }` ).toString( "base64" ) }`;

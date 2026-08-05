@@ -69,6 +69,10 @@ export const manifest : ResourceManifest =
               globalSecondaryIndexes: [
                   { name: "status", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "status", type: AttrType.STRING }, projection: "ALL" },
               ] },
+            // per-account monotonic sequence counters (one item per (accountId, kind), attr `n`) — the source of
+            // the human-facing campaign `ref` number. Atomic ADD; independent of the campaigns table so a purged
+            // campaign never frees its number for reuse. PK accountId, SK kind.
+            { key: "campaign_counters", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "kind", type: AttrType.STRING } },
         ],
     },
 

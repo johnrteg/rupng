@@ -34,6 +34,7 @@ const MIME_BY_EXT : Record<string, string> =
     pdf: "application/pdf", txt: "text/plain", csv: "text/csv",
 };
 
+////////////////////////////////////////////////////////////////////////////////////////////
 //
 // MediaUploadDialog — the ONE reusable media-upload flow, used from anywhere we accept media (the media
 // library, an avatar picker, campaign asset pickers, …). It owns the whole handshake so callers never repeat
@@ -87,9 +88,9 @@ export function MediaUploadDialog( props : MediaUploadDialog.Props ) : JSX.Eleme
         const begin : RestfulService.Reply<PostUpload.Response> = await appmodel.server.fetch( new PostUpload( { filename: file.name, mime: mimeOf( file ), size: file.size, scope: props.scope, scopeId: props.scopeId, kind: props.kind, tier: props.tier } ) );
         if( !begin.ok || !begin.data ) { mark( index, { status: "error", error: RestfulService.error( begin, "Could not start the upload" ) } ); return null; }
 
-        // bytes go DIRECT to S3 (never through the API) via the pre-signed URL — native fetch, not the app client
-        const put : Response = await fetch( begin.data.upload.url, { method: begin.data.upload.method, body: file, headers: { "Content-Type": mimeOf( file ) } } );
-        if( !put.ok ) { mark( index, { status: "error", error: `Upload failed (${ put.status })` } ); return null; }
+        // bytes go DIRECT to S3 (never through the API) via the pre-signed URL (presigned uploads are always PUT)
+        const put : RestfulService.Reply = await appmodel.server.put( begin.data.upload.url, null, file, { "Content-Type": mimeOf( file ) } );
+        if( !put.ok ) { mark( index, { status: "error", error: RestfulService.error( put, "Upload failed" ) } ); return null; }
 
         const done : RestfulService.Reply<PostUploadComplete.Response> = await appmodel.server.fetch( new PostUploadComplete( begin.data.asset.guid ) );
         if( !done.ok || !done.data ) { mark( index, { status: "error", error: RestfulService.error( done, "Could not finalize the upload" ) } ); return null; }

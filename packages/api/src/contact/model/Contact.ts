@@ -195,6 +195,7 @@ export namespace Contact
     {
         id:          Type.UUID;          // the contact id
         accountId:   Type.UUID;
+        ref?:        number;             // per-account sequential reference number (server-assigned on create, immutable, never reused)
 
         firstName?:  string;
         lastName?:   string;
@@ -229,8 +230,8 @@ export namespace Contact
         audit:       AuditMeta;
     }
 
-    /** Create payload — server assigns id / accountId / status / audit. */
-    export type CreateContact = Omit<Entity, "id" | "accountId" | "status" | "audit">;
+    /** Create payload — server assigns id / accountId / ref / status / audit. */
+    export type CreateContact = Omit<Entity, "id" | "accountId" | "ref" | "status" | "audit">;
 
     /** Update payload — any subset of the createable fields. */
     export type UpdateContact = Partial<CreateContact>;
@@ -276,6 +277,7 @@ export namespace Contact
         {
             id:                { type: "string", format: "uuid" },
             accountId:         { type: "string", format: "uuid" },
+            ref:               { type: "number" },   // per-account sequential reference number (optional: older rows may predate it)
             firstName:         { type: "string" },
             lastName:          { type: "string" },
             emails:            { type: "array", items: EMAIL_ENTRY_SCHEMA },

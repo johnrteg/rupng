@@ -39,6 +39,16 @@ export class ContactService extends Service
     public get sqs() : Sqs { return this._sqs ??= new Sqs( this.cloud ); }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    /** Allocate the next per-account sequential reference number for an entity kind (contact | segment; starts
+     *  at 1). Atomic + monotonic + never-reused (see `Dynamo.increment`): a burned number on a failed create is
+     *  an acceptable gap, and a purged contact/segment never frees its number. The caller stamps the returned
+     *  value onto the new row's immutable `ref` field. Returns a Result — a failed allocation aborts the create. */
+    public async nextRef( accountId : Type.UUID, kind : ContactService.SequenceKind ) : Promise<Type.Result<number>>
+    {
+        return this.dynamo.increment( "contact_counters", { accountId, kind }, "n" );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     /** Best-effort: enqueue a recompute of the segment counts a contact affects (called on contact
      *  create/update/archive/consent-change). Never fails the caller — a missed refresh self-heals on the
      *  next full segment listing. */
@@ -286,6 +296,9 @@ export namespace ContactService
 
     /** contact is single-role: MAIN serves the /contact/* API. */
     export enum Role { MAIN = "main" }
+
+    /** The entity kinds that carry a per-account sequence (the SK of the `contact_counters` table). */
+    export enum SequenceKind { CONTACT = "contact", SEGMENT = "segment" }
 
     /** Default local port per role (also the manifest containerPort — one source, can't drift). */
     export const PORT : Record<Role, number> = { [ Role.MAIN ]: Ports.CONTACT.MAIN };

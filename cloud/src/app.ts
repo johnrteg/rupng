@@ -57,7 +57,7 @@ import {
     GetImportMaps, GetImportMap, PostImportMap, PatchImportMap, DeleteImportMap, PostImportMapCopy,
     GetCampaigns, GetCampaign, PostCampaign, PatchCampaign, DeleteCampaign,
     PostEmailSend, GetEmailTemplates, GetEmailTemplate, PostEmailTemplate, PatchEmailTemplate, DeleteEmailTemplate, PostEmailTemplatePublish, PostEmailTemplatePreview, GetEmailTemplateVersion, PostEmailTemplateRevert, PostEmailPreview, GetEmailConfig, PutEmailConfig,
-    PostEmailBatch, GetEmailBlasts, PatchEmailBlast, DeleteEmailBlast
+    PostEmailBatch, GetEmailBlasts, PatchEmailBlast, DeleteEmailBlast, GetEmailLog
 } from "@repo/api";
 if( appManifest.owns.api )
     appManifest.owns.api.endpoints = [ ...( appManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetBootstrap(), new GetOpenApi(), new GetArticle() ] ) ];
@@ -128,7 +128,7 @@ if( emailManifest.owns.api )
         new PostEmailSend(), new PostEmailBatch(), new GetEmailBlasts(), new PatchEmailBlast(), new DeleteEmailBlast(),
         new GetEmailTemplates(), new GetEmailTemplate(), new PostEmailTemplate(), new PatchEmailTemplate(), new DeleteEmailTemplate(),
         new PostEmailTemplatePublish(), new PostEmailTemplatePreview(), new GetEmailTemplateVersion(), new PostEmailTemplateRevert(), new PostEmailPreview(),
-        new GetEmailConfig(), new PutEmailConfig()
+        new GetEmailConfig(), new PutEmailConfig(), new GetEmailLog()
     ] ) ];
 
 // ── Resolve environment from CDK context: `cdk synth -c env=staging` (default dev) ──

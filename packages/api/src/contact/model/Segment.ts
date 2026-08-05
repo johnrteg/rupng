@@ -305,6 +305,7 @@ export namespace Segment
     {
         id:           Type.UUID;
         accountId:    Type.UUID;
+        ref?:         number;           // per-account sequential reference number (server-assigned on create, immutable, never reused)
         name:         string;
         query:        Query;
         isExclusion?: boolean;          // exclusion segment

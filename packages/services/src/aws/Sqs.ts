@@ -109,6 +109,10 @@ export class Sqs
                 MaxNumberOfMessages   : max,
                 WaitTimeSeconds       : waitSeconds,
                 MessageAttributeNames : [ "All" ],   // return our `transactionId` attribute (see send/transactionId)
+                // ApproximateReceiveCount lets a consumer tell "this is my last shot before the DLQ" (compare
+                // against the queue's own maxReceiveCount) and fail a durable row explicitly instead of letting
+                // it silently dead-letter with no record of why.
+                MessageSystemAttributeNames : [ "ApproximateReceiveCount" ],
             } ) );
             return result.Messages ?? [];
         } );

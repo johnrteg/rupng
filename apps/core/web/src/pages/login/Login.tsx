@@ -76,6 +76,10 @@ export function Login( props : Login.Props ) : JSX.Element
     // passkey ceremony in flight — guards against a second click aborting the first (AbortError)
     const [passkeyBusy,setPasskeyBusy]       = React.useState< boolean >( false );
 
+    // password sign-in in flight — disables the password step's input + button and shows a spinner
+    // so the user isn't left staring at an unresponsive form during the server round-trip
+    const [loginBusy,setLoginBusy]           = React.useState< boolean >( false );
+
     const [languageChoices,setLanugaeChoices]          = React.useState< Array<SelectInput.Choice> >( [] );
 
     // ui preferences
@@ -120,7 +124,9 @@ export function Login( props : Login.Props ) : JSX.Element
     ////////////////////////////////////////////////////////////////////////////////////////////
     async function onLogin() : Promise<void>
     {
+        if( loginBusy ) return;   // re-entry guard: don't double-submit while a prior attempt is in flight
         setError( "" );
+        setLoginBusy( true );
         const account : string = method === ContactMethod.EMAIL ? email : phone;
         try
         {
@@ -129,23 +135,29 @@ export function Login( props : Login.Props ) : JSX.Element
             {
                 appmodel.setSession( reply.data.sessionToken, reply.data.refreshToken );
                 appmodel.goto( AppRouter.Route.DASHBOARD );
+                // leave the spinner up through navigation — no flash back to the idle button
             }
-            else if( reply.ok && reply.data?.challenge === LoginApi.ChallengeType.TOTP && reply.data.challengeToken )
+            else if( reply.ok
+                    && reply.data?.challenge === LoginApi.ChallengeType.TOTP
+                    && reply.data.challengeToken )
             {
                 // authenticator-app gate: password was correct — now ask for the 6-digit code
                 setChallengeToken( reply.data.challengeToken );
                 setMfaCode( "" );
                 setStep( Login.Step.CHALLENGE );
+                setLoginBusy( false );
             }
             else
             {
                 setError( "Email or password is incorrect." );
+                setLoginBusy( false );
             }
         }
         catch( err )
         {
             appmodel.log.warn( "login", err );
             setError( "Sign-in failed. Please try again." );
+            setLoginBusy( false );
         }
     }
 
@@ -415,20 +427,27 @@ export function Login( props : Login.Props ) : JSX.Element
                                 {/* passwordless-ish: offer a passkey first (discoverable credential — the
                                     authenticator picks the right one; no server-side "has a passkey?" lookup,
                                     so it stays enumeration-neutral). Password remains the fallback below. */}
-                                <Button fullWidth variant="outlined" startIcon={ <KeyOutlinedIcon /> } disabled={ passkeyBusy } onClick={ () => void onPasskey() }>
-                                    Use a passkey
+                                <Button fullWidth variant="outlined"
+                                        startIcon={ <KeyOutlinedIcon /> }
+                                        disabled={ passkeyBusy || loginBusy }
+                                        onClick={ () => void onPasskey() }>
+                                    {"Use a passkey"}
                                 </Button>
 
-                                <Divider>or enter your password</Divider>
+                                <Divider>{"or enter your password"}</Divider>
 
                                 <PasswordInput id="login-password"
                                                label={ appmodel.label( "page.login.password" ) }
                                                value={ password }
                                                focus
+                                               disabled={ loginBusy }
                                                autoComplete="current-password"
                                                onChange={ setPassword } />
 
-                                <Button type="submit" variant="contained" fullWidth disabled={ !passwordValid }>Continue</Button>
+                                <Button type="submit" variant="contained" fullWidth
+                                        loading={ loginBusy }
+                                        loadingPosition="end"
+                                        disabled={ !passwordValid || loginBusy }>Continue</Button>
                             </Show>
 
                             {/* STEP 3 — MFA (authenticator app): the password was correct; enter the 6-digit code */}

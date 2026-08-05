@@ -17,6 +17,7 @@ export namespace SvgDocument
     {
         readonly schemaVersion  : number;               // incremented only on a breaking JSON shape change; not a save counter
         readonly id             : string;               // matches SvgProject.id
+        readonly pageSize?      : PageSize;             // document-level size (all pages share this); optional for compat with older saved docs
         readonly pages          : Array<Page>;
         readonly assets         : Array<Asset>;         // embedded/linked media
         readonly styles         : StyleLibrary;
@@ -226,17 +227,19 @@ export namespace SvgDocument
     /** The full styling for a text span (font, color, spacing, decoration, optional named style ref). */
     export interface TextStyle
     {
-        readonly fontFamily   : string;
-        readonly fontWeight   : number | string;
-        readonly fontSize     : number;            // pt
-        readonly color        : string;            // hex or var ref: "{{BrandPrimary}}"
-        readonly align        : "left" | "center" | "right" | "justify";
-        readonly lineSpacing  : number;            // em
-        readonly letterSpacing: number;            // em
-        readonly paragraphSpacing : number;        // pt
-        readonly stroke       : Stroke | null;
-        readonly shadow       : Shadow | null;
-        readonly styleRef     : string | null;     // named style id from StyleLibrary
+        readonly fontFamily      : string;
+        readonly fontWeight      : number | string;
+        readonly fontStyle       : "normal" | "italic";
+        readonly textDecoration ?: "none" | "underline" | "line-through";  // optional — absent = "none"
+        readonly fontSize        : number;            // pt
+        readonly color           : string;            // hex or var ref: "{{BrandPrimary}}"
+        readonly align           : "left" | "center" | "right" | "justify";
+        readonly lineSpacing     : number;            // em
+        readonly letterSpacing   : number;            // pt (user units in the doc coordinate system)
+        readonly paragraphSpacing: number;            // pt
+        readonly stroke          : Stroke | null;
+        readonly shadow          : Shadow | null;
+        readonly styleRef        : string | null;     // named style id from StyleLibrary
     }
 
     // ── Image ───────────────────────────────────────────────────────────────
@@ -244,12 +247,13 @@ export namespace SvgDocument
     /** An image object — references an asset; optional crop/mask/frame + adjustment filters. */
     export interface ImageNode extends ObjectBase
     {
-        readonly kind    : ObjectKind.IMAGE;
-        readonly assetId : string;               // ref into doc.assets
-        readonly crop    : CropRect | null;
-        readonly mask    : MaskRef | null;
-        readonly frame   : FrameShape | null;
-        readonly filters : ImageFilters;
+        readonly kind         : ObjectKind.IMAGE;
+        readonly assetId      : string;               // ref into doc.assets
+        readonly crop         : CropRect | null;
+        readonly aspectLocked : boolean;              // constrain resize to original W:H ratio
+        readonly mask         : MaskRef | null;
+        readonly frame        : FrameShape | null;
+        readonly filters      : ImageFilters;
     }
 
     /** A crop rectangle (in pt) into the source image. */
@@ -299,22 +303,38 @@ export namespace SvgDocument
         CUSTOM  = "custom",
     }
 
+    /** The discriminant for {@link Fill} — which kind of fill a shape/text node has. */
+    export enum FillKind
+    {
+        SOLID    = "solid",
+        GRADIENT = "gradient",
+        PATTERN  = "pattern",
+        NONE     = "none",
+    }
+
     /** A shape/text fill — solid color, gradient, pattern, or none. */
     export type Fill = SolidFill | GradientFill | PatternFill | NoneFill;
 
     /** A solid color fill. */
-    export interface SolidFill    { kind : "solid";    color    : string; }
+    export interface SolidFill    { kind : FillKind.SOLID;    color    : string; }
     /** A gradient fill. */
-    export interface GradientFill { kind : "gradient"; gradient : Gradient; }
+    export interface GradientFill { kind : FillKind.GRADIENT; gradient : Gradient; }
     /** A pattern fill (SVG pattern ref). */
-    export interface PatternFill  { kind : "pattern";  pattern  : string; }
+    export interface PatternFill  { kind : FillKind.PATTERN;  pattern  : string; }
     /** No fill (transparent). */
-    export interface NoneFill     { kind : "none"; }
+    export interface NoneFill     { kind : FillKind.NONE; }
+
+    /** The blend shape of a {@link Gradient}. */
+    export enum GradientType
+    {
+        LINEAR = "linear",
+        RADIAL = "radial",
+    }
 
     /** A linear/radial gradient with ordered color stops. */
     export interface Gradient
     {
-        readonly type   : "linear" | "radial";
+        readonly type   : GradientType;
         readonly angle  : number;
         readonly stops  : Array<GradientStop>;
     }

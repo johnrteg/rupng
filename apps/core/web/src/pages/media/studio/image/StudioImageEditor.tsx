@@ -347,8 +347,9 @@ export function StudioImageEditor( props : StudioImageEditor.Props ) : JSX.Eleme
             : await StudioImageEditor.beginCreate( appmodel, base, image.blob.size, mime );
         if( slot === null ) { setSaving( false ); setSnack( { message: "Could not start the save.", severity: "error" } ); return; }
 
-        // PUT the bytes straight to S3, then complete (kicks off scan → process / regenerate variants)
-        const put : Response = await fetch( slot.url, { method: slot.method, body: image.blob, headers: { "Content-Type": mime } } );
+        // PUT the bytes straight to S3 (presigned uploads are always PUT), then complete (kicks off
+        // scan → process / regenerate variants)
+        const put : RestfulService.Reply = await appmodel.server.put( slot.url, null, image.blob, { "Content-Type": mime } );
         if( !put.ok ) { setSaving( false ); setSnack( { message: "Upload failed.", severity: "error" } ); return; }
         const done : RestfulService.Reply<PostUploadComplete.Response> = await appmodel.server.fetch( new PostUploadComplete( slot.guid ) );
         if( !done.ok ) { setSaving( false ); setSnack( { message: "Save did not complete.", severity: "error" } ); return; }

@@ -29,7 +29,11 @@ export class PostSegmentCopyImpl extends PostSegmentCopy
         if( !source.ok )   return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "segment read failed" } };
         if( !source.data ) return { status: NetworkUtils.Status.NOT_FOUND, data: { message: "segment not found" } };
 
-        // clone the definition into a new segment (fresh identity + audit; membership is re-derived)
+        // a copy is a NEW segment → allocate its OWN fresh reference number (never inherit the source's)
+        const ref : Type.Result<number> = await this.service.nextRef( accountId, ContactService.SequenceKind.SEGMENT );
+        if( !ref.ok )      return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "segment ref allocation failed" } };
+
+        // clone the definition into a new segment (fresh identity + ref + audit; membership is re-derived)
         const now : Type.ISODateTime = new Date().toISOString();
         const newId : Type.UUID = randomUUID();
         const hasFilter : boolean = source.data.query.conditions.length > 0;
@@ -37,6 +41,7 @@ export class PostSegmentCopyImpl extends PostSegmentCopy
         {
             id:          newId,
             accountId,
+            ref:         ref.data,
             name:        this.body?.name ?? `${ source.data.name } (copy)`,
             query:       source.data.query,
             isExclusion: source.data.isExclusion,

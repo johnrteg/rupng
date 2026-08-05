@@ -34,7 +34,7 @@ function rawColor( level : "out" | "err" | "sys", text : string ) : string
 }
 
 /** The structured levels we filter on (matches Trace's labels). */
-export const LEVELS = [ "INFO", "WARN", "ERROR" ] as const;
+export const LEVELS = [ "TRACE", "INFO", "WARN", "ERROR" ] as const;
 
 interface TraceRecord { level : string; time? : string; name? : string; id? : string; message? : string; args? : Array<unknown>; }
 interface Parsed { prefix? : string; record? : TraceRecord; raw : string; }

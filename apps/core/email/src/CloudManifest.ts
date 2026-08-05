@@ -32,7 +32,10 @@ export const manifest : ResourceManifest =
                 launchType      : LaunchType.FARGATE,
                 containerPort   : Ports.EMAIL.MAIN,
                 healthCheckPath : "/health",
-                environment     : { SERVICE_ROLE: "main" },
+                // LOG_LEVEL: "info" (default) | "trace" — trace is off by default; "trace" here to see
+                // per-request/queue activity (REST received, item stored, message sent/received) while diagnosing.
+                // Flip back to "info" once done — trace is noisy for normal operation.
+                environment     : { SERVICE_ROLE: "main", LOG_LEVEL: "trace" },
                 sizing          : { default: { cpu: 1, memory: 2 }, production: { cpu: 2, memory: 4 } },
                 autoscaling     : { default: { min: 1, max: 2, start: 1, targetCpuPercent: 60 },
                                     production: { min: 2, max: 6, start: 2, targetCpuPercent: 60 } },

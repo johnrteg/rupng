@@ -10,6 +10,7 @@ import {
     type ProcState, type ServiceInfo, type ServiceRole, type StageId, type StageState, type StageStatus
 } from "../shared/types";
 import { getService } from "./registry";
+import { manifestEnv } from "./manifestEnv";
 import { killTreesAndWait, reapOrphansOnPorts } from "./processScan";
 import { localApiRoutes } from "./apiTester";
 import { logStore } from "./logStore";
@@ -363,7 +364,7 @@ class ProcessManager extends EventEmitter
     {
         for ( const stream of [ "build", "image", "deploy", "runtime" ] as Array<LogStream> )
             this.kill( service, stream );
-        this.stopLocal( service );
+        void this.stopLocal( service );
         this.stopTailDeployed( service );
     }
 
@@ -629,11 +630,17 @@ class ProcessManager extends EventEmitter
             const reaped : number = reapOrphansOnPorts( rolePorts, this.ownedPids() );
             if ( reaped > 0 ) logStore.sys( service, "runtime", `↻ reclaimed ${reaped} orphan process tree(s) holding ${service}'s port(s) before starting` );
 
-            // wire to the deployed LocalStack resources (if deployed) so AWS-backed code works locally
+            // wire to the deployed LocalStack resources (if deployed) so AWS-backed code works locally.
+            // Layer the manifest's OWN declared `environment` (e.g. LOG_LEVEL) underneath — a local `npm run
+            // dev` run otherwise never sees it, since it's baked into a deployed container's env only; the
+            // deployed container's actual values (when present) still win over the manifest's static default.
+            const declared : Record<string, string> = manifestEnv( service );
             const deployed : Record<string, string> = this.deployedEnv( service );
-            const extra : NodeJS.ProcessEnv = Object.keys( deployed ).length
-                ? { ...deployed, AWS_ENDPOINT_URL: "http://localhost:4566" }
-                : {};
+            const extra : NodeJS.ProcessEnv = {
+                ...declared,
+                ...deployed,
+                ...( Object.keys( deployed ).length ? { AWS_ENDPOINT_URL: "http://localhost:4566" } : {} ),
+            };
             // Local Kafka = the Redpanda side-container (docker-compose) on :9092 — override any in-cluster
             // broker list inherited from the deployed task so locally-run services publish/consume there.
             extra.KAFKA_BROKERS = process.env.KAFKA_BROKERS ?? "localhost:9092";
@@ -650,8 +657,11 @@ class ProcessManager extends EventEmitter
         finally { this.localStarting.delete( service ); }
     }
 
-    /** Stop all of a service's local role processes. */
-    stopLocal( service : string ) : void
+    /** Stop all of a service's local role processes — kills each role's WHOLE process tree (npm →
+     *  `tsx watch` → its forked reload child) and AWAITS exit, same rationale as `shutdownGraceful`:
+     *  signalling just the tracked npm/tsx-watch pid leaves its forked node child running, orphaned,
+     *  still holding the port — which is what let dozens of stray processes pile up across restarts. */
+    async stopLocal( service : string ) : Promise<void>
     {
         // forget watchdog detection state — a restart gets fresh pids/baseline (no false "stale" carryover)
         this.serviceSrcMtime.delete( service );
@@ -659,11 +669,20 @@ class ProcessManager extends EventEmitter
 
         const group : Map<string, ChildProcess> | undefined = this.localGroups.get( service );
         if ( !group ) return;
-        for ( const child of group.values() )
-        {
-            try { child.kill( "SIGINT" ); setTimeout( () => { try { if ( !child.killed ) child.kill( "SIGKILL" ); } catch { /* */ } }, 4000 ); }
-            catch { /* already gone */ }
-        }
+
+        const roots : Array<number> = [ ...group.values() ]
+            .map( ( child : ChildProcess ) : number | undefined => child.pid )
+            .filter( ( pid : number | undefined ) : pid is number => pid !== undefined );
+        if ( roots.length > 0 ) await killTreesAndWait( roots, 4000 );
+    }
+
+    /** Stop-then-start a service's local processes, AWAITING the full tree teardown before rebinding —
+     *  no more guessing a fixed delay before the ports are actually free. Shared by the post-build
+     *  auto-restart and the stale-watcher watchdog below. */
+    private async restartLocal( service : string ) : Promise<void>
+    {
+        await this.stopLocal( service );
+        await this.startLocal( service );
     }
 
     /**
@@ -675,9 +694,8 @@ class ProcessManager extends EventEmitter
     {
         if ( this.liveLocal( service ) > 0 )
         {
-            this.stopLocal( service );
             logStore.sys( service, "runtime", "↻ restart after build — reloading rebuilt code/deps" );
-            setTimeout( () => void this.startLocal( service ), 700 );   // let the listen ports free before rebinding
+            void this.restartLocal( service );
         }
         else void this.startLocal( service );
     }
@@ -747,8 +765,7 @@ class ProcessManager extends EventEmitter
             {
                 for ( const role of roles ) { const s = this.watchdog.get( `${service}::${role.role ?? "default"}` ); if ( s ) s.pendingSince = undefined; }
                 logStore.sys( service, "runtime", `↻ watchdog — a source edit wasn't reloaded within ${RELOAD_WATCHDOG_GRACE_MS / 1000}s; the tsx-watch file watcher looks stale (common after sleep/wake). Restarting ${service} locally…` );
-                this.stopLocal( service );
-                setTimeout( () => void this.startLocal( service ), 800 );   // let listen ports free before rebinding
+                void this.restartLocal( service );
             }
         }
     }

@@ -256,11 +256,11 @@ export class RestfulService
 
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
-    public async get(   url         : string,
+    public async get<T = any>(   url         : string,
                         parameters  : any = null,
                         headers     : any = {},
                         timeout     : number | null = null,
-                        options     : RestfulService.Options | null = null ) : Promise<RestfulService.Reply>
+                        options     : RestfulService.Options | null = null ) : Promise<RestfulService.Reply<T>>
     {
     /*
         let get_url : string = url;
@@ -279,7 +279,7 @@ export class RestfulService
             }
         }
 */
-        let reply : RestfulService.Reply = await this.request( NetworkUtils.Method.GET, url, parameters, null, headers, timeout );
+        let reply : RestfulService.Reply<T> = await this.request( NetworkUtils.Method.GET, url, parameters, null, headers, timeout, undefined, false, options?.responseType ?? null, options?.withCredentials ?? null ) as RestfulService.Reply<T>;
 
         // check and store response if good
         if( options
@@ -306,9 +306,14 @@ export class RestfulService
         return reply;
     }
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
-    public async put( url : string, parameters : any = null, data : any = {}, headers : any = {}, timeout: number | null = null ) : Promise<RestfulService.Reply>
+    // `data` may be a raw binary body (Blob/File/ArrayBuffer) as well as a plain object — the common case for
+    // a direct-to-S3 presigned PUT upload (bytes go straight to storage, never through the API/JSON pipeline).
+    // `onProgress` reports upload progress (large file uploads), matching `.form()`'s existing capability.
+    // `withCredentials` defaults to false for PUT (unlike GET) since its most common caller is a presigned
+    // upload URL — a different, wildcard-CORS host our session cookie must never be attached to.
+    public async put( url : string, parameters : any = null, data : any = {}, headers : any = {}, timeout: number | null = null, onProgress? : RestfulService.ProgressCallback, withCredentials : boolean = false ) : Promise<RestfulService.Reply>
     {
-        return await this.request( NetworkUtils.Method.PUT, url, parameters, data, headers, timeout );
+        return await this.request( NetworkUtils.Method.PUT, url, parameters, data, headers, timeout, onProgress, false, null, withCredentials );
     }
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
     public async delete( url : string, parameters : any = null, data : any = {}, headers : any = {}, timeout: number | null = null ) : Promise<RestfulService.Reply>
@@ -380,14 +385,16 @@ export class RestfulService
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////
-    private async request(  method      : NetworkUtils.Method,
-                            url         : string,
-                            parameters  : any | null = null,
-                            data        : any | null = null,
-                            headers     : any | null = null,
-                            timeout     : number | null = null,
-                            onProgress? : RestfulService.ProgressCallback,
-                            isRetry     : boolean = false ) : Promise<RestfulService.Reply>
+    private async request(  method          : NetworkUtils.Method,
+                            url             : string,
+                            parameters      : any | null = null,
+                            data            : any | null = null,
+                            headers         : any | null = null,
+                            timeout         : number | null = null,
+                            onProgress?     : RestfulService.ProgressCallback,
+                            isRetry         : boolean = false,
+                            responseType    : RestfulService.ResponseType | null = null,
+                            withCredentials : boolean | null = null ) : Promise<RestfulService.Reply>
     {
         // a per-request transaction id for end-to-end tracing — sent as `x-transactionid` (the server echoes
         // it back + threads it through logs/monitor/X-Ray). Reuse a caller-supplied id if present, else mint one.
@@ -413,7 +420,12 @@ export class RestfulService
                                                                 data    : data,
                                                                 headers : requestHeaders,
                                                                 timeout : timeout ?? this.default_timeout,
-                                                                onUploadProgress: onProgress
+                                                                onUploadProgress: onProgress,
+                                                                responseType: responseType ?? undefined,
+                                                                // per-request override of the instance default (true) — a THIRD-PARTY host (a presigned
+                                                                // S3 URL, a public download) must NOT get cookies attached: a wildcard CORS policy
+                                                                // (`Access-Control-Allow-Origin: *`, e.g. S3's) explicitly rejects credentialed requests
+                                                                ...( withCredentials !== null ? { withCredentials } : {} ),
                                                             } );
             //console.log( 'resp', response );
 
@@ -471,7 +483,7 @@ export class RestfulService
             if( error.response?.status === NetworkUtils.Status.UNAUTHORIZED && this.unauthorizedHandler !== null && !isRetry )
             {
                 const recovered : boolean = await this.unauthorizedHandler();
-                if( recovered ) return await this.request( method, url, parameters, data, headers, timeout, onProgress, true );
+                if( recovered ) return await this.request( method, url, parameters, data, headers, timeout, onProgress, true, responseType, withCredentials );
             }
 
             // default
@@ -559,12 +571,19 @@ export namespace RestfulService
 
     export interface Options
     {
-        timeout?  : number;
-        cache?    : boolean;
-        lifespan? : number; // lifespan of cache in minutes
+        timeout?         : number;
+        cache?           : boolean;
+        lifespan?        : number; // lifespan of cache in minutes
+        responseType?    : ResponseType;   // 'arraybuffer'/'blob' for a binary payload; default 'json'/'text' otherwise
+        withCredentials? : boolean;        // false for a third-party/S3 host under a wildcard CORS policy — default (unset) keeps the instance's own default (true, for our own same-origin API)
         //ignoreUriService? : boolean;
         // autorefresh
     }
+
+    /** How to decode the response body — 'json'/'text' (the defaults) parse/return a string; 'arraybuffer'/
+     *  'blob' return the raw bytes untouched, for binary payloads (audio/video/image bytes, a presigned S3
+     *  GET's file contents, …) that must not be run through JSON/text decoding. */
+    export type ResponseType = "json" | "text" | "arraybuffer" | "blob";
 
     export type CallHandle = ( method: NetworkUtils.Method, url : string, status: number, duration: number ) => void;
 

@@ -43,6 +43,4 @@ export namespace SvgPlugin
         readonly format   : SvgDocument.ExportFormat;
     }
 }
-
-export default SvgPlugin;
 // eof

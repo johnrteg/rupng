@@ -158,6 +158,7 @@ export namespace Email
         idempotencyKey : string;
         accountId?     : string;
         from           : string;                          // a verified sending identity (or the platform system sender)
+        replyTo?       : string;                          // overrides the recipient's reply target (request/template → else none)
         to             : Array<string>;
         cc?            : Array<string>;
         bcc?           : Array<string>;
@@ -184,6 +185,31 @@ export namespace Email
         COMPLAINED = "complained",
         SUPPRESSED = "suppressed",   // blocked by canSend() (unsubscribe / consent / quiet-hours)
         FAILED    = "failed",
+    }
+
+    /** A send-log ROW (email-8.1) — one per delivered/attempted message + its operational status. The wire model
+     *  for the "Sent" view (Messages : Sent) — the send worker writes one on every recipient outcome. `provider`
+     *  is the ACTUALLY-RESOLVED transport adapter used (not just a request override); `from`/`replyTo`/`html`/
+     *  `text`/`headers` are the exact rendered `Outbound` handed to that adapter, captured for the "Info"
+     *  detail view (what was actually sent, vs. what was asked for). */
+    export interface SendLog
+    {
+        accountId          : string;
+        messageId          : string;
+        to                 : string;
+        subject            : string;
+        status             : Status;
+        provider?          : Provider;
+        from?              : string;
+        replyTo?           : string;
+        html?              : string;
+        text?              : string;
+        headers?           : Record<string, string>;
+        notificationType?  : NotificationType;
+        campaignId?        : string;
+        providerMessageId? : string;
+        error?             : string;
+        createdAt          : string;
     }
 
     /** A SYSTEM/transactional email CASE — each has 1-of-many templates (one published/active). Application/root

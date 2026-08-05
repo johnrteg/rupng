@@ -106,8 +106,19 @@ export namespace MjmlRenderer
         return parts.join( "" );
     }
 
-    // the dedicated (editor-managed) props of a block mapped to their MJML attribute names — the generic
-    // `block.attrs` bag is layered on top (and overrides) so any other MJML attribute is still settable
+    // merge dedicatedAttrs() over the generic `block.attrs` bag — a DEFINED dedicated value always wins (so
+    // editing a dedicated control, e.g. the BUTTON color pickers, is never shadowed by a stale generic-attrs
+    // entry of the same name); an UNDEFINED dedicated value (the editor never set that prop) falls back to
+    // whatever the generic attributes panel set, so any other MJML attribute is still freely settable
+    function mergedAttrs( block : EmailTemplate.Block ) : Record<string, string | undefined>
+    {
+        const merged : Record<string, string | undefined> = { ...( block.attrs ?? {} ) };
+        for( const [ name, value ] of Object.entries( dedicatedAttrs( block ) ) ) if( value !== undefined ) merged[ name ] = value;
+        return merged;
+    }
+
+    // the dedicated (editor-managed) props of a block mapped to their MJML attribute names — merged with the
+    // generic `block.attrs` bag by mergedAttrs() above (dedicated wins on a name collision)
     function dedicatedAttrs( block : EmailTemplate.Block ) : Record<string, string | undefined>
     {
         const props : Record<string, unknown> = block.props ?? {};
@@ -126,7 +137,7 @@ export namespace MjmlRenderer
             case EmailTemplate.BlockType.IMAGE:
                 return { "src": str( props.src ), "alt": str( props.alt ) || undefined, "href": str( props.href ) || undefined, "width": str( props.width ) || undefined, "align": str( props.align ) || undefined };
             case EmailTemplate.BlockType.BUTTON:
-                return { "href": str( props.href, "#" ), "background-color": str( props.background ) || str( props.backgroundColor ) || undefined, "color": str( props.color ) || undefined, "border-radius": str( props.borderRadius ) || undefined, "align": str( props.align ) || undefined };
+                return { "href": str( props.href, "#" ), "background-color": str( props.background ) || str( props.backgroundColor ) || undefined, "color": str( props.color ) || undefined, "border-radius": str( props.borderRadius ) || undefined, "align": str( props.align ) || undefined, "font-family": str( props.fontFamily ) || undefined, "font-size": str( props.fontSize ) || undefined };
             case EmailTemplate.BlockType.DIVIDER:
                 return { "border-color": str( props.borderColor ) || undefined, "border-width": str( props.borderWidth ) || undefined };
             case EmailTemplate.BlockType.SPACER:
@@ -154,7 +165,7 @@ export namespace MjmlRenderer
     function mjmlBlock( block : EmailTemplate.Block ) : string
     {
         const props : Record<string, unknown> = block.props ?? {};
-        const attrs : string = attrString( { ...dedicatedAttrs( block ), ...( block.attrs ?? {} ) } );
+        const attrs : string = attrString( mergedAttrs( block ) );
         // container elements render their children; content elements render their prop content
         const children : string = ( block.children ?? [] )
             .map( ( child : EmailTemplate.Block ) : string => mjmlBlock( child ) )

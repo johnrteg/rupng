@@ -30,7 +30,7 @@ export class PostLoginImpl extends PostLogin
             let reply : PostLogin.Response;
             if( loginResult.complete )
             {
-                void this.service.publishLogin( this.service.subFromToken( loginResult.tokens?.accessToken ), this.body!.account );   // auth.session.created → lastLoginAt
+                void this.service.publishLogin( this.service.subFromToken( loginResult.tokens?.accessToken ), this.body!.account );   // stamps users.lastLoginAt + auth.session.created
                 reply = { complete: true, sessionToken: loginResult.tokens?.accessToken, idToken: loginResult.tokens?.idToken, refreshToken: loginResult.tokens?.refreshToken, expiresIn: loginResult.tokens?.expiresIn };
             }
             else if( loginResult.challenge === "SOFTWARE_TOKEN_MFA" && loginResult.session )

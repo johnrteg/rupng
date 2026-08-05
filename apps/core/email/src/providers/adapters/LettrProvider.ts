@@ -38,6 +38,8 @@ export class LettrProvider implements EmailProvider
                 html:     outbound.html,
                 text:     outbound.text,
                 headers:  outbound.headers,
+                // reply-to override, when present (same formatted-string shape as `from`)
+                replyTo:  outbound.replyTo,
             };
 
             // send it (Bearer-authenticated JSON)

@@ -33,6 +33,8 @@ export class MailchimpProvider implements EmailProvider
                 html:       outbound.html,
                 text:       outbound.text,
             };
+            // Mandrill has no dedicated reply-to field — it's set as a message header
+            if( outbound.replyTo !== undefined ) message.headers = { "Reply-To": outbound.replyTo };
             const payload : Record<string, unknown> = { key: ctx.apiKey, message };
 
             const response : Response = await fetch( MailchimpProvider.SEND_URL, {

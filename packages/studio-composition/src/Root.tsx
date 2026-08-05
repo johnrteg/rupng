@@ -1,5 +1,6 @@
 import React from 'react';
 import { JSX } from "react";
+import type { ComponentType } from 'react';
 
 import { Composition, registerRoot } from 'remotion';
 
@@ -19,8 +20,13 @@ import { StudioVideoComposition } from './StudioVideoComposition';
 // register the studio composition (defaults are overridden per-format at render time)
 function StudioRoot() : JSX.Element
 {
+    // Remotion's `Composition` infers its `Props` generic from `component`'s own prop type; when that type has a
+    // REQUIRED field (here, `doc`), the inference falls back to `Record<string, unknown>` and then rejects the
+    // component (a known Remotion/TS generic-inference gap when no zod `schema` prop is supplied) — cast the
+    // component reference to sidestep it. `defaultProps` still carries the real, correctly-typed `Props` value.
+    const component : ComponentType<Record<string, unknown>> = StudioVideoComposition as unknown as ComponentType<Record<string, unknown>>;
     return  <Composition id="studio"
-                         component={ StudioVideoComposition }
+                         component={ component }
                          durationInFrames={ 300 }
                          fps={ 30 }
                          width={ 1920 }

@@ -25,6 +25,9 @@ export interface AdapterOptions
     transcribeBucket? : string;
     /** Retry attempts on transient failures (default 3). */
     maxAttempts? : number;
+    /** Base delay in ms for the exponential back-off between retry attempts (default 200).
+     *  Increase for slow provider operations (e.g. image generation) to survive longer transient outages. */
+    retryBaseDelayMs? : number;
     /** Sink for per-call usage records (e.g. forward to monitor). */
     onUsage?     : ( usage : Ai.Usage, meta? : Ai.RequestMeta ) => void;
 }
@@ -165,12 +168,13 @@ export abstract class BaseAdapter implements Ai
     protected async withRetry<T>( attempt : () => Promise<Attempt<T>> ) : Promise<Attempt<T>>
     {
         const maxAttempts : number = this.opts.maxAttempts ?? 3;
+        const baseDelayMs : number = this.opts.retryBaseDelayMs ?? 200;
         let last : Attempt<T> = { ok: false, message: "no attempt made" };
         for( let tries : number = 1; tries <= maxAttempts; tries++ )
         {
             last = await attempt();
             if( last.ok || !BaseAdapter.isTransient( last.status ) || tries === maxAttempts ) return last;
-            await BaseAdapter.delay( 200 * 2 ** ( tries - 1 ) );
+            await BaseAdapter.delay( baseDelayMs * 2 ** ( tries - 1 ) );
         }
         return last;
     }

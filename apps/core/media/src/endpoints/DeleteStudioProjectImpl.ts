@@ -4,7 +4,8 @@ import { NetworkUtils, type Type } from '@repo/common';
 import { RestfulEndpoint } from '@repo/endpoint';
 import MediaService from '../services/MediaService';
 
-// Delete a Studio project (record + its stored canvas snapshot). Library assets it saved to are untouched.
+// Soft-delete a Studio project (marks it deleted; record + its stored canvas snapshot are KEPT so a mistaken
+// delete stays recoverable). Library assets it saved to are untouched.
 export class DeleteStudioProjectImpl extends DeleteStudioProject
 {
     private service : MediaService;
@@ -19,7 +20,7 @@ export class DeleteStudioProjectImpl extends DeleteStudioProject
         if( !id ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "id required" } };
 
         const removed : Type.Result<void> = await this.service.removeStudioProject( auth.accountId, id );
-        if( !removed.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "could not delete the project" } };
+        if( !removed.ok ) return { status: NetworkUtils.Status.NOT_FOUND, data: { message: "project not found" } };
 
         return { status: NetworkUtils.Status.OK, data: { deleted: true } };
     }

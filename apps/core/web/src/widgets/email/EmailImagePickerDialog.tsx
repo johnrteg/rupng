@@ -4,6 +4,7 @@ import React from 'react';
 import { JSX } from "react";
 
 import { Box, Button, CircularProgress, Stack, Tab, Tabs, Typography } from "@mui/material";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 
 import { Media, Browse, AiRouting, AiGen, GetAssets, GetMediaUrl, PostBrowseSearch, PostBrowseImport, PatchAsset, PostAiGenerate, GetGenerateBatch, PostGeneratePromote } from '@repo/api';
 import { RestfulService } from '@repo/endpoint';
@@ -24,7 +25,9 @@ export function EmailImagePickerDialog( props : EmailImagePickerDialog.Props ) :
 
     const [tab,setTab]   = React.useState< "library" | "browse" | "ai" >( "library" );
     const [busy,setBusy] = React.useState< boolean >( false );   // importing / promoting / resolving
-    const [selected,setSelected] = React.useState< EmailImagePickerDialog.Pick | null >( null );   // the chosen image (confirmed with "Use")
+    const [selected,setSelected] = React.useState< EmailImagePickerDialog.Pick | null >( null );   // library pick (already in library)
+    const [browseSelected,setBrowseSelected] = React.useState< Browse.Result | null >( null );      // browse tile chosen; import deferred to "Use"
+    const [aiSelected,setAiSelected]         = React.useState< AiGen.Candidate | null >( null );   // AI candidate chosen; promote deferred to "Use"
 
     // library
     const [assets,setAssets]         = React.useState< Array<{ guid : string; name : string; url : string }> >( [] );
@@ -46,6 +49,7 @@ export function EmailImagePickerDialog( props : EmailImagePickerDialog.Props ) :
 
     function delay( ms : number ) : Promise<void> { return new Promise( ( resolve ) => setTimeout( resolve, ms ) ); }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // resolve a deliverable URL for an asset — retry a few times (a just-imported asset may briefly be SCANNING)
     async function resolveUrl( guid : string ) : Promise<string>
     {
@@ -84,19 +88,27 @@ export function EmailImagePickerDialog( props : EmailImagePickerDialog.Props ) :
         setSearching( false );
     }
 
-    async function importResult( result : Browse.Result ) : Promise<void>
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // import a browse result into the library and return a resolved Pick; returns null if the import fails
+    async function importAndResolve( result : Browse.Result ) : Promise<EmailImagePickerDialog.Pick | null>
     {
         setBusy( true );
-        const imported : RestfulService.Reply<PostBrowseImport.Response> = await appmodel.server.fetch( new PostBrowseImport( { provider: result.provider, externalId: result.externalId } ) );
+        const imported : RestfulService.Reply<PostBrowseImport.Response> = await appmodel.server.fetch(
+            new PostBrowseImport( { provider: result.provider, externalId: result.externalId } ) );
         if( imported.ok && imported.data )
         {
             const guid : string = imported.data.asset.guid;
-            // tag the imported asset to the current campaign (best-effort)
-            if( props.campaignId ) { const tagged : RestfulService.Reply<PatchAsset.Response> = await appmodel.server.fetch( new PatchAsset( guid, { campaignIds: [ props.campaignId ] } ) ); void tagged; }
+            if( props.campaignId )
+            {
+                const tagged : RestfulService.Reply<PatchAsset.Response> = await appmodel.server.fetch( new PatchAsset( guid, { campaignIds: [ props.campaignId ] } ) );
+                void tagged;
+            }
             const url : string = await resolveUrl( guid );
-            setSelected( { guid, name: result.title, url } );   // imported → select it (confirm with "Use")
+            setBusy( false );
+            return { guid, name: result.title, url };
         }
         setBusy( false );
+        return null;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -111,6 +123,7 @@ export function EmailImagePickerDialog( props : EmailImagePickerDialog.Props ) :
         else setGenerating( false );
     }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // poll the batch until candidates are ready (or we give up); show ready ones as they arrive
     async function pollBatch( id : string, attempt : number ) : Promise<void>
     {
@@ -126,9 +139,11 @@ export function EmailImagePickerDialog( props : EmailImagePickerDialog.Props ) :
         else setGenerating( false );
     }
 
-    async function promote( candidate : AiGen.Candidate ) : Promise<void>
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // promote an AI candidate into the library and return a resolved Pick; returns null if the promotion fails
+    async function promoteAndResolve( candidate : AiGen.Candidate ) : Promise<EmailImagePickerDialog.Pick | null>
     {
-        if( !batchId ) return;
+        if( !batchId ) return null;
         setBusy( true );
         const promoted : RestfulService.Reply<PostGeneratePromote.Response> = await appmodel.server.fetch(
             new PostGeneratePromote( batchId, { candidateIds: [ candidate.id ], campaignIds: props.campaignId ? [ props.campaignId ] : undefined } ) );
@@ -136,31 +151,59 @@ export function EmailImagePickerDialog( props : EmailImagePickerDialog.Props ) :
         {
             const asset : { guid : string; name : string } = promoted.data.assets[ 0 ];
             const url : string = await resolveUrl( asset.guid );
-            setSelected( { guid: asset.guid, name: asset.name, url } );   // promoted → select it (confirm with "Use")
+            setBusy( false );
+            return { guid: asset.guid, name: asset.name, url };
         }
         setBusy( false );
-    }
-
-    // confirm the current selection ("Use") — hand the reference back and close
-    async function onUse() : Promise<boolean>
-    {
-        if( selected === null ) return false;
-        props.onPick( selected );
-        return true;
+        return null;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // a clickable image tile — highlighted when it is the current selection
+    // confirm the current selection — library picks pass through immediately; browse/AI items are imported/promoted first
+    async function onUse() : Promise<boolean>
+    {
+        if( selected !== null )
+        {
+            props.onPick( selected );
+            return true;
+        }
+        if( browseSelected !== null )
+        {
+            const pick : EmailImagePickerDialog.Pick | null = await importAndResolve( browseSelected );
+            if( pick !== null ) { props.onPick( pick ); return true; }
+            return false;
+        }
+        if( aiSelected !== null )
+        {
+            const pick : EmailImagePickerDialog.Pick | null = await promoteAndResolve( aiSelected );
+            if( pick !== null ) { props.onPick( pick ); return true; }
+            return false;
+        }
+        return false;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // a clickable image tile — heavier border + check-circle badge when selected
     function tile( key : string, src : string, label : string, isSelected : boolean, onClick : () => void ) : JSX.Element
     {
-        return <Box key={ key } onClick={ onClick } title={ label }
-                    sx={{ width: 120, height: 120, borderRadius: 1, overflow: "hidden", cursor: "pointer", border: 2, borderColor: isSelected ? "primary.main" : "divider",
-                          backgroundImage: `url(${ src })`, backgroundSize: "cover", backgroundPosition: "center", "&:hover": { borderColor: "primary.main" } }} />;
+        return (
+            <Box key={ key } onClick={ onClick } title={ label }
+                 sx={{ position: "relative", width: 120, height: 120, borderRadius: 1, overflow: "hidden",
+                       cursor: "pointer", border: isSelected ? 3 : 2, borderColor: isSelected ? "primary.main" : "divider",
+                       backgroundImage: `url(${ src })`, backgroundSize: "cover", backgroundPosition: "center",
+                       "&:hover": { borderColor: "primary.main" } }}>
+                { isSelected &&
+                    <Box sx={{ position: "absolute", top: 4, right: 4, bgcolor: "primary.main", borderRadius: "50%",
+                               display: "flex", alignItems: "center", justifyContent: "center", width: 22, height: 22 }}>
+                        <CheckCircleIcon sx={{ fontSize: 16, color: "primary.contrastText" }} />
+                    </Box> }
+            </Box>
+        );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     return <DialogWindow id="email-image-picker" title={"Choose image"} minWidth="md" yesLabel={"Use"} cancelLabel={"Cancel"}
-                         ready={ selected !== null } onYes={ onUse } onClose={ props.onClose }>
+                         ready={ selected !== null || browseSelected !== null || aiSelected !== null } onYes={ onUse } onClose={ props.onClose }>
         <Box sx={{ p: 2 }}>
             <Tabs value={ tab } onChange={ ( _event : React.SyntheticEvent, value : "library" | "browse" | "ai" ) => setTab( value ) } sx={{ mb: 2 }}>
                 <Tab value="library" label="Library" />
@@ -187,9 +230,11 @@ export function EmailImagePickerDialog( props : EmailImagePickerDialog.Props ) :
                     <Button variant="contained" disabled={ searching } onClick={ () => void runSearch() }>{ searching ? "Searching…" : "Search" }</Button>
                 </Stack>
                 <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-                    { results.map( ( result : Browse.Result ) => tile( `${ result.provider }:${ result.externalId }`, result.thumbnailUrl, result.title, false, () => void importResult( result ) ) ) }
+                    { results.map( ( result : Browse.Result ) : JSX.Element => tile( `${ result.provider }:${ result.externalId }`, result.thumbnailUrl, result.title,
+                          browseSelected !== null && browseSelected.provider === result.provider && browseSelected.externalId === result.externalId,
+                          () => setBrowseSelected( result ) ) ) }
                 </Box>
-                { results.length > 0 && <Typography variant="caption" sx={{ color: "text.disabled" }}>{"Click an image to import it into the library, then Use."}</Typography> }
+                { results.length > 0 && <Typography variant="caption" sx={{ color: "text.disabled" }}>{"Select an image, then click Use to import it."}</Typography> }
             </Stack> }
 
             {/* AI create */}
@@ -199,9 +244,11 @@ export function EmailImagePickerDialog( props : EmailImagePickerDialog.Props ) :
                     <Button variant="contained" disabled={ generating } onClick={ () => void runGenerate() }>{ generating ? "Generating…" : "Generate" }</Button>
                 </Stack>
                 <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-                    { candidates.map( ( candidate : AiGen.Candidate ) => tile( candidate.id, candidate.previewUrl ?? "", "candidate", false, () => void promote( candidate ) ) ) }
+                    { candidates.map( ( candidate : AiGen.Candidate ) : JSX.Element => tile( candidate.id, candidate.previewUrl ?? "", "candidate",
+                          aiSelected?.id === candidate.id,
+                          () => setAiSelected( candidate ) ) ) }
                 </Box>
-                { candidates.length > 0 && <Typography variant="caption" sx={{ color: "text.disabled" }}>{"Click a result to add it to the library, then Use."}</Typography> }
+                { candidates.length > 0 && <Typography variant="caption" sx={{ color: "text.disabled" }}>{"Select a result, then click Use to add it to the library."}</Typography> }
             </Stack> }
         </Box>
     </DialogWindow>;

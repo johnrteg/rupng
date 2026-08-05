@@ -27,16 +27,18 @@ export class SvgService
     ///////////////////////////////////////////////////////////////////////////////////////
     // ── S3 key layouts ────────────────────────────────────────────────────────────────────
 
-    /** The S3 key of a project's editable doc JSON (in the versioned `media` bucket). */
-    private docKey( accountId : string, projectId : string ) : string
+    /** The S3 key of a project's editable doc JSON (in the versioned `media` bucket). Static — a pure string
+     *  builder that never touches `this.media` — so callers without a MediaService (e.g. SvgRenderPipeline,
+     *  which runs from both the MAIN consumer and the Lambda job) can derive the same key without an instance. */
+    private static docKey( accountId : string, projectId : string ) : string
     {
         return `svg-docs/${ accountId }/${ projectId }.json`;
     }
 
     /** The public S3 key of a project's doc (for callers that report it back to the client). */
-    public canvasKey( accountId : string, projectId : string ) : string
+    public static canvasKey( accountId : string, projectId : string ) : string
     {
-        return this.docKey( accountId, projectId );
+        return SvgService.docKey( accountId, projectId );
     }
 
     /** The S3 key of a template's doc JSON. `owner` is "system" for platform templates, else the accountId. */
@@ -59,7 +61,7 @@ export class SvgService
     public async getCanvas( projectId : string, accountId : string ) : Promise<Type.Result<SvgDocument.Doc>>
     {
         // fetch the JSON object, then decode + parse it into the typed doc
-        const object : Type.Result<{ Body? : { transformToByteArray() : Promise<Uint8Array> } }> = await this.media.s3.get( "media", this.docKey( accountId, projectId ) );
+        const object : Type.Result<{ Body? : { transformToByteArray() : Promise<Uint8Array> } }> = await this.media.s3.get( "media", SvgService.docKey( accountId, projectId ) );
         if( !object.ok || !object.data.Body ) return ResultUtils.err( "canvas not found" );
 
         const bytes : Uint8Array = await object.data.Body.transformToByteArray();
@@ -72,7 +74,7 @@ export class SvgService
      *  updatedAt (best-effort). Returns the canvas S3 key + the ISO save timestamp. */
     public async putCanvas( projectId : string, accountId : string, doc : SvgDocument.Doc ) : Promise<Type.Result<{ canvasKey : string; savedAt : string }>>
     {
-        const canvasKey : string = this.docKey( accountId, projectId );
+        const canvasKey : string = SvgService.docKey( accountId, projectId );
 
         // persist the doc JSON to S3 (versioned bucket → automatic history)
         const wrote : Type.Result<void> = await this.media.s3.put( "media", canvasKey, Buffer.from( JSON.stringify( doc ), "utf8" ), FileUtils.Mime.JSON );
@@ -157,7 +159,7 @@ export class SvgService
         // re-id the copied doc to the new project and write it to the project's S3 key
         const projectId : string = randomUUID();
         const copy : SvgDocument.Doc = { ...source.data, id: projectId };
-        const wrote : Type.Result<void> = await this.media.s3.put( "media", this.docKey( accountId, projectId ), Buffer.from( JSON.stringify( copy ), "utf8" ), FileUtils.Mime.JSON );
+        const wrote : Type.Result<void> = await this.media.s3.put( "media", SvgService.docKey( accountId, projectId ), Buffer.from( JSON.stringify( copy ), "utf8" ), FileUtils.Mime.JSON );
         if( !wrote.ok ) return ResultUtils.err( "could not write the new project doc", wrote.cause );
 
         // create the project metadata row (reuses studio_projects; kind IMAGE — SVG projects are page designs)

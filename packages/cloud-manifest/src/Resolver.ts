@@ -31,11 +31,16 @@ export class CloudResolver
      * @param service the owning service name
      * @param source  identifier source to read from (defaults to `process.env`)
      */
-    constructor( env : Environment, service : string, source : Record<string, string | undefined> = process.env )
+    constructor( env : Environment, service : string, source? : Record<string, string | undefined> )
     {
         this.env     = env;
         this.service = service;
-        this.source  = source;
+        // access process.env via globalThis index to avoid TS2591 ("Cannot find name 'process'")
+        // when this file is type-checked by the web tsconfig, which excludes @types/node. At
+        // runtime this file only runs in Node, so process.env is always present.
+        const globalRecord : Record<string, unknown> = globalThis as Record<string, unknown>;
+        const nodeEnv : Record<string, string | undefined> = ( globalRecord[ "process" ] as { env : Record<string, string | undefined> } | undefined )?.env ?? {};
+        this.source  = source ?? nodeEnv;
     }
 
     // ── Typed accessors by resource kind (each resolves a logical key -> physical id) ──

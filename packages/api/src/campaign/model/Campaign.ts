@@ -137,6 +137,7 @@ export namespace Campaign
     {
         id:          Type.UUID;
         accountId:   Type.UUID;
+        ref?:        number;               // per-account sequential reference number (server-assigned on create, immutable, never reused)
         name:        string;
         objective?:  string;               // free-text goal (feeds AI message tailoring later)
         status:      Status;
@@ -222,6 +223,7 @@ export namespace Campaign
         {
             id:         { type: "string", format: "uuid" },
             accountId:  { type: "string", format: "uuid" },
+            ref:        { type: "number" },   // per-account sequential reference number (optional: older rows may predate it)
             name:       { type: "string" },
             objective:  { type: "string" },
             status:     { type: "string", enum: Object.values( Status ) },

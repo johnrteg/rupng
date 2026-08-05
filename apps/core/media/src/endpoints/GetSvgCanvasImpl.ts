@@ -22,7 +22,7 @@ export class GetSvgCanvasImpl extends GetSvgCanvas
         const got : Type.Result<SvgDocument.Doc> = await this.svg.getCanvas( projectId, auth.accountId );
         if( !got.ok ) return { status: NetworkUtils.Status.NOT_FOUND, data: { message: "canvas not found" } };
 
-        const canvasKey : string = this.svg.canvasKey( auth.accountId, projectId );
+        const canvasKey : string = SvgService.canvasKey( auth.accountId, projectId );
         return { status: NetworkUtils.Status.OK, data: { doc: got.data, canvasKey } };
     }
 }

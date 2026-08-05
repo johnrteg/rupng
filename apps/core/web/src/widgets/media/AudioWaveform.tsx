@@ -1,6 +1,10 @@
 import React from 'react';
 import { JSX } from "react";
 
+import { RestfulService } from "@repo/endpoint";
+
+import AppModel from "@model/AppModel";
+
 //
 // AudioWaveform — a static, precomputed waveform for an audio source, drawn on a <canvas>. It fetches + decodes
 // the audio ONCE per `cacheKey` (the durable asset guid), downsamples to a fixed set of peaks, and caches them
@@ -16,25 +20,32 @@ export function AudioWaveform( props : AudioWaveform.Props ) : JSX.Element
     // decode + cache the peaks when the source/key changes (cached → instant)
     React.useEffect( () : void => { void loadPeaks(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [ props.cacheKey, props.src ] );
 
+    ////////////////////////////////////////////////////////////////////////////////////////////
     async function loadPeaks() : Promise<void>
     {
         const cached : AudioWaveform.Peaks | undefined = AudioWaveform.CACHE.get( props.cacheKey );
         if( cached !== undefined ) { setPeaks( cached ); return; }
+
+        // fetch the raw bytes (never throws) and decode to PCM, then reduce channel 0 to a fixed peak
+        // profile (max |sample| per bucket); an unsupported codec throws INSIDE decodeAudioData, not here
+        // withCredentials: false — a presigned S3 delivery URL's wildcard CORS policy rejects a credentialed request
+        const reply : RestfulService.Reply<ArrayBuffer> = await AppModel.instance().server.get<ArrayBuffer>(
+            props.src, null, {}, null, { responseType: "arraybuffer", withCredentials: false } );
+        if( !reply.ok || reply.data === undefined ) return;   // CORS / network failure → leave blank (no waveform)
+
         try
         {
-            // fetch the bytes and decode to PCM, then reduce channel 0 to a fixed peak profile (max |sample| per bucket)
-            const response : Response = await fetch( props.src );
-            const buffer : ArrayBuffer = await response.arrayBuffer();
-            const decoded : AudioBuffer = await AudioWaveform.audioContext().decodeAudioData( buffer );
+            const decoded : AudioBuffer = await AudioWaveform.audioContext().decodeAudioData( reply.data );
             const samples : Float32Array = decoded.getChannelData( 0 );
             const values : Array<number> = downsample( samples, AudioWaveform.RESOLUTION );
             const result : AudioWaveform.Peaks = { values, durationSec: decoded.duration };
             AudioWaveform.CACHE.set( props.cacheKey, result );
             setPeaks( result );
         }
-        catch { /* CORS / unsupported codec → leave blank (no waveform) */ }
+        catch { /* unsupported codec → leave blank (no waveform) */ }
     }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // reduce a PCM channel to `buckets` peaks (max absolute amplitude per bucket)
     function downsample( samples : Float32Array, buckets : number ) : Array<number>
     {
@@ -58,6 +69,7 @@ export function AudioWaveform( props : AudioWaveform.Props ) : JSX.Element
     // (re)draw whenever the peaks or the geometry/window change
     React.useEffect( () : void => { draw(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [ peaks, props.width, props.height, props.color, props.startSec, props.windowSec ] );
 
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // paint the visible window of the peak profile as center-mirrored vertical bars
     function draw() : void
     {

@@ -172,6 +172,7 @@ export function ContactsList( _props : ContactsList.Props ) : JSX.Element
 
     const contactColumns : Array<TableInput.Column> =
     [
+        { field: "ref",     label: "#",      type: TableInput.ColumnType.NUMBER },
         { field: "name",    label: "Name",   type: TableInput.ColumnType.STRING },
         { field: "email",   label: "Email",  type: TableInput.ColumnType.EMAIL },
         { field: "phone",   label: "Phone",  type: TableInput.ColumnType.PHONE },
@@ -181,6 +182,7 @@ export function ContactsList( _props : ContactsList.Props ) : JSX.Element
 
     const contactRows : Array<TableInput.Row> = visible.map( ( contact : Contact.Entity ) => ( {
         id:      contact.id,
+        ref:     contact.ref ?? null,
         name:    displayName( contact ),
         email:   contact.emails[ 0 ]?.value ?? "",
         phone:   contact.phones[ 0 ]?.value ?? "",

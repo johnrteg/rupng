@@ -32,6 +32,13 @@ export class MailtrapProvider implements EmailProvider
                 text:    outbound.text,
             };
 
+            // reply-to override, when present — Mailtrap wants it as a structured field
+            if( outbound.replyTo !== undefined )
+            {
+                const replyTo : ParsedAddress = parseAddress( outbound.replyTo );
+                payload.reply_to = { email: replyTo.email, name: replyTo.name };
+            }
+
             const response : Response = await fetch( MailtrapProvider.SEND_URL, {
                 method:  "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${ ctx.apiKey }` },

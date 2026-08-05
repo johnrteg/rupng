@@ -114,6 +114,8 @@ export namespace EmailTemplate
         status            : Status;
         version           : number;              // bumps on each save (S3 keeps history)
         subject           : string;              // may carry merge tags
+        from?             : Email.Address;        // overrides the account/system default sender when sending this template
+        replyTo?          : Email.Address;         // overrides the request/default reply-to when sending this template
         doc               : Doc;                 // the editable block tree (JSON)
         mjml?             : string;              // compiled MJML (intermediate)
         html?             : string;              // compiled responsive HTML (send output)
@@ -131,7 +133,7 @@ export namespace EmailTemplate
 
     /** The immutable per-version body snapshotted to S3 — the editable `doc` + subject + compiled outputs at that
      *  version. Read to PREVIEW or RESTORE an earlier version (older snapshots may omit `subject`). */
-    export interface VersionBody { version : number; savedAt? : string; subject? : string; doc : Doc; mjml? : string; html? : string; }
+    export interface VersionBody { version : number; savedAt? : string; subject? : string; from? : Email.Address; replyTo? : Email.Address; doc : Doc; mjml? : string; html? : string; }
 
     /** The create payload — the server assigns id / version / status / audit. */
     export type Create = Omit<Entity, "id" | "version" | "status" | "audit">;

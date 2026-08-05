@@ -177,7 +177,7 @@ export namespace Account
         avatarAssetId? : string;             // denormalized avatar media guid — kept fresh by the media.asset (USER) event (media-23)
         owner?       : boolean;              // true = the account owner (can't be suspended / removed)
         createdAt    : Type.ISODateTime;     // when they were added
-        lastLoginAt? : Type.ISODateTime;     // best-effort last-seen (optional)
+        lastAccessedAt? : Type.ISODateTime;  // last time this user was seen acting in THIS account (throttled)
     }
 
     /** A child account in the hierarchy, summarized for the sub-accounts list (account-2). Carries its own

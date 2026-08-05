@@ -25,7 +25,7 @@ export class PostLoginPasskeyVerifyImpl extends PostLoginPasskeyVerify
 
         const user : User.Entity | undefined = await this.service.users.profile( userId );
         const sessionToken : string = Session.issue( { userId, username: user?.email ?? userId, role: "user" } );
-        void this.service.publishLogin( userId, user?.email );   // auth.session.created → lastLoginAt
+        void this.service.publishLogin( userId, user?.email );   // stamps users.lastLoginAt + auth.session.created
         const reply : PostLoginPasskeyVerify.Response = { complete: true, sessionToken, user };
         return { status: NetworkUtils.Status.OK, data: reply };
     }

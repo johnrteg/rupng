@@ -69,6 +69,10 @@ export const manifest : ResourceManifest =
                   { name: "status", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "status", type: AttrType.STRING }, projection: "ALL" },
               ] },
             { key: "segments", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "segmentId", type: AttrType.STRING } },
+            // per-account monotonic sequence counters (one item per (accountId, kind: contact | segment), attr `n`)
+            // — the source of the human-facing `ref` numbers for contacts + segments. Atomic ADD; independent of
+            // the entity tables so a purged contact/segment never frees its number for reuse. PK accountId, SK kind.
+            { key: "contact_counters", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "kind", type: AttrType.STRING } },
             // custom-field DEFINITIONS (account-level schema; managed under Settings → Contacts). Values live
             // on the contact row keyed by fieldUid. PK accountId, SK fieldUid.
             { key: "field_defs", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "fieldUid", type: AttrType.STRING } },

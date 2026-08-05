@@ -174,6 +174,7 @@ export function Campaigns( _props : Campaigns.Props ) : JSX.Element
 
     const campaignColumns : Array<TableInput.Column> =
     [
+        { field: "ref",      label: "#",        type: TableInput.ColumnType.NUMBER },
         { field: "name",     label: "Name",     type: TableInput.ColumnType.STRING },
         { field: "status",   label: "Status",   type: TableInput.ColumnType.CUSTOM,   renderer: statusRenderer },
         { field: "channels", label: "Channels", type: TableInput.ColumnType.CUSTOM,   renderer: channelsRenderer },
@@ -188,6 +189,7 @@ export function Campaigns( _props : Campaigns.Props ) : JSX.Element
 
     const campaignRows : Array<TableInput.Row> = visible.map( ( campaign : Campaign.Entity ) => ( {
         id:       campaign.id,
+        ref:      campaign.ref ?? null,
         name:     campaign.name,
         status:   campaign.status,
         budget:   budgetLabel( campaign ),

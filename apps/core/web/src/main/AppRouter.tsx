@@ -33,6 +33,8 @@ import { SettingsContacts } from '@pages/settings/SettingsContacts';
 import { SettingsEmail } from '@pages/settings/SettingsEmail';
 import { SettingsActions } from '@pages/settings/SettingsActions';
 import { EmailTemplates } from '@pages/email/EmailTemplates';
+import { MessagesSend } from '@pages/messages/MessagesSend';
+import { MessagesSent } from '@pages/messages/MessagesSent';
 import { Login }        from '@pages/login/Login';
 import { Register }     from '@pages/register/Register';
 import { ForgotPassword }   from '@pages/login/ForgotPassword';
@@ -131,6 +133,8 @@ export function AppRouter( props : AppRouter.Props ) : JSX.Element
         new_routes.push( { path: "/settings/email", component: () => <SettingsEmail /> } );
         new_routes.push( { path: "/settings/actions", component: () => <SettingsActions /> } );
         new_routes.push( { path: "/studio/email-templates", component: () => <EmailTemplates /> } );
+        new_routes.push( { path: "/messages/send", component: () => <MessagesSend /> } );
+        new_routes.push( { path: "/messages/sent", component: () => <MessagesSent /> } );
 
         // least common (mixed - some critical, some lazy)
         new_routes.push( { path: AppRouter.Route.ROOT     , component: () => <Dashboard /> } );

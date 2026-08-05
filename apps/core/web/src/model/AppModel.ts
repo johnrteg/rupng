@@ -124,7 +124,10 @@ export class AppModel
     */
     private static ServerMonitor( method: NetworkUtils.Method, url : string, status: number, duration: number ) : void
     {
-        //this.log.info( 'ServerMonitor', method, url, status, duration );
+        // rest call completed — every fetch() through RestfulService lands here, so this is the one place
+        // that surfaces "rest called received" activity for trace level without threading a logger through
+        // RestfulService itself.
+        AppModel.instance().log.trace( "rest.completed", { method, url, status, duration } );
         if( AppModel.instance().cache.tracker )
         {
         /*

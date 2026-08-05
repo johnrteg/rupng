@@ -149,6 +149,13 @@ export default class BrowserUtils
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** Whether the device is a mobile/touch device (narrow viewport or touch support). */
+    public static get isMobile() : boolean
+    {
+        return window.innerWidth <= 768 || navigator.maxTouchPoints > 0;
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /**
      * Whether the current viewport is in landscape orientation.
      *
@@ -194,7 +201,7 @@ export default class BrowserUtils
     public static async readFile( file : File ) : Promise<string>
     {
         return new Promise((resolve, reject) => {
-                const reader = new FileReader();
+                const reader : FileReader = new FileReader();
                 reader.onload = (e) => {
                     const contents : string = e.target?.result as string;
                     resolve(contents);
@@ -634,18 +641,19 @@ export default class BrowserUtils
      */
     public static async download( url : string, override_file_name : string | null = null ) : Promise<void>
     {
-        let response : Response;
-        try
-        {
-            response = await fetch( url, { mode: 'cors' });
-        }
-        catch( e )
+        // a bare instance (no base URL, no auth headers) — `url` may be any arbitrary external file, so this
+        // must not attach our app's Authorization/session headers the way AppModel.instance().server would
+        const api : RestfulService = new RestfulService( "" );
+        // withCredentials: false — a third-party/S3 host's wildcard CORS policy (`Access-Control-Allow-
+        // Origin: *`) explicitly rejects a credentialed (cookie-attached) cross-origin request
+        const reply : RestfulService.Reply<Blob> = await api.get<Blob>( url, null, {}, null, { responseType: "blob", withCredentials: false } );
+        if( !reply.ok || reply.data === undefined )
         {
             // CORS or network error — fall back to opening the URL directly in a new tab
             window.open( url, "_blank" );
             return;
         }
-        const blob      : Blob = await response.blob();
+        const blob      : Blob = reply.data;
         const blobUrl   : string = URL.createObjectURL( blob );
 
         // Extract filename from URL, ignoring query parameters
@@ -791,6 +799,28 @@ export default class BrowserUtils
             arr[i] = str.charCodeAt(i) & 0xFF;
         }
         return arr;
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Measure an image's native (natural) pixel dimensions by loading it off-DOM.
+     *
+     * @param url - The image URL to measure (a CDN link or a data: URI).
+     * @returns A Promise resolving to `{ width, height }` in native pixels, or `{ width: 0, height: 0 }`
+     *          if the image fails to load.
+     *
+     * @example
+     * const { width, height } = await BrowserUtils.measureImage('https://cdn.example.com/photo.jpg');
+     */
+    public static measureImage( url : string ) : Promise<{ width : number; height : number }>
+    {
+        return new Promise( ( resolve : ( size : { width : number; height : number } ) => void ) : void =>
+        {
+            const img : HTMLImageElement = new Image();
+            img.onload  = () : void => resolve( { width: img.naturalWidth, height: img.naturalHeight } );
+            img.onerror = () : void => resolve( { width: 0, height: 0 } );
+            img.src = url;
+        } );
     }
 
    

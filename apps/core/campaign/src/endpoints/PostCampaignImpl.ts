@@ -24,12 +24,18 @@ export class PostCampaignImpl extends PostCampaign
         const name : string = this.body?.name ?? "";
         if( !name )          return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "name required" } };
 
+        // allocate the per-account sequential reference number (immutable once set) BEFORE the write — a failed
+        // allocation aborts the create so we never persist an unnumbered campaign
+        const ref : Type.Result<number> = await this.service.nextRef( accountId, CampaignService.SequenceKind.CAMPAIGN );
+        if( !ref.ok )        return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "campaign ref allocation failed" } };
+
         const now : Type.ISODateTime = new Date().toISOString();
         const id : Type.UUID = randomUUID();
         const entity : Campaign.Entity =
         {
             id,
             accountId,
+            ref:       ref.data,
             name,
             objective: this.body?.objective,
             status:    Campaign.Status.DRAFT,

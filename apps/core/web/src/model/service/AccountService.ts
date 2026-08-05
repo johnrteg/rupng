@@ -99,6 +99,17 @@ export class AccountService
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /** Refresh the cached brand identity from a freshly-saved account (e.g. after the Branding page saves) so
+     *  app-wide color pickers / font choices AND the image studio editor pick up the change immediately — without
+     *  a full browser reload. Broadcasts ACCOUNT so any currently-mounted consumer re-renders. */
+    public applyBranding( account : Account.Entity ) : void
+    {
+        this.palette = account.palette ?? [];
+        this.fonts   = account.fonts ?? [];
+        this.appmodel.pubsub.publish( PubSubService.Type.ACCOUNT, this.current );
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /** Switch the acting account (from the nav switcher): apply it, persist to the user profile (resumes next
      *  sign-in), and RE-SCOPE the view (back to the dashboard for the new account). No-op if the id isn't one
      *  the user can act in / is already current. */

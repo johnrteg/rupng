@@ -32,6 +32,8 @@ export class PostmarkProvider implements EmailProvider
                 Subject:  outbound.subject,
                 HtmlBody: outbound.html,
                 TextBody: outbound.text,
+                // reply-to override, when present (same formatted-string shape as From)
+                ReplyTo:  outbound.replyTo,
             };
 
             const response : Response = await fetch( PostmarkProvider.SEND_URL, {

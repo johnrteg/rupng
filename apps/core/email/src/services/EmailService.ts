@@ -78,6 +78,7 @@ export class EmailService extends Service
     public async emailConfig() : Promise<EmailConfig.Config>
     {
         const got : Type.Result<EmailConfig.Config | undefined> = await this.appConfig.json<EmailConfig.Config>( "config", "settings" );
+        this.log.trace( "config read: config/settings", { found: got.ok && got.data !== undefined } );
         return got.ok && got.data ? ObjectUtils.withDefaults( got.data, EmailConfig.DEFAULT ) : EmailConfig.DEFAULT;
     }
 
@@ -116,6 +117,7 @@ export class EmailService extends Service
     /** List an account's templates (its own partition; pass SYSTEM_ACCOUNT for the platform set). */
     public async listTemplates( accountId : string ) : Promise<Type.Result<Array<EmailTemplate.Entity>>>
     {
+        this.log.trace( "item query: email_templates", { accountId } );
         return this.dynamo.query<EmailTemplate.Entity>( "email_templates", {
             KeyConditionExpression:    "accountId = :a",
             ExpressionAttributeValues: { ":a": accountId },
@@ -125,6 +127,7 @@ export class EmailService extends Service
     /** One template by id. */
     public async getTemplate( accountId : string, templateId : string ) : Promise<Type.Result<EmailTemplate.Entity | undefined>>
     {
+        this.log.trace( "item read: email_templates", { accountId, templateId } );
         return this.dynamo.get<EmailTemplate.Entity>( "email_templates", { accountId, templateId } );
     }
 
@@ -145,6 +148,7 @@ export class EmailService extends Service
         // DDB is the current-version frontend (doc/mjml/html + the version log inline for a fast read)
         const wrote : Type.Result<void> = await this.dynamo.put( "email_templates", { ...stored, accountId: partition, templateId: entity.id } );
         if( !wrote.ok ) return wrote;
+        this.log.trace( "item stored: email_templates", { accountId: partition, templateId: entity.id, version: entity.version } );
 
         // S3 keeps the immutable per-version body snapshot for history/rollback (subject included so a restore
         // brings back the whole editable state, not just the block doc)
@@ -172,6 +176,7 @@ export class EmailService extends Service
     /** Remove a template row (bodies remain in S3 history). */
     public async deleteTemplate( accountId : string, templateId : string ) : Promise<Type.Result<void>>
     {
+        this.log.trace( "item removed: email_templates", { accountId, templateId } );
         return this.dynamo.remove( "email_templates", { accountId, templateId } );
     }
 
@@ -179,6 +184,7 @@ export class EmailService extends Service
      *  undefined. Used by the send worker when a request names a `notificationType` instead of a `templateId`. */
     public async publishedTemplateFor( accountId : string, notificationType : Email.NotificationType ) : Promise<EmailTemplate.Entity | undefined>
     {
+        this.log.trace( "item query: email_templates (byType)", { accountId, notificationType } );
         const found : Type.Result<Array<EmailTemplate.Entity>> = await this.dynamo.query<EmailTemplate.Entity>( "email_templates", {
             IndexName:                 "byType",
             KeyConditionExpression:    "accountId = :a AND notificationType = :t",
@@ -226,6 +232,7 @@ export class EmailService extends Service
         // (or EventBridge Scheduler in prod); this delay paces the near-term fan-out.
         const sent : Type.Result<void> = await this.sqs.send( "email-send", { jobId, request }, delaySeconds > 0 ? { delaySeconds: Math.min( 900, delaySeconds ) } : {} );
         if( !sent.ok ) return { ok: false, error: sent.error };
+        this.log.trace( "message enqueued (SQS email-send)", { jobId, accountId: request.accountId, delaySeconds } );
         return { ok: true, data: jobId };
     }
 
@@ -244,6 +251,7 @@ export class EmailService extends Service
      *  transport + log per recipient. Never throws (a bad send is logged FAILED, not raised). */
     public async processSend( request : Email.SendRequest ) : Promise<void>
     {
+        this.log.trace( "processSend: start", { accountId: request.accountId, recipients: request.to.length, templateId: request.templateId, notificationType: request.notificationType } );
         const config : EmailConfig.Config = await this.emailConfig();
         const accountId : string = request.accountId ?? EmailService.SYSTEM_ACCOUNT;
         const system : boolean = request.notificationType !== undefined && EmailService.isSystemNotification( request.notificationType );
@@ -264,14 +272,22 @@ export class EmailService extends Service
         const adapter : EmailProvider | undefined = this.providers.get( providerId );
         if( adapter === undefined ) { this.log.warn( "send aborted — no adapter for provider", { accountId, provider: providerId } ); return; }
         const context : EmailContext = await this.providerContext( providerId, config );
+        const providerEntry : EmailConfig.ProviderEntry | undefined = config.providers[ providerId ];
 
-        // the verified from-identity (request override → system sender fallback)
-        const from : string = EmailService.formatAddress( request.from ?? EmailService.systemSenderFor( config, request.notificationType ) );
+        // the verified from-identity (request override → template override → THIS PROVIDER's own default →
+        // system sender fallback). The provider-level default lets an operator test several ESPs side by side,
+        // each needing its own verified/sandboxed sending identity (e.g. a Mailgun sandbox domain).
+        const from : string = EmailService.formatAddress( request.from ?? rendered.from ?? providerEntry?.from ?? EmailService.systemSenderFor( config, request.notificationType ) );
+
+        // the reply-to override, if any (request override → template override → provider default → none)
+        const replyToAddress : Email.Address | undefined = request.replyTo ?? rendered.replyTo ?? providerEntry?.replyTo;
+        const replyTo : string | undefined = replyToAddress ? EmailService.formatAddress( replyToAddress ) : undefined;
+        this.log.trace( "processSend: resolved identity", { accountId, provider: providerId, from, replyTo } );
 
         // fan out per recipient — each resolves its own address + merge context, gates, sends, and logs
         for( const recipient of request.to )
         {
-            await this.sendToRecipient( recipient, { request, config, accountId, system, rendered, adapter, context, from } );
+            await this.sendToRecipient( recipient, { request, config, accountId, system, rendered, adapter, context, from, replyTo } );
         }
     }
 
@@ -287,7 +303,8 @@ export class EmailService extends Service
         const suppressed : boolean = await this.isSuppressed( ctx.accountId, resolved.email );
         if( suppressed )
         {
-            await this.writeLog( ctx.accountId, resolved.email, ctx.rendered.subject, ctx.request, Email.Status.SUPPRESSED );
+            await this.writeLog( ctx.accountId, resolved.email, ctx.rendered.subject, ctx.request, Email.Status.SUPPRESSED,
+                { provider: ctx.adapter.provider, from: ctx.from, replyTo: ctx.replyTo, html: ctx.rendered.html, text: ctx.rendered.text } );
             return;
         }
 
@@ -300,6 +317,7 @@ export class EmailService extends Service
             idempotencyKey: ctx.request.idempotencyKey ?? randomUUID(),
             accountId:      ctx.system ? undefined : ctx.accountId,
             from:           ctx.from,
+            replyTo:        ctx.replyTo,
             to:             [ resolved.email ],
             subject:        MjmlRenderer.merge( ctx.rendered.subject, mergeData ),
             html:           ctx.rendered.html !== undefined ? MjmlRenderer.merge( ctx.rendered.html, mergeData ) : undefined,
@@ -307,10 +325,14 @@ export class EmailService extends Service
         };
 
         // transport + log the outcome
+        this.log.trace( "message sending", { accountId: ctx.accountId, to: resolved.email, provider: ctx.adapter.provider } );
         const result : Email.SendResult = await ctx.adapter.send( outbound, ctx.context );
         const status : Email.Status = result.ok ? Email.Status.SENT : Email.Status.FAILED;
-        await this.writeLog( ctx.accountId, resolved.email, outbound.subject, ctx.request, status, result.providerMessageId, result.error );
-        if( !result.ok ) this.log.warn( "email send failed", { accountId: ctx.accountId, to: resolved.email, retryable: result.retryable, error: result.error } );
+        await this.writeLog( ctx.accountId, resolved.email, outbound.subject, ctx.request, status,
+            { provider: ctx.adapter.provider, from: outbound.from, replyTo: outbound.replyTo, html: outbound.html, text: outbound.text, headers: outbound.headers,
+              providerMessageId: result.providerMessageId, error: result.error } );
+        if( result.ok ) this.log.info( "email sent", { accountId: ctx.accountId, to: resolved.email, provider: ctx.adapter.provider, providerMessageId: result.providerMessageId } );
+        else this.log.warn( "email send failed", { accountId: ctx.accountId, to: resolved.email, retryable: result.retryable, error: result.error } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -353,7 +375,7 @@ export class EmailService extends Service
     {
         // prefer the stored compiled html; fall back to a fresh compile when it's absent (older/partial rows)
         const compiled : string | undefined = template.html ?? ( await this.compile( template.doc ) ).html;
-        return { subject: subjectOverride ?? template.subject, html: compiled, text: undefined };
+        return { subject: subjectOverride ?? template.subject, html: compiled, text: undefined, from: template.from, replyTo: template.replyTo };
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -388,6 +410,7 @@ export class EmailService extends Service
     /** Is an address suppressed for this account (unsubscribe / hard-bounce / complaint)? The canSend() gate. */
     public async isSuppressed( accountId : string, email : string ) : Promise<boolean>
     {
+        this.log.trace( "item read: email_suppression", { accountId, email } );
         const got : Type.Result<{ email : string } | undefined> = await this.dynamo.get<{ email : string }>( "email_suppression", { accountId, email } );
         return got.ok && got.data !== undefined;
     }
@@ -398,6 +421,7 @@ export class EmailService extends Service
     {
         const wrote : Type.Result<void> = await this.dynamo.put( "email_suppression", { accountId, email, reason, at: new Date().toISOString() } );
         if( !wrote.ok ) this.log.warn( "suppression write failed", { accountId, email, error: wrote.error } );
+        else this.log.trace( "item stored: email_suppression", { accountId, email, reason } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -424,25 +448,35 @@ export class EmailService extends Service
         const entry : EmailConfig.ProviderEntry | undefined = config.providers[ provider ];
         const secretRef : string | undefined = entry?.secretRef ?? EmailService.registrySecretKey( provider );
         if( secretRef === undefined ) return { region: entry?.region };
+        this.log.trace( "secret resolved", { provider, secretRef } );
         const secret : Type.Result<string | undefined> = await this.secrets.get( secretRef );
         return { apiKey: secret.ok ? secret.data : undefined, region: entry?.region };
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // write one send-log row (best-effort — the log is observability, never fails a send)
-    private async writeLog( accountId : string, to : string, subject : string, request : Email.SendRequest, status : Email.Status, providerMessageId? : string, error? : string ) : Promise<void>
+    // write one send-log row (best-effort — the log is observability, never fails a send). `detail` carries the
+    // ACTUALLY-RESOLVED provider + the exact rendered Outbound (from/replyTo/html/text/headers) — absent for the
+    // pre-render suppression short-circuit's minimal call (caller still passes what it has at that point).
+    private async writeLog( accountId : string, to : string, subject : string, request : Email.SendRequest, status : Email.Status, detail : EmailService.WriteLogDetail = {} ) : Promise<void>
     {
-        const row : EmailService.SendLog =
+        const row : Email.SendLog =
         {
             accountId, messageId: randomUUID(), to, subject, status,
-            provider:         request.provider,
-            notificationType: request.notificationType,
-            campaignId:       request.campaignId,
-            providerMessageId, error,
-            createdAt:        new Date().toISOString(),
+            provider:          detail.provider ?? request.provider,
+            from:              detail.from,
+            replyTo:           detail.replyTo,
+            html:              detail.html,
+            text:              detail.text,
+            headers:           detail.headers,
+            notificationType:  request.notificationType,
+            campaignId:        request.campaignId,
+            providerMessageId: detail.providerMessageId,
+            error:             detail.error,
+            createdAt:         new Date().toISOString(),
         };
         const wrote : Type.Result<void> = await this.dynamo.put( "email_log", { ...row } );
         if( !wrote.ok ) this.log.warn( "send-log write failed", { accountId, to, error: wrote.error } );
+        else this.log.trace( "item stored: email_log", { accountId, to, status, messageId: row.messageId } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -463,6 +497,7 @@ export class EmailService extends Service
         };
         const wrote : Type.Result<void> = await this.dynamo.put( "email_blasts", { ...blast, blastId: blast.id } );
         if( !wrote.ok ) return { ok: false, error: wrote.error };
+        this.log.trace( "item stored: email_blasts", { accountId, blastId: blast.id, status: blast.status } );
 
         // enqueue the expansion + paced fan-out (the worker honors startAt + status)
         const enqueued : Type.Result<void> = await this.sqs.send( "email-batch", { blastId: blast.id, accountId } );
@@ -472,12 +507,27 @@ export class EmailService extends Service
 
     /** One blast by id. */
     public async getBlast( accountId : string, blastId : string ) : Promise<Type.Result<Email.Blast | undefined>>
-    { return this.dynamo.get<Email.Blast>( "email_blasts", { accountId, blastId } ); }
+    {
+        this.log.trace( "item read: email_blasts", { accountId, blastId } );
+        return this.dynamo.get<Email.Blast>( "email_blasts", { accountId, blastId } );
+    }
 
     /** List an account's blasts. */
     public async listBlasts( accountId : string ) : Promise<Type.Result<Array<Email.Blast>>>
     {
+        this.log.trace( "item query: email_blasts", { accountId } );
         return this.dynamo.query<Email.Blast>( "email_blasts", {
+            KeyConditionExpression:    "accountId = :a",
+            ExpressionAttributeValues: { ":a": accountId },
+        } );
+    }
+
+    /** List an account's send-log rows (email-8.1) — the "Sent" view's data source. Unordered by the table's
+     *  key (SK is a random messageId, not time); the caller (endpoint impl) sorts newest-first. */
+    public async listLog( accountId : string ) : Promise<Type.Result<Array<Email.SendLog>>>
+    {
+        this.log.trace( "item query: email_log", { accountId } );
+        return this.dynamo.query<Email.SendLog>( "email_log", {
             KeyConditionExpression:    "accountId = :a",
             ExpressionAttributeValues: { ":a": accountId },
         } );
@@ -487,6 +537,7 @@ export class EmailService extends Service
     public async putBlast( blast : Email.Blast ) : Promise<Type.Result<void>>
     {
         const next : Email.Blast = { ...blast, modifiedAt: new Date().toISOString() };
+        this.log.trace( "item stored: email_blasts", { accountId: next.accountId, blastId: next.id, status: next.status, sent: next.sent } );
         return this.dynamo.put( "email_blasts", { ...next, blastId: next.id } );
     }
 
@@ -545,6 +596,7 @@ export class EmailService extends Service
      *  recipient (a suspend/cancel stops it; resume continues from `sent`, the cursor). Never throws. */
     public async processBatch( accountId : string, blastId : string ) : Promise<void>
     {
+        this.log.trace( "processBatch: start", { accountId, blastId } );
         const config : EmailConfig.Config = await this.emailConfig();
         const loaded : Type.Result<Email.Blast | undefined> = await this.getBlast( accountId, blastId );
         if( !loaded.ok || loaded.data === undefined ) { this.log.warn( "batch: blast not found", { blastId } ); return; }
@@ -650,8 +702,9 @@ export namespace EmailService
     export enum Role { MAIN = "main" }
     export const PORT : Record<Role, number> = { [ Role.MAIN ]: Ports.EMAIL.MAIN };
 
-    /** A compiled body ready for per-recipient merge. */
-    export interface RenderedBody { subject : string; html? : string; text? : string; }
+    /** A compiled body ready for per-recipient merge. `from`/`replyTo` carry a template's saved overrides (undefined
+     *  for inline/notification-case sends), applied by the caller ahead of the request-level / system defaults. */
+    export interface RenderedBody { subject : string; html? : string; text? : string; from? : Email.Address; replyTo? : Email.Address; }
 
     /** A recipient resolved to a concrete address + its merge context. */
     export interface ResolvedRecipient { email : string; merge : Record<string, unknown>; }
@@ -667,26 +720,26 @@ export namespace EmailService
         adapter  : EmailProvider;
         context  : EmailContext;
         from     : string;
-    }
-
-    /** A send-log row (email-8.1) — one per delivered message + its operational status. */
-    export interface SendLog
-    {
-        accountId         : string;
-        messageId         : string;
-        to                : string;
-        subject           : string;
-        status            : Email.Status;
-        provider?         : Email.Provider;
-        notificationType? : Email.NotificationType;
-        campaignId?       : string;
-        providerMessageId? : string;
-        error?            : string;
-        createdAt         : string;
+        replyTo? : string;
     }
 
     /** An inbound delivery-feedback notification (bounce/complaint) fed to the feedback worker. */
     export interface Feedback { accountId : string; email : string; status : Email.Status; }
+
+    /** The optional detail {@link EmailService.writeLog} captures onto a send-log row — the ACTUALLY-RESOLVED
+     *  provider (not the request's override) + the exact rendered `Outbound` handed to the adapter, plus the
+     *  transport result. All optional: the pre-render suppression short-circuit passes only what it has. */
+    export interface WriteLogDetail
+    {
+        provider?          : Email.Provider;
+        from?              : string;
+        replyTo?           : string;
+        html?              : string;
+        text?              : string;
+        headers?           : Record<string, string>;
+        providerMessageId? : string;
+        error?             : string;
+    }
 
     /** The system/platform transactional cases (system sender + SYSTEM-scope templates). */
     const SYSTEM_CASES : ReadonlySet<Email.NotificationType> = new Set<Email.NotificationType>( [

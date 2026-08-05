@@ -70,6 +70,7 @@ export { default as PostEmailBatch } from './email/PostEmailBatch';
 export { default as GetEmailBlasts } from './email/GetEmailBlasts';
 export { default as PatchEmailBlast } from './email/PatchEmailBlast';
 export { default as DeleteEmailBlast } from './email/DeleteEmailBlast';
+export { default as GetEmailLog } from './email/GetEmailLog';
 
 // media — model (shared: index record + variants) then endpoints
 export { Media } from './media/model/Media';
@@ -82,14 +83,17 @@ export { default as PostAssetReplace } from './media/PostAssetReplace';
 export { StudioProject } from './media/model/StudioProject';
 export { default as GetStudioProjects } from './media/GetStudioProjects';
 export { default as PostStudioProject } from './media/PostStudioProject';
+export { default as PostStudioProjectCopy } from './media/PostStudioProjectCopy';
 export { default as PatchStudioProject } from './media/PatchStudioProject';
 export { default as DeleteStudioProject } from './media/DeleteStudioProject';
 export { default as GetStudioCanvas } from './media/GetStudioCanvas';
 export { default as PutStudioCanvas } from './media/PutStudioCanvas';
 export { default as PostStudioRender } from './media/PostStudioRender';
-export { SvgDocument } from './media/model/SvgDocument';       // SVG editor — the editable design model (S3-backed)
-export { SvgPlugin } from './media/model/SvgPlugin';           // SVG editor — plugin contract (QR/barcode/generated)
-export { SvgTemplate } from './media/model/SvgTemplate';       // SVG editor — template library (system + account scopes)
+export { SvgDocument } from './media/model/SvgDocument';               // SVG editor — the editable design model (S3-backed)
+export { compilePage, compilePageForEditor, compilePageArtwork, collectFontFamilies } from './media/model/SvgCompiler';   // SVG editor — Doc+Page → SVG string (shared by the web canvas AND the media service's export-render consumer)
+export type { SvgPlugin } from './media/model/SvgPlugin';             // SVG editor — plugin contract (QR/barcode/generated, type-only: all interfaces)
+export { SvgTemplate } from './media/model/SvgTemplate';               // SVG editor — template library (system + account scopes)
+export { SvgAsset } from './media/model/SvgAsset';                     // SVG editor — reusable graphic library (system + account scopes), separate from SvgTemplate (whole documents)
 export { default as GetSvgCanvas } from './media/GetSvgCanvas';
 export { default as PutSvgCanvas } from './media/PutSvgCanvas';
 export { default as PostSvgRender } from './media/PostSvgRender';
@@ -97,6 +101,11 @@ export { default as GetSvgRenderJob } from './media/GetSvgRenderJob';
 export { default as GetSvgTemplates } from './media/GetSvgTemplates';
 export { default as PostSvgFromTemplate } from './media/PostSvgFromTemplate';
 export { default as PostSvgTemplate } from './media/PostSvgTemplate';
+export { default as GetSvgAssets } from './media/GetSvgAssets';
+export { default as GetSvgAsset } from './media/GetSvgAsset';
+export { default as PostSvgAsset } from './media/PostSvgAsset';
+export { default as PostSystemSvgAsset } from './media/PostSystemSvgAsset';
+export { default as DeleteSvgAsset } from './media/DeleteSvgAsset';
 export { default as GetAssets } from './media/GetAssets';
 export { default as GetAsset } from './media/GetAsset';
 export { default as GetAssetStatus } from './media/GetAssetStatus';

@@ -32,6 +32,13 @@ export class BrevoProvider implements EmailProvider
                 textContent: outbound.text,
             };
 
+            // reply-to override, when present — Brevo wants it as a structured field
+            if( outbound.replyTo !== undefined )
+            {
+                const replyTo : ParsedAddress = parseAddress( outbound.replyTo );
+                payload.replyTo = { email: replyTo.email, name: replyTo.name };
+            }
+
             const response : Response = await fetch( BrevoProvider.SEND_URL, {
                 method:  "POST",
                 headers: { "Content-Type": "application/json", Accept: "application/json", "api-key": ctx.apiKey },

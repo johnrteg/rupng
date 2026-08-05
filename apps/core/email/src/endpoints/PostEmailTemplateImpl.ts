@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 
 import { PostEmailTemplate, EmailTemplate } from "@repo/api";
-import { NetworkUtils, type Type } from "@repo/common";
+import { EmailUtils, NetworkUtils, type Type } from "@repo/common";
 import { RestfulEndpoint } from "@repo/endpoint";
 import EmailService from "../services/EmailService";
 
@@ -28,6 +28,10 @@ export class PostEmailTemplateImpl extends PostEmailTemplate
         const accountId : string | undefined = body.scope === EmailTemplate.Scope.SYSTEM ? undefined : auth.accountId;
         if( body.scope !== EmailTemplate.Scope.SYSTEM && !accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
 
+        // the body schema only shapes from/replyTo — the address itself is validated here (no format:"email" in body schemas)
+        if( body.from && !EmailUtils.isValid( body.from.email ) )    return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "from is not a valid email address" } };
+        if( body.replyTo && !EmailUtils.isValid( body.replyTo.email ) ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "replyTo is not a valid email address" } };
+
         // compile the block doc → MJML + HTML
         const compiled : { mjml : string; html : string } = await this.service.compile( body.doc );
         const now : string = new Date().toISOString();
@@ -42,6 +46,8 @@ export class PostEmailTemplateImpl extends PostEmailTemplate
             status:           EmailTemplate.Status.DRAFT,
             version:          1,
             subject:          body.subject ?? "",
+            from:             body.from,
+            replyTo:          body.replyTo,
             doc:              body.doc,
             mjml:             compiled.mjml,
             html:             compiled.html,

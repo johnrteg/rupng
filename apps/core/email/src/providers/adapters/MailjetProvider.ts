@@ -32,6 +32,13 @@ export class MailjetProvider implements EmailProvider
                 TextPart: outbound.text,
             };
 
+            // reply-to override, when present — Mailjet wants it as a structured message-level field
+            if( outbound.replyTo !== undefined )
+            {
+                const replyTo : ParsedAddress = parseAddress( outbound.replyTo );
+                message.ReplyTo = { Email: replyTo.email, Name: replyTo.name };
+            }
+
             const authorization : string = `Basic ${ Buffer.from( ctx.apiKey ).toString( "base64" ) }`;
             const response : Response = await fetch( MailjetProvider.SEND_URL, {
                 method:  "POST",

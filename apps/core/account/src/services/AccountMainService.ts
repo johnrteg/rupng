@@ -1,7 +1,9 @@
 //
 import { Account, Media } from "@repo/api";
-import { Events } from "@repo/system";
+import { Access, Events } from "@repo/system";
 import { Sqs, RequestContext } from "@repo/services";
+import { RestfulEndpoint } from "@repo/endpoint";
+import type { Type } from "@repo/common";
 
 import AccountService from './AccountService';
 
@@ -33,7 +35,6 @@ export class AccountMainService extends AccountService
         if( this.kafka.configured() )
         {
             await this.startProvisioningConsumer();
-            await this.startLoginConsumer();          // auth.session.created → update member.lastLoginAt
             await this.startAvatarConsumer();         // media.asset (USER) → denormalize avatarAssetId onto member rows
         }
         else this.log.info( "account Kafka consumers skipped — no Kafka brokers configured (dev)" );
@@ -70,39 +71,38 @@ export class AccountMainService extends AccountService
     }
 
     /////////////////////////////////////////////////////////////////////
-    // auth.session.created (a login, from ANY auth path — password / passkey / MFA) → stamp the user's
-    // member rows' lastLoginAt. Best-effort; a bus outage just means lastLoginAt lags.
-    private async startLoginConsumer() : Promise<void>
+    // Resolve the caller's role (the base DynamoDB-backed lookup), then fire a throttled, best-effort
+    // "last accessed this account" touch — never blocks or fails the request. This is the per-account
+    // counterpart to auth's own universal `users.lastLoginAt` (stamped at login, any account or none):
+    // a login event alone carries no accountId, so it can't express "accessed THIS account" — only a
+    // request actually scoped by X-Account (resolved into `auth.accountId` here) can. Known limitation:
+    // this only fires for endpoints declaring a minimum `access` role and for JWT-authenticated callers
+    // — API-key auth skips `resolveRole` entirely (Service.processEndpoint), so API-key traffic never
+    // touches `lastAccessedAt`.
+    protected override async resolveRole( auth : RestfulEndpoint.Authentication ) : Promise<Access.Role>
     {
-        try
-        {
-            await this.kafka.subscribeEvents( "account-lastlogin", Events.Object.AUTH_SESSION, async ( event ) =>
-            {
-                if( event.verb !== Events.Verb.CREATED ) return;
-                const data = event.data as { userId? : string };
-                if( data?.userId ) await this.updateLastLogin( data.userId );
-            } );
-            this.log.info( "account-lastlogin consumer subscribed", { topic: Events.Object.AUTH_SESSION } );
-        }
-        catch( error )
-        {
-            this.log.warn( "account-lastlogin consumer failed to start (bus unreachable?)", { error: String( error ) } );
-        }
+        const role : Access.Role = await super.resolveRole( auth );
+        if( auth.userId && auth.accountId ) void this.touchLastAccessed( auth.userId, auth.accountId );
+        return role;
     }
 
+    // throttle window for touchLastAccessed — don't hammer `members` with a put on every single request
+    private static readonly ACCESS_TOUCH_THROTTLE_MS : number = 10 * 60 * 1000;
+
     /////////////////////////////////////////////////////////////////////
-    // stamp lastLoginAt on every membership row for a user (the members GSI userId returns full rows)
-    private async updateLastLogin( userId : string ) : Promise<void>
+    // stamp lastAccessedAt on the ONE membership row for (userId, accountId) — throttled so rapid
+    // repeated requests in the same session don't write on every call. Best-effort; never throws.
+    private async touchLastAccessed( userId : string, accountId : string ) : Promise<void>
     {
-        const found = await this.dynamo.query<Record<string, unknown>>( "members", {
-            IndexName:                 "userId",
-            KeyConditionExpression:    "userId = :u",
-            ExpressionAttributeValues: { ":u": userId },
-        } );
-        if( !found.ok ) return;
+        const found : Type.Result<Record<string, unknown> | undefined> = await this.dynamo.get<Record<string, unknown>>( "members", { accountId, userId } );
+        if( !found.ok || !found.data ) return;   // not a member (or a read failure) — nothing to stamp
+
+        const last : number = found.data.lastAccessedAt ? Date.parse( found.data.lastAccessedAt as string ) : 0;
+        if( Date.now() - last < AccountMainService.ACCESS_TOUCH_THROTTLE_MS ) return;   // touched recently — skip the write
 
         const now : string = new Date().toISOString();
-        for( const row of found.data ) await this.dynamo.put( "members", { ...row, lastLoginAt: now } );
+        const wrote : Type.Result<void> = await this.dynamo.put( "members", { ...found.data, lastAccessedAt: now } );
+        if( !wrote.ok ) this.log.warn( "lastAccessedAt stamp failed", { userId, accountId, error: wrote.error } );
     }
 
     /////////////////////////////////////////////////////////////////////

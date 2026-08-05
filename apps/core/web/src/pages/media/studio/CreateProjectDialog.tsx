@@ -29,6 +29,7 @@ export function CreateProjectDialog( props : CreateProjectDialog.Props ) : JSX.E
     ////////////////////////////////////////////////////////////////////////////////////////////
     React.useEffect( () => { void loadCampaigns(); }, [] );
 
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // load the account's (non-archived) campaigns for the picker
     async function loadCampaigns() : Promise<void>
     {

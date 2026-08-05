@@ -7,10 +7,12 @@ import { Trace } from "@repo/common";
 
 export class LogService
 {
-    public level : LogService.Level = LogService.Level.INFO;
+    // Web's "per-service configuration" is the build-time VITE_LOG_LEVEL env var (like the backend's
+    // CloudManifest `environment.LOG_LEVEL`) — defaults to INFO (trace off) when unset/unrecognized.
+    public level : LogService.Level = LogService.levelFromEnv( ( import.meta as any ).env?.VITE_LOG_LEVEL );
 
-    // Trace's own minLevel stays at INFO; LogService.level gates here so DEBUG/NONE still work.
-    private trace : Trace = new Trace( "web", "web" );
+    // Trace's own minLevel stays at INFO; LogService.level gates here so TRACE/NONE still work.
+    private logger : Trace = new Trace( "web", "web" );
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
     constructor()
@@ -24,32 +26,31 @@ export class LogService
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    public debug( ...args : Array<any> ) : void
+    public trace( ...args : Array<any> ) : void
     {
-        // Trace has no DEBUG level — keep debug as a raw console line (verbose, not structured).
-        if( this.level <= LogService.Level.DEBUG )
-            console.debug( `[${new Date().toISOString()}] [DEBUG]`, ...args );
+        if( this.level <= LogService.Level.TRACE )
+            this.logger.trace( LogService.message( args ), ...args.slice( 1 ) );
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
     public info( ...args : Array<any> ) : void
     {
         if( this.level <= LogService.Level.INFO )
-            this.trace.info( LogService.message( args ), ...args.slice( 1 ) );
+            this.logger.info( LogService.message( args ), ...args.slice( 1 ) );
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
     public warn( ...args : Array<any> ) : void
     {
         if( this.level <= LogService.Level.WARNING )
-            this.trace.warn( LogService.message( args ), ...args.slice( 1 ) );
+            this.logger.warn( LogService.message( args ), ...args.slice( 1 ) );
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
     public error( ...args : Array<any> ) : void
     {
         if( this.level <= LogService.Level.ERROR )
-            this.trace.error( LogService.message( args ), ...args.slice( 1 ) );
+            this.logger.error( LogService.message( args ), ...args.slice( 1 ) );
     }
 }
 
@@ -62,9 +63,24 @@ export namespace LogService
         return typeof first === "string" ? first : ( first === undefined ? "" : JSON.stringify( first ) );
     }
 
+    /** Parse the build-time `VITE_LOG_LEVEL` value into a {@link LogService.Level}; unrecognized/absent → INFO. */
+    export function levelFromEnv( value : string | undefined ) : LogService.Level
+    {
+        switch( ( value ?? "" ).trim().toUpperCase() )
+        {
+            case "TRACE":   return LogService.Level.TRACE;
+            case "INFO":    return LogService.Level.INFO;
+            case "WARN":
+            case "WARNING": return LogService.Level.WARNING;
+            case "ERROR":   return LogService.Level.ERROR;
+            case "NONE":    return LogService.Level.NONE;
+            default:        return LogService.Level.INFO;
+        }
+    }
+
     export enum Level
     {
-        DEBUG   = 0,
+        TRACE   = 0,   // more verbose than INFO — routine activity, off by default
         INFO    = 1,
         WARNING = 2,
         ERROR   = 3,

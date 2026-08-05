@@ -47,7 +47,9 @@ export class Application
         this.service     = service;
         this.serviceName = qualifier ? [ service, qualifier ].join( Application.ID_DIVIDER ) : service;
         this.id          = randomUUID();
-        this.log         = new Trace( this.serviceName, this.id );
+        // per-service minimum log level (e.g. CloudManifest `environment.LOG_LEVEL`) — defaults to INFO
+        // (trace off) so a service opts into verbose activity logging without any code change.
+        this.log         = new Trace( this.serviceName, this.id, Trace.parseLevel( process.env.LOG_LEVEL ) );
         this.nbr_cpus    = os.cpus().length;
 
         // the shared logger reads the current request/event transaction id from the ambient RequestContext,

@@ -3,8 +3,8 @@
 // no AttributeValue marshalling), keyed by cloud-manifest LOGICAL table keys.
 //
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import type { QueryCommandInput, GetCommandOutput, QueryCommandOutput } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import type { QueryCommandInput, GetCommandOutput, QueryCommandOutput, UpdateCommandOutput } from "@aws-sdk/lib-dynamodb";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
@@ -76,6 +76,38 @@ export class Dynamo
         return ResultUtils.from( async () : Promise<void> =>
         {
             await this.client.send( new PutCommand( { TableName: this.table( tableKey ), Item: item } ) );
+        } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Atomically increment a numeric counter attribute and return its NEW value — the primitive for
+     * gap-tolerant, never-reused sequence ids (e.g. a per-account "campaign #"). Uses DynamoDB's atomic
+     * `ADD`, which treats a missing item/attribute as `0` and applies the delta server-side in one write, so
+     * concurrent callers each get a DISTINCT value with no read-modify-write race (the first call on a fresh
+     * key returns `1`). The counter lives independently of any entity row, so deleting/purging entities never
+     * rolls it back — a consumed number is never handed out again.
+     *
+     * @param tableKey  logical table key of the counters table.
+     * @param key       the counter's full primary key (e.g. `{ accountId, kind }`).
+     * @param attribute the numeric attribute to bump (e.g. `"n"`).
+     * @param by        the step to add (default `1`).
+     * @returns the attribute's value AFTER the increment.
+     */
+    increment( tableKey : ResourceKey, key : Record<string, unknown>, attribute : string, by : number = 1 ) : Promise<Type.Result<number>>
+    {
+        return ResultUtils.from( async () : Promise<number> =>
+        {
+            // ADD initializes a missing attribute to 0 then adds `by`; UPDATED_NEW returns the post-increment value
+            const result : UpdateCommandOutput = await this.client.send( new UpdateCommand( {
+                TableName:                 this.table( tableKey ),
+                Key:                       key,
+                UpdateExpression:          "ADD #attr :by",
+                ExpressionAttributeNames:  { "#attr": attribute },
+                ExpressionAttributeValues: { ":by": by },
+                ReturnValues:              "UPDATED_NEW",
+            } ) );
+            return Number( ( result.Attributes ?? {} )[ attribute ] );
         } );
     }
 

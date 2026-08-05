@@ -54,7 +54,12 @@ export namespace navModel
                 { id: "dashboard",     label: "Dashboard",     icon: <HomeOutlinedIcon />,       route: "/dashboard" },
                 { id: "campaigns",     label: "Campaigns",     icon: <CampaignOutlinedIcon />,   route: "/campaigns" },
                 { id: "schedule",      label: "Schedule",      icon: <CalendarMonthOutlinedIcon />, route: "/schedule" },
-                { id: "conversations", label: "Conversations", icon: <ForumOutlinedIcon />,      route: "/conversations", badge: 5 },
+                { id: "messages",      label: "Messages",      icon: <ForumOutlinedIcon />,      children:
+                    [
+                        { id: "messages.send",     label: "Send",     route: "/messages/send" },
+                        { id: "messages.sent",     label: "Sent",     route: "/messages/sent" },
+                        { id: "messages.received", label: "Received", route: "/messages/received" },
+                    ] },
                 { id: "contacts",      label: "Audience",      icon: <ContactsOutlinedIcon />,   children:
                     [
                         { id: "contacts.segments", label: "Segments", route: "/contacts/segments" },
@@ -71,7 +76,7 @@ export namespace navModel
                         { id: "media.library",   label: "Library",   route: "/media/library" },
                         { id: "media.browse",    label: "Browse",    route: "/media/browse" },
                         { id: "media.aigen",     label: "AI Gen",    route: "/media/ai-gen" },
-                        { id: "media.studio",    label: "Studio",    route: "/media/studio" },
+                        { id: "media.studio",     label: "Studio",    route: "/media/studio" },
                         { id: "media.email-templates", label: "Email Templates", route: "/studio/email-templates" },
                         { id: "media.downloads", label: "Downloads", route: "/media/downloads" },
                     ] },

@@ -1,5 +1,6 @@
 //
 import AppModel from "@model/AppModel";
+import { RestfulService } from "@repo/endpoint";
 
 //
 // PdfUtils — client-side HTML → PDF download. Uses html2pdf.js (jsPDF + html2canvas), imported
@@ -12,16 +13,13 @@ export class PdfUtils
     /** Fetch an HTML document by URL and download it as a PDF. Filename defaults to the basename. */
     public static async downloadUrlAsPdf( src : string, fileName? : string ) : Promise<void>
     {
-        try
+        const reply : RestfulService.Reply<string> = await AppModel.instance().server.get( src );
+        if( !reply.ok || reply.data === undefined )
         {
-            const response : Response = await fetch( src );
-            const html     : string   = await response.text();
-            await PdfUtils.downloadHtmlAsPdf( html, fileName ?? PdfUtils.defaultName( src ) );
+            AppModel.instance().log.warn( "PdfUtils.downloadUrlAsPdf failed", { src, error: reply.error } );
+            return;
         }
-        catch( err )
-        {
-            AppModel.instance().log.warn( "PdfUtils.downloadUrlAsPdf failed", err );
-        }
+        await PdfUtils.downloadHtmlAsPdf( reply.data, fileName ?? PdfUtils.defaultName( src ) );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////

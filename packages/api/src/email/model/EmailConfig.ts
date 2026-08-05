@@ -12,8 +12,11 @@ import { Validation } from "../../model/Validation";
 export namespace EmailConfig
 {
     /** A configured provider entry — the factory only offers ENABLED providers; the credential lives in Secrets
-     *  Manager (referenced by `secretRef`, never inline). */
-    export interface ProviderEntry { provider : Email.Provider; enabled : boolean; secretRef? : string; region? : string; }
+     *  Manager (referenced by `secretRef`, never inline). `from`/`replyTo` are this PROVIDER's own default
+     *  send identity (e.g. a Mailgun sandbox domain needs its own verified From, distinct from another
+     *  provider under test) — a fallback tier between a template's saved from/replyTo and the platform
+     *  system-sender routing (see `EmailService.processSend`). */
+    export interface ProviderEntry { provider : Email.Provider; enabled : boolean; secretRef? : string; region? : string; from? : Email.Address; replyTo? : Email.Address; }
 
     /** Per-account send LIMITS (defaults; a plan/entitlement may raise them). Guards the default provider from
      *  a single account's runaway volume. `defaultRatePerMinute` is the steady-state throttle a batch/scheduled
@@ -62,7 +65,9 @@ export namespace EmailConfig
                                properties: { minLeadMinutes: { type: "number", minimum: 0 }, maxLeadDays: { type: "number", minimum: 1 }, defaultTimezone: { type: "string" } } },
             providers:       { type: "object", additionalProperties: {
                                type: "object", additionalProperties: false, required: [ "provider", "enabled" ],
-                               properties: { provider: { type: "string", enum: Object.values( Email.Provider ) }, enabled: { type: "boolean" }, secretRef: { type: "string" }, region: { type: "string" } } } },
+                               properties: { provider: { type: "string", enum: Object.values( Email.Provider ) }, enabled: { type: "boolean" }, secretRef: { type: "string" }, region: { type: "string" },
+                                             from:     { type: "object", additionalProperties: false, required: [ "email" ], properties: { email: { type: "string" }, name: { type: "string" } } },
+                                             replyTo:  { type: "object", additionalProperties: false, required: [ "email" ], properties: { email: { type: "string" }, name: { type: "string" } } } } } },
             marketplaceEnabled: { type: "boolean" },
             webFonts:        { type: "array", items: {
                                type: "object", additionalProperties: false, required: [ "name", "href" ],

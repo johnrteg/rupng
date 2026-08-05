@@ -116,10 +116,22 @@ export class OpenAiAdapter extends BaseAdapter
 
     private static failureMessage( response : RestfulService.Reply, fallback : string ) : string
     {
+        // OpenAI wraps error details in { error: { message, code, type } }; try the success-data slot first
+        // (unexpected 2xx with an error body), then the error-data slot (the normal non-2xx path).
         type OpenAiBody = { error? : { message? : string; code? : string; type? : string } };
         const fromData : string | undefined = ( response.data as OpenAiBody | undefined )?.error?.message;
         const fromError : string | undefined = ( response.error?.data as OpenAiBody | undefined )?.error?.message;
-        return fromData ?? fromError ?? RestfulService.error( response, fallback );
+        if( fromData  ) return fromData;
+        if( fromError ) return fromError;
+        // last resort: stringify the raw error data so the actual body is surfaced (non-JSON responses, HTML
+        // gateway errors, etc.) rather than the generic "server error" default
+        const rawData : unknown = response.error?.data;
+        if( rawData !== undefined && rawData !== null )
+        {
+            const raw : string = typeof rawData === "string" ? rawData : JSON.stringify( rawData );
+            if( raw.length > 0 ) return raw.slice( 0, 300 );   // cap at 300 chars — enough to diagnose
+        }
+        return RestfulService.error( response, fallback );
     }
 
     /** Post the conversation to chat/completions and return the first choice's text. */

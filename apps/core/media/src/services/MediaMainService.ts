@@ -2,10 +2,13 @@
 import { RequestContext, Sqs } from "@repo/services";
 import type { Type } from "@repo/common";
 import type { Message } from "@aws-sdk/client-sqs";
-import { MediaConfig } from "@repo/api";
+import type { Browser } from "puppeteer";
+import { MediaConfig, SvgDocument, GetSvgRenderJob } from "@repo/api";
 
 import MediaService from "./MediaService";
+import SvgService from "./SvgService";
 import { MediaPipeline } from "../pipeline/MediaPipeline";
+import { SvgRenderPipeline } from "../pipeline/SvgRenderPipeline";
 
 import PostUploadImpl from "../endpoints/PostUploadImpl";
 import PostUploadCompleteImpl from "../endpoints/PostUploadCompleteImpl";
@@ -44,6 +47,7 @@ import GetVoicesImpl from "../endpoints/GetVoicesImpl";
 import DeleteVoiceImpl from "../endpoints/DeleteVoiceImpl";
 import GetStudioProjectsImpl from "../endpoints/GetStudioProjectsImpl";
 import PostStudioProjectImpl from "../endpoints/PostStudioProjectImpl";
+import PostStudioProjectCopyImpl from "../endpoints/PostStudioProjectCopyImpl";
 import PatchStudioProjectImpl from "../endpoints/PatchStudioProjectImpl";
 import DeleteStudioProjectImpl from "../endpoints/DeleteStudioProjectImpl";
 import GetStudioCanvasImpl from "../endpoints/GetStudioCanvasImpl";
@@ -56,6 +60,11 @@ import GetSvgRenderJobImpl from "../endpoints/GetSvgRenderJobImpl";
 import GetSvgTemplatesImpl from "../endpoints/GetSvgTemplatesImpl";
 import PostSvgFromTemplateImpl from "../endpoints/PostSvgFromTemplateImpl";
 import PostSvgTemplateImpl from "../endpoints/PostSvgTemplateImpl";
+import GetSvgAssetsImpl from "../endpoints/GetSvgAssetsImpl";
+import GetSvgAssetImpl from "../endpoints/GetSvgAssetImpl";
+import PostSvgAssetImpl from "../endpoints/PostSvgAssetImpl";
+import PostSystemSvgAssetImpl from "../endpoints/PostSystemSvgAssetImpl";
+import DeleteSvgAssetImpl from "../endpoints/DeleteSvgAssetImpl";
 
 //
 // MAIN role — the /media/* API. Also DRAINS the ingest queues locally (scan → process) so the pipeline works
@@ -65,6 +74,10 @@ import PostSvgTemplateImpl from "../endpoints/PostSvgTemplateImpl";
 export class MediaMainService extends MediaService
 {
     private stopping : boolean = false;
+
+    // the shared headless Chromium instance backing the svg-render consumer — launched once, lazily, and
+    // reused across jobs (relaunching Chromium per message would be far too slow); closed in aboutToQuit()
+    private _browser? : Browser;
 
     /////////////////////////////////////////////////////////////////////
     constructor()
@@ -78,6 +91,7 @@ export class MediaMainService extends MediaService
         void this.startVideoConsumer();
         void this.startStudioRenderConsumer();
         void this.startStudioRenderRemotionConsumer();
+        void this.startSvgRenderConsumer();
     }
 
     /////////////////////////////////////////////////////////////////////
@@ -121,6 +135,7 @@ export class MediaMainService extends MediaService
         this.register( new DeleteVoiceImpl( this ) );
         this.register( new GetStudioProjectsImpl( this ) );
         this.register( new PostStudioProjectImpl( this ) );
+        this.register( new PostStudioProjectCopyImpl( this ) );
         this.register( new PatchStudioProjectImpl( this ) );
         this.register( new DeleteStudioProjectImpl( this ) );
         this.register( new GetStudioCanvasImpl( this ) );
@@ -133,6 +148,11 @@ export class MediaMainService extends MediaService
         this.register( new GetSvgTemplatesImpl( this ) );
         this.register( new PostSvgFromTemplateImpl( this ) );
         this.register( new PostSvgTemplateImpl( this ) );
+        this.register( new GetSvgAssetsImpl( this ) );
+        this.register( new GetSvgAssetImpl( this ) );
+        this.register( new PostSvgAssetImpl( this ) );
+        this.register( new PostSystemSvgAssetImpl( this ) );
+        this.register( new DeleteSvgAssetImpl( this ) );
     }
 
     /////////////////////////////////////////////////////////////////////
@@ -152,7 +172,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
-                            const req = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string };
+                            const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string };
                             if( req.accountId && req.guid ) await MediaPipeline.scan( await this.pipelineDeps(), req.accountId, req.guid );
                             if( message.ReceiptHandle ) await this.sqs.delete( "media-scan", message.ReceiptHandle );
                         }
@@ -180,7 +200,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
-                            const req = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string; profile? : string; rescan? : boolean; posterAt? : number; density? : string };
+                            const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string; profile? : string; rescan? : boolean; posterAt? : number; density? : string };
                             if( req.accountId && req.guid )
                             {
                                 if( req.posterAt !== undefined ) await MediaPipeline.regeneratePoster( await this.pipelineDeps(), req.accountId, req.guid, req.posterAt );
@@ -215,7 +235,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
-                            const job = JSON.parse( message.Body ?? "{}" ) as MediaService.GenerateJob;
+                            const job : any = JSON.parse( message.Body ?? "{}" ) as MediaService.GenerateJob;
                             if( job.accountId && Array.isArray( job.candidates ) && job.candidates.length ) await this.runGenerate( job );
                             if( message.ReceiptHandle ) await this.sqs.delete( "media-generate", message.ReceiptHandle );
                         }
@@ -244,7 +264,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
-                            const req = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string; userId? : string; op? : string };
+                            const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string; userId? : string; op? : string };
                             // the queue carries both jobs (op discriminator): "extract" = audio-track only, else transcribe
                             if( req.accountId && req.guid && req.op === "extract" ) await this.runExtractAudio( req.accountId, req.guid, req.userId );
                             else if( req.accountId && req.guid ) await this.runTranscribe( req.accountId, req.guid, req.userId );
@@ -275,7 +295,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
-                            const req = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; projectId? : string; userId? : string };
+                            const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; projectId? : string; userId? : string };
                             if( req.accountId && req.projectId ) await this.runStudioRender( req.accountId, req.projectId, req.userId );
                             if( message.ReceiptHandle ) await this.sqs.delete( "studio-render", message.ReceiptHandle );
                         }
@@ -305,7 +325,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
-                            const req = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; projectId? : string; userId? : string };
+                            const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; projectId? : string; userId? : string };
                             if( req.accountId && req.projectId ) await this.runStudioRender( req.accountId, req.projectId, req.userId, MediaConfig.RenderEngine.REMOTION );
                             if( message.ReceiptHandle ) await this.sqs.delete( "studio-render-remotion", message.ReceiptHandle );
                         }
@@ -315,6 +335,71 @@ export class MediaMainService extends MediaService
             catch( error ) { this.log.warn( "studio render (remotion) receive failed — backing off", { error: String( error ) } ); await this.delay( 5000 ); }
         }
         this.log.info( "studio render (remotion) consumer stopped" );
+    }
+
+    /////////////////////////////////////////////////////////////////////
+    // SQS svg-render poll loop (SVG editor export-render — SVG_EDITOR_SPEC §10) — compile the requested
+    // SvgDocument pages to SVG/PNG/JPEG/PDF via the shared headless Chromium instance and flip the
+    // svg-render-jobs row to DONE/FAILED. MAIN drains locally; Chromium's process weight is a poor fit for a
+    // cold-start Lambda, so (unlike scan/process) there is no Lambda counterpart yet.
+    // mirrors CloudManifest's `svg-render` queue `maxReceiveCount` — the delivery attempt after which SQS
+    // moves the message to the DLQ, so a failure ON this attempt must be recorded here rather than left to
+    // silently dead-letter (which would leave the job's row stuck at PENDING/PROCESSING forever).
+    private static readonly SVG_RENDER_MAX_ATTEMPTS : number = 2;
+
+    private async startSvgRenderConsumer() : Promise<void>
+    {
+        this.log.info( "svg render consumer started (SQS svg-render)" );
+        while( !this.stopping )
+        {
+            try
+            {
+                const received : Type.Result<Array<Message>> = await this.sqs.receive( "svg-render", 2, 10 );
+                if( !received.ok ) { await this.delay( 5000 ); continue; }
+                for( const message of received.data )
+                    await RequestContext.run( { transactionId: Sqs.transactionId( message ) }, async () : Promise<void> =>
+                    {
+                        // this attempt count (from SQS's own redelivery bookkeeping) tells us whether this is
+                        // the LAST chance before the message dead-letters
+                        const attempt : number = Number( message.Attributes?.ApproximateReceiveCount ?? "1" );
+                        const isLastAttempt : boolean = attempt >= MediaMainService.SVG_RENDER_MAX_ATTEMPTS;
+                        let jobId : string | undefined;
+                        try
+                        {
+                            const req : any = JSON.parse( message.Body ?? "{}" ) as { jobId? : string; accountId? : string; projectId? : string; pageIds? : Array<string> | null; settings? : SvgDocument.ExportSettings };
+                            jobId = req.jobId;
+                            if( req.jobId && req.accountId && req.projectId && req.settings )
+                            {
+                                const browser : Browser = await this.browser();
+                                await SvgRenderPipeline.runRenderJob( { dynamo: this.dynamo, s3: this.s3, log: this.log }, browser, req.jobId, req.accountId, req.projectId, req.pageIds ?? null, req.settings );
+                            }
+                            if( message.ReceiptHandle ) await this.sqs.delete( "svg-render", message.ReceiptHandle );
+                        }
+                        catch( err )
+                        {
+                            this.log.warn( isLastAttempt ? "svg render failed (final attempt — failing the job)" : "svg render failed (will redeliver)", { jobId, attempt, error: String( err ) } );
+                            if( isLastAttempt )
+                            {
+                                if( jobId ) await this.failRenderJob( jobId, String( err ) );
+                                if( message.ReceiptHandle ) await this.sqs.delete( "svg-render", message.ReceiptHandle );
+                            }
+                        }
+                    } );
+            }
+            catch( error ) { this.log.warn( "svg render receive failed — backing off", { error: String( error ) } ); await this.delay( 5000 ); }
+        }
+        this.log.info( "svg render consumer stopped" );
+    }
+
+    /////////////////////////////////////////////////////////////////////
+    /** Flip a render job's row straight to FAILED — used when the SQS consumer gives up on its final delivery
+     *  attempt, so the row never dead-ends at PENDING/PROCESSING once the message reaches the DLQ. */
+    private async failRenderJob( jobId : string, reason : string ) : Promise<void>
+    {
+        const got : Type.Result<SvgService.RenderJobRow | undefined> = await this.dynamo.get<SvgService.RenderJobRow>( "svg-render-jobs", { pk: jobId } );
+        if( !got.ok || got.data === undefined ) return;
+        const wrote : Type.Result<void> = await this.dynamo.put( "svg-render-jobs", { ...got.data, status: GetSvgRenderJob.RenderStatus.FAILED, outputUrl: null, error: reason } );
+        if( !wrote.ok ) this.log.warn( "svg render: could not record final failure", { jobId, error: wrote.error } );
     }
 
     /////////////////////////////////////////////////////////////////////
@@ -334,7 +419,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
-                            const req = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; archiveId? : string; userId? : string };
+                            const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; archiveId? : string; userId? : string };
                             if( req.accountId && req.archiveId ) await this.runArchive( req.accountId, req.archiveId, req.userId );
                             if( message.ReceiptHandle ) await this.sqs.delete( "media-archive", message.ReceiptHandle );
                         }
@@ -363,7 +448,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
-                            const req = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string; target? : string; userId? : string };
+                            const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string; target? : string; userId? : string };
                             if( req.accountId && req.guid && req.target ) await this.runCompress( req.accountId, req.guid, req.target, req.userId );
                             if( message.ReceiptHandle ) await this.sqs.delete( "media-video", message.ReceiptHandle );
                         }
@@ -376,10 +461,31 @@ export class MediaMainService extends MediaService
     }
 
     /////////////////////////////////////////////////////////////////////
+    // lazily launch the shared headless Chromium instance used by the svg-render consumer — dynamic import
+    // matches this repo's convention for heavy native deps (sharp/ffmpeg/archiver — see MediaAnalyzer).
+    // Chromium can crash/disconnect between jobs (OOM, a renderer crash, …); a cached-but-dead Browser throws
+    // "ConnectionClosedError" on the next newPage() call, so check `.connected` and relaunch rather than
+    // trusting the cached reference forever.
+    private async browser() : Promise<Browser>
+    {
+        if( this._browser === undefined || !this._browser.connected )
+        {
+            const puppeteer = await import( "puppeteer" );
+            this._browser = await puppeteer.launch( { headless: true, args: [ "--no-sandbox", "--disable-setuid-sandbox" ] } );
+        }
+        return this._browser;
+    }
+
+    /////////////////////////////////////////////////////////////////////
     /** Stop the poll loops before the base closes the HTTP server (so the process can exit on SIGINT). */
     protected override async aboutToQuit() : Promise<void>
     {
         this.stopping = true;
+        if( this._browser !== undefined && this._browser.connected )
+        {
+            try { await this._browser.close(); }
+            catch( error ) { this.log.warn( "browser close failed during shutdown", { error: String( error ) } ); }
+        }
         await super.aboutToQuit();
     }
 

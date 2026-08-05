@@ -5,8 +5,11 @@ import { JSX } from "react";
 //
 import { Box } from '@mui/material';
 
+import { RestfulService } from "@repo/endpoint";
+
 //
-import HtmlInput from "@widgets/core/HtmlInput";
+import AppModel   from "@model/AppModel";
+import HtmlInput  from "@widgets/core/HtmlInput";
 
 //
 // A mini, scrollable viewer for a legal document (Terms of Service, Privacy Policy, …).
@@ -26,16 +29,8 @@ export function LegalScroll( props : LegalScroll.Props ) : JSX.Element
     ////////////////////////////////////////////////////////////////////////////////////////////
     async function load() : Promise<void>
     {
-        try
-        {
-            const response : Response = await fetch( props.src );
-            const text     : string   = await response.text();
-            setHtml( text );
-        }
-        catch( err )
-        {
-            setHtml( "<p>Unable to load the document. Please try again later.</p>" );
-        }
+        const reply : RestfulService.Reply<string> = await AppModel.instance().server.get( props.src );
+        setHtml( reply.ok && reply.data !== undefined ? reply.data : "<p>Unable to load the document. Please try again later.</p>" );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////

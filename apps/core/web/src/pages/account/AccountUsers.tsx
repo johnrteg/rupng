@@ -273,7 +273,7 @@ export function AccountUsers( props : AccountUsers.Props ) : JSX.Element
         { field: "roleLabel",   label: "Role",       type: TableInput.ColumnType.STRING },
         { field: "status",      label: "Status",     type: TableInput.ColumnType.CUSTOM,   renderer: memberStatusRenderer },
         { field: "createdAt",   label: "Added",      type: TableInput.ColumnType.DATETIME, options: { style: "medium" } },
-        { field: "lastLoginAt", label: "Last login", type: TableInput.ColumnType.DATETIME, options: { style: "medium" } },
+        { field: "lastAccessedAt", label: "Last active", type: TableInput.ColumnType.DATETIME, options: { style: "medium" } },
         { field: "actions",     label: "",           type: TableInput.ColumnType.ACTION },
     ];
 
@@ -293,8 +293,8 @@ export function AccountUsers( props : AccountUsers.Props ) : JSX.Element
             email:       member.email || ( isMe ? meEmail : "" ),
             roleLabel:   roleLabel( member.role ),
             status:      member.status,
-            createdAt:   member.createdAt ? new Date( member.createdAt ) : undefined,
-            lastLoginAt: member.lastLoginAt ? new Date( member.lastLoginAt ) : undefined,
+            createdAt:      member.createdAt ? new Date( member.createdAt ) : undefined,
+            lastAccessedAt: member.lastAccessedAt ? new Date( member.lastAccessedAt ) : undefined,
             // you can't SUSPEND or REMOVE your OWN membership — those actions are dropped from your own row
             actions:     ( member.owner
                             ? [ MemberAction.CHANGE_OWNER ]   // the owner: only ownership can change (role/status are protected)

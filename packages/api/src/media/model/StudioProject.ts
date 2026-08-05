@@ -514,7 +514,9 @@ export namespace StudioProject
         return VIDEO_FORMATS.find( ( format : VideoFormat ) : boolean => format.width === doc.width && format.height === doc.height );
     }
 
-    /** A Studio project (the persisted record). `id` is the project guid; `accountId` partitions the table. */
+    /** A Studio project (the persisted record). `id` is the project guid; `accountId` partitions the table.
+     *  `deleted`/`deletedAt` mark a SOFT delete (record + canvas both kept) — deleted projects are excluded
+     *  from the listing but remain recoverable until a later hard-purge. */
     export interface Entity
     {
         accountId       : string;
@@ -525,6 +527,8 @@ export namespace StudioProject
         tags            : Array<string>;
         libraryAssetId? : string;             // the library asset this project saves its composite to (update-in-place)
         page            : PageSpec;           // the page/doc size + density (image projects)
+        deleted?        : boolean;            // soft-deleted — hidden from listings, still recoverable
+        deletedAt?      : string;             // when it was soft-deleted
         createdAt       : string;
         modifiedAt      : string;
         createdBy?      : string;             // acting user id/email at create

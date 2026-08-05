@@ -138,12 +138,15 @@ export class AuthService extends Service
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
-    /** Publish `auth.session.created` — a LOGIN, from ANY path (password / passkey / MFA). The account
-     *  service consumes it to stamp the user's `lastLoginAt`. Best-effort. No acting account at login →
-     *  scope by userId. */
+    /** A LOGIN, from ANY path (password / passkey / MFA). Stamps this user's own `users.lastLoginAt`
+     *  (universal — regardless of which account, if any, they go on to act as), then publishes
+     *  `auth.session.created` for any OTHER service that wants to react to a login. Best-effort — a
+     *  failed stamp is logged, never thrown. No acting account at login → scope the event by userId. */
     public async publishLogin( userId : string, username? : string ) : Promise<void>
     {
         if( !userId ) return;
+        const stamped : Type.Result<void> = await this.users.touchLogin( userId );
+        if( !stamped.ok ) this.log.warn( "lastLoginAt stamp failed", { userId, error: stamped.error } );
         await this.emit( Events.Object.AUTH_SESSION, Events.Verb.CREATED, "session", userId, userId, { userId, username, at: new Date().toISOString() }, userId );
     }
 

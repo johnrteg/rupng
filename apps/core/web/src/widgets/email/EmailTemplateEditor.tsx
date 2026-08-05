@@ -9,6 +9,7 @@ import VisibilityOutlinedIcon    from '@mui/icons-material/VisibilityOutlined';
 import SettingsOutlinedIcon      from '@mui/icons-material/SettingsOutlined';
 import HistoryOutlinedIcon       from '@mui/icons-material/HistoryOutlined';
 import SendOutlinedIcon          from '@mui/icons-material/SendOutlined';
+import AlternateEmailOutlinedIcon from '@mui/icons-material/AlternateEmailOutlined';
 
 import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
@@ -20,10 +21,12 @@ import ButtonIcon from '@widgets/core/ButtonIcon';
 import TextInput  from '@widgets/core/TextInput';
 import SelectInput from '@widgets/core/SelectInput';
 import AlertPrompt from '@widgets/core/AlertPrompt';
+import SnackAlert  from '@widgets/core/SnackAlert';
 import EmailImagePickerDialog from '@widgets/email/EmailImagePickerDialog';
-import EmailPreviewDrawer from '@widgets/email/EmailPreviewDrawer';
+import EmailPreviewPanel from '@widgets/email/EmailPreviewPanel';
 import VersionHistoryDialog from '@widgets/email/VersionHistoryDialog';
 import TestSendDialog from '@widgets/email/TestSendDialog';
+import EmailSenderDialog from '@widgets/email/EmailSenderDialog';
 import SortableSection from '@widgets/email/editor/SortableSection';
 import EmailBlockInspector from '@widgets/email/editor/EmailBlockInspector';
 import EmailDocumentSettings from '@widgets/email/editor/EmailDocumentSettings';
@@ -50,6 +53,7 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
     const [selected,setSelected] = React.useState< string | null >( null );   // selected block id (any level)
     const [docOpen,setDocOpen]   = React.useState< boolean >( false );         // document-settings inspector open
     const [status,setStatus]   = React.useState< string >( "" );
+    const [snack,setSnack]     = React.useState< { message : string; severity : SnackAlert.Severity } | null >( null );   // transient toast (e.g. test-send result)
     const [preview,setPreview] = React.useState< Email.PreviewViewport | null >( null );   // preview drawer viewport
     const [previewHtml,setPreviewHtml] = React.useState< string >( "" );
     const [imageTarget,setImageTarget] = React.useState< "src" | "backgroundUrl" | null >( null );   // open image picker for this prop
@@ -58,6 +62,7 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
     const [entity,setEntity]       = React.useState< EmailTemplate.Entity | null >( null );   // the loaded template (managed) — carries version + history
     const [historyOpen,setHistoryOpen]     = React.useState< boolean >( false );   // version-history dialog
     const [testOpen,setTestOpen]           = React.useState< boolean >( false );   // test-send dialog
+    const [senderOpen,setSenderOpen]       = React.useState< boolean >( false );   // from / reply-to dialog
     const [confirmRestore,setConfirmRestore] = React.useState< number | null >( null );   // version pending restore-confirm
 
     // a PUBLISHED template is LIVE — never editable (duplicate it to a draft to change it). Also honors the prop.
@@ -67,9 +72,13 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     React.useEffect( templateChanged, [ props.templateId ] );
+    React.useEffect( docChanged, [ doc, subject ] );
 
     // load the bound template when the templateId prop changes (managed mode)
     function templateChanged() : void { if( props.templateId ) void load( props.templateId ); }
+
+    // re-compile the preview whenever the doc/subject changes WHILE the preview panel is open, so edits show live
+    function docChanged() : void { if( preview !== null ) void refreshPreview(); }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     async function load( id : string ) : Promise<void>
@@ -156,8 +165,10 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
         commit( { ...doc, blocks: doc.blocks.filter( ( section : EmailTemplate.Block ) : boolean => section.id !== sectionId ) } );
         if( selected === sectionId ) setSelected( null );
     }
-    function renameSection( sectionId : string, name : string ) : void { commit( mapSection( sectionId, ( section : EmailTemplate.Block ) : EmailTemplate.Block => ( { ...section, props: { ...section.props, name } } ) ) ); }
+    function renameSection( sectionId : string, name : string ) : void
+    { commit( mapSection( sectionId, ( section : EmailTemplate.Block ) : EmailTemplate.Block => ( { ...section, props: { ...section.props, name } } ) ) ); }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // set a section's column count — grow by appending empty columns; shrink by MERGING the dropped columns'
     // blocks into the last kept column (never lose content)
     function setColumns( sectionId : string, count : number ) : void
@@ -178,6 +189,7 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
         } ) );
     }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // add a content block to a column (social blocks seed two starter elements so they render)
     function addBlock( sectionId : string, columnId : string, type : EmailTemplate.BlockType ) : void
     {
@@ -188,6 +200,8 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
         commit( mapColumn( sectionId, columnId, ( column : EmailTemplate.Block ) : EmailTemplate.Block => ( { ...column, children: [ ...( column.children ?? [] ), block ] } ) ) );
         selectBlock( block.id );
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     function removeBlock( blockId : string ) : void
     {
         const loc : { sectionId : string; columnId : string; block : EmailTemplate.Block } | undefined = findBlock( blockId );
@@ -196,6 +210,7 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
         if( selected === blockId ) setSelected( null );
     }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // reorder top-level sections (drag) — ids are `section-<id>`
     function reorderSections( activeId : string, overId : string ) : void
     {
@@ -205,6 +220,8 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
         if( from < 0 || to < 0 || from === to ) return;
         commit( { ...doc, blocks: arrayMove( doc.blocks, from, to ) } );
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // reorder columns within a section (drag) — ids are `col-<id>`
     function reorderColumns( sectionId : string, activeId : string, overId : string ) : void
     {
@@ -217,6 +234,8 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
         if( from < 0 || to < 0 || from === to ) return;
         commit( mapSection( sectionId, ( sec : EmailTemplate.Block ) : EmailTemplate.Block => ( { ...sec, children: arrayMove( cols, from, to ) } ) ) );
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // reorder content blocks WITHIN a column (drag) — ids are `block-<id>`
     function reorderBlocks( sectionId : string, columnId : string, activeId : string, overId : string ) : void
     {
@@ -246,9 +265,12 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
         if( newKey !== "" ) next[ newKey ] = value;
         setAttrs( next );
     }
-    function setAttr( key : string, value : string ) : void { const block : EmailTemplate.Block | undefined = selectedBlock(); if( block ) setAttrs( { ...block.attrs, [ key ]: value } ); }
-    function removeAttr( key : string ) : void { const block : EmailTemplate.Block | undefined = selectedBlock(); if( !block ) return; const next : Record<string, string> = { ...block.attrs }; delete next[ key ]; setAttrs( next ); }
-    function addAttr( name : string ) : void { if( name !== "" ) setAttr( name, "" ); }
+    function setAttr( key : string, value : string ) : void
+    { const block : EmailTemplate.Block | undefined = selectedBlock(); if( block ) setAttrs( { ...block.attrs, [ key ]: value } ); }
+    function removeAttr( key : string ) : void
+    { const block : EmailTemplate.Block | undefined = selectedBlock(); if( !block ) return; const next : Record<string, string> = { ...block.attrs }; delete next[ key ]; setAttrs( next ); }
+    function addAttr( name : string ) : void
+    { if( name !== "" ) setAttr( name, "" ); }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // ── social-element editing (children of a SOCIAL block) ─────────────────────────────────────
@@ -262,6 +284,8 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
         const href : string = ( oldHref === "" || oldHref === socialBaseUrl( oldName ) ) ? socialBaseUrl( newName ) : oldHref;
         patchSocialElement( elementId, { name: newName, href } );
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // reorder a SOCIAL block's network elements (drag) — ids are `soc-<elementId>`
     function reorderSocialElements( socialId : string, activeId : string, overId : string ) : void
     {
@@ -317,6 +341,8 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
         const reply : RestfulService.Reply<GetMediaUrl.Response> = await appmodel.server.fetch( new GetMediaUrl( guid, variant ) );
         return reply.ok && reply.data ? reply.data.url : "";
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // image-picker result → for a content image, store the LIBRARY REFERENCE (guid + name + variant) and resolve
     // the default (mobile) variant's URL; for a background, store the resolved URL directly
     async function onImagePicked( pick : EmailImagePickerDialog.Pick ) : Promise<void>
@@ -329,6 +355,8 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
         patchProps( { assetGuid: pick.guid, assetName: pick.name, variant: DEFAULT_IMAGE_VARIANT, src: url || pick.url, alt: pick.name } );
         setImgPending( url === "" );
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // re-point the selected image to a different variant (rendition) and re-resolve its URL
     async function onChangeVariant( variant : string ) : Promise<void>
     {
@@ -367,11 +395,25 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
         setStatus( reply.ok ? "Event updated" : "Update failed" );
         if( reply.ok ) void load( props.templateId );
     }
-    // open the preview drawer for a viewport — compile the current doc first
-    async function openPreview( mode : Email.PreviewViewport ) : Promise<void>
+    // save the from / reply-to overrides ("" clears a previously-saved address) and reload the entity
+    async function onSaveSender( from : Email.Address | "", replyTo : Email.Address | "" ) : Promise<boolean>
+    {
+        if( !props.templateId ) return false;
+        const reply : RestfulService.Reply<PatchEmailTemplate.Response> = await appmodel.server.fetch( new PatchEmailTemplate( props.templateId, { from, replyTo } ) );
+        setStatus( reply.ok ? "Sender updated" : "Update failed" );
+        if( reply.ok ) await load( props.templateId );
+        return reply.ok;
+    }
+    // re-compile the current doc + subject and refresh the previewed HTML (leaves the open viewport/mode alone)
+    async function refreshPreview() : Promise<void>
     {
         const reply : RestfulService.Reply<PostEmailPreview.Response> = await appmodel.server.fetch( new PostEmailPreview( { doc, subject, mergeData: SAMPLE_MERGE } ) );
         if( reply.ok && reply.data ) setPreviewHtml( reply.data.html );
+    }
+    // open the preview panel for a viewport — compile the current doc first
+    async function openPreview( mode : Email.PreviewViewport ) : Promise<void>
+    {
+        await refreshPreview();
         setPreview( mode );
     }
     // confirm-delete a section (AlertPrompt result) — remove only on YES; always clear the prompt
@@ -383,13 +425,12 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
     // TEST send — compile the CURRENT design (sample merge data) and email it to `address` (reflects unsaved edits)
     async function sendTest( address : string ) : Promise<boolean>
     {
-        setStatus( "Sending test…" );
         const preview : RestfulService.Reply<PostEmailPreview.Response> = await appmodel.server.fetch( new PostEmailPreview( { doc, subject, mergeData: SAMPLE_MERGE } ) );
         const html : string = preview.ok && preview.data ? preview.data.html : "";
         const subj : string = preview.ok && preview.data ? preview.data.subject : subject;
         const recipient : Email.Recipient = { email: address };
         const sent : RestfulService.Reply<PostEmailSend.Response> = await appmodel.server.fetch( new PostEmailSend( { to: [ recipient ], subject: subj, html } ) );
-        setStatus( sent.ok ? `Test sent to ${ address }` : "Test send failed" );
+        setSnack( sent.ok ? { message: `Test sent to ${ address }`, severity: "success" } : { message: "Test send failed", severity: "error" } );
         return sent.ok;
     }
     // preview an earlier version's compiled HTML in the drawer (no change to the working doc)
@@ -437,6 +478,7 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
             { published && <Chip size="small" color="success" label={"Published — read-only"} /> }
             <Box sx={{ flexGrow: 1 }} />
             { !readOnly && <ButtonIcon id="tpl-test" label={"Send a test"} size="small" icon={ <SendOutlinedIcon fontSize="small" /> } onClick={ () => setTestOpen( true ) } /> }
+            { managed && !readOnly && <ButtonIcon id="tpl-sender" label={"From & reply-to"} size="small" icon={ <AlternateEmailOutlinedIcon fontSize="small" /> } onClick={ () => setSenderOpen( true ) } /> }
             { managed && entity && ( entity.versions ?? [] ).length > 0 &&
                 <ButtonIcon id="tpl-history" label={"History"} size="small" icon={ <HistoryOutlinedIcon fontSize="small" /> } onClick={ () => setHistoryOpen( true ) } /> }
             <ButtonIcon id="tpl-document" label={"Document settings"} size="small" icon={ <SettingsOutlinedIcon fontSize="small" /> } onClick={ () => { setDocOpen( true ); setSelected( null ); } } />
@@ -483,7 +525,7 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
             </Box>
 
             {/* right pane — inspector / document settings */}
-            <Box sx={{ width: 360, flexShrink: 0, borderLeft: "1px solid", borderColor: "divider", overflow: "auto" }}>
+            <Box sx={{ width: 540, flexShrink: 0, borderLeft: "1px solid", borderColor: "divider", overflow: "auto" }}>
                 { docOpen
                     ? <EmailDocumentSettings doc={ doc } readOnly={ readOnly } onPatchSettings={ patchSettings } onPatchHead={ patchHead } />
                     : selectedBlk
@@ -498,10 +540,11 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
                                                onReorderSocialElements={ reorderSocialElements } />
                         : <Typography variant="body2" sx={{ color: "text.secondary", p: 2 }}>{"Select a block, column, or section to edit it."}</Typography> }
             </Box>
-        </Box>
 
-        {/* preview drawer — desktop / mobile viewport; can't edit while previewing */}
-        <EmailPreviewDrawer mode={ preview } html={ previewHtml } onMode={ ( mode : Email.PreviewViewport ) : void => setPreview( mode ) } onClose={ () => setPreview( null ) } />
+            {/* preview panel — docked inline (not an overlay) so it stays visible alongside the editor; Close hides it, the toolbar's eye icon reopens it */}
+            { preview !== null &&
+                <EmailPreviewPanel mode={ preview } html={ previewHtml } onMode={ ( mode : Email.PreviewViewport ) : void => setPreview( mode ) } onClose={ () => setPreview( null ) } /> }
+        </Box>
 
         {/* image picker — library / browse / AI (imports to the campaign library) */}
         { imageTarget !== null &&
@@ -518,6 +561,16 @@ export function EmailTemplateEditor( props : EmailTemplateEditor.Props ) : JSX.E
         {/* test send — email the current design to an address */}
         { testOpen &&
             <TestSendDialog onSend={ sendTest } onClose={ () => setTestOpen( false ) } /> }
+
+        {/* from / reply-to overrides saved with the template */}
+        { senderOpen &&
+            <EmailSenderDialog from={ entity?.from } replyTo={ entity?.replyTo }
+                               onSave={ ( from : Email.Address | "", replyTo : Email.Address | "" ) : Promise<boolean> => onSaveSender( from, replyTo ) }
+                               onClose={ () => setSenderOpen( false ) } /> }
+
+        {/* transient toast — e.g. test-send result */}
+        { snack &&
+            <SnackAlert message={ snack.message } severity={ snack.severity } onClose={ () => setSnack( null ) } /> }
 
         {/* version history — preview / restore an earlier saved version */}
         { historyOpen && entity &&

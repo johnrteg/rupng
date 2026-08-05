@@ -77,10 +77,16 @@ export function TransformInspector( props : TransformInspector.Props ) : JSX.Ele
                 </Stack>
 
                 <Stack direction="row" spacing={ 1 }>
-                    <TextField size="small" type="number" label={"W"} value={ display( props.transform.width ) }
-                               onChange={ ( event : React.ChangeEvent<HTMLInputElement> ) : void => onWidthChange( event.target.value ) } />
-                    <TextField size="small" type="number" label={"H"} value={ display( props.transform.height ) }
-                               onChange={ ( event : React.ChangeEvent<HTMLInputElement> ) : void => onHeightChange( event.target.value ) } />
+                    <TextField  size="small"
+                                type="number"
+                                label={"W"}
+                                value={ display( props.transform.width ) }
+                                onChange={ ( event : React.ChangeEvent<HTMLInputElement> ) : void => onWidthChange( event.target.value ) } />
+                    <TextField  size="small"
+                                type="number"
+                                label={"H"}
+                                value={ display( props.transform.height ) }
+                                onChange={ ( event : React.ChangeEvent<HTMLInputElement> ) : void => onHeightChange( event.target.value ) } />
                 </Stack>
 
                 <Stack direction="row" spacing={ 1 }>

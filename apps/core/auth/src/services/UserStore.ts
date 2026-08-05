@@ -340,6 +340,16 @@ export class UserStore
         await this.dynamo.put( UserStore.USERS, { ...row, userId, ...patch, modifiedAt: now } );
     }
 
+    /** Stamp `lastLoginAt` = now on the user's DynamoDB row (creates it if absent). Server-only —
+     *  never client-writable (see `User.Update.augmented`, which excludes this field). Never throws. */
+    public async touchLogin( userId : string ) : Promise<Type.Result<void>>
+    {
+        const got : Type.Result<Record<string, unknown> | undefined> = await this.dynamo.get<Record<string, unknown>>( UserStore.USERS, { userId } );
+        const row : Record<string, unknown> = ( got.ok && got.data ) ? got.data : { userId, createdAt: new Date().toISOString() };
+        const now : string = new Date().toISOString();
+        return this.dynamo.put( UserStore.USERS, { ...row, userId, lastLoginAt: now, modifiedAt: now } );
+    }
+
     // ── user metadata (DynamoDB) ──────────────────────────────────────────────────────────────────
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////

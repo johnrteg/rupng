@@ -24,6 +24,7 @@ import PostEmailBatchImpl from "../endpoints/PostEmailBatchImpl";
 import GetEmailBlastsImpl from "../endpoints/GetEmailBlastsImpl";
 import PatchEmailBlastImpl from "../endpoints/PatchEmailBlastImpl";
 import DeleteEmailBlastImpl from "../endpoints/DeleteEmailBlastImpl";
+import GetEmailLogImpl from "../endpoints/GetEmailLogImpl";
 
 //
 // MAIN role — the /email/* API (send + template CRUD + config). Also DRAINS the email-send + email-feedback
@@ -74,6 +75,7 @@ export class EmailMainService extends EmailService
         this.register( new GetEmailBlastsImpl( this ) );
         this.register( new PatchEmailBlastImpl( this ) );
         this.register( new DeleteEmailBlastImpl( this ) );
+        this.register( new GetEmailLogImpl( this ) );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -94,6 +96,7 @@ export class EmailMainService extends EmailService
                     {
                         try
                         {
+                            this.log.trace( "message received (SQS email-send)", { messageId: message.MessageId } );
                             const job = JSON.parse( message.Body ?? "{}" ) as { request? : Email.SendRequest };
                             if( job.request ) await this.processSend( job.request );
                             if( message.ReceiptHandle ) await this.sqs.delete( "email-send", message.ReceiptHandle );
@@ -123,6 +126,7 @@ export class EmailMainService extends EmailService
                     {
                         try
                         {
+                            this.log.trace( "message received (SQS email-feedback)", { messageId: message.MessageId } );
                             const feedback = JSON.parse( message.Body ?? "{}" ) as EmailService.Feedback;
                             if( feedback.accountId && feedback.email ) await this.processFeedback( feedback );
                             if( message.ReceiptHandle ) await this.sqs.delete( "email-feedback", message.ReceiptHandle );
@@ -152,6 +156,7 @@ export class EmailMainService extends EmailService
                     {
                         try
                         {
+                            this.log.trace( "message received (SQS email-batch)", { messageId: message.MessageId } );
                             const job = JSON.parse( message.Body ?? "{}" ) as { blastId? : string; accountId? : string };
                             if( job.blastId && job.accountId ) await this.processBatch( job.accountId, job.blastId );
                             if( message.ReceiptHandle ) await this.sqs.delete( "email-batch", message.ReceiptHandle );

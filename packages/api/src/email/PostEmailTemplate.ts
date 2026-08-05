@@ -36,6 +36,9 @@ export class PostEmailTemplate extends RestfulEndpoint< {}, PostEmailTemplate.Bo
                 scope:            { type: "string", enum: Object.values( EmailTemplate.Scope ) },
                 notificationType: { type: "string" },
                 subject:          { type: "string" },
+                // NOTE: no format:"email" — request-body schemas use a strict, formatless Ajv; the impl validates
+                from:             { type: "object", properties: { email: { type: "string" }, name: { type: "string" } }, required: [ "email" ] },
+                replyTo:          { type: "object", properties: { email: { type: "string" }, name: { type: "string" } }, required: [ "email" ] },
                 doc:              { type: "object" },
             },
         };

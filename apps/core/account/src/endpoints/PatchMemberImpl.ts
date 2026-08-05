@@ -50,9 +50,9 @@ export class PatchMemberImpl extends PatchMember
             status:      ( updated.status as Account.MemberStatus ),
             name:        ( found.data.name as string ) || undefined,
             email:       ( found.data.email as Account.Member[ "email" ] ) || undefined,
-            owner:       false,
-            createdAt:   found.data.createdAt,
-            lastLoginAt: ( found.data.lastLoginAt as Account.Member[ "lastLoginAt" ] ) || undefined,
+            owner:          false,
+            createdAt:      found.data.createdAt,
+            lastAccessedAt: ( found.data.lastAccessedAt as Account.Member[ "lastAccessedAt" ] ) || undefined,
         };
         void this.service.emit( Events.Object.ACCOUNT_MEMBER, Events.Verb.UPDATED, "member", userId, accountId, member, auth.userId );
         return { status: NetworkUtils.Status.OK, data: { member } };

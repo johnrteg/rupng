@@ -42,7 +42,8 @@ const secrets = {
     "local-platform-secret-ai-gemini":    env.GEMINI_KEY,
     "local-media-secret-browse-pexels":   env.PEXELS_API_KEY,
     "local-media-secret-browse-unsplash": unsplash,
-    // ai-anthropic / ai-elevenlabs / magnific: no key in .env.local yet — set later.
+    "local-email-secret-email-mailgun":   env.MAILGUN_API_KEY,
+    // ai-anthropic / ai-elevenlabs / magnific / other email-* providers: no key in .env.local yet — set later.
 };
 
 const client = new SecretsManagerClient( {

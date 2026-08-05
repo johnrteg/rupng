@@ -29,7 +29,7 @@ export function SvgProjectEditor( props : SvgProjectEditor.Props ) : JSX.Element
                     <Typography variant="subtitle2">{"Design editor"}</Typography>
                 </Stack>
                 <Box sx={{ flexGrow: 1, minHeight: 0 }}>
-                    <SvgDesignEditor projectId={ props.projectId } />
+                    <SvgDesignEditor projectId={ props.projectId } projectName={ props.projectName } onClose={ props.onBack } />
                 </Box>
             </Box>;
 }
@@ -38,8 +38,9 @@ export namespace SvgProjectEditor
 {
     export interface Props
     {
-        projectId : string;
-        onBack?   : () => void;
+        projectId   : string;
+        projectName?: string;
+        onBack?     : () => void;
     }
 }
 

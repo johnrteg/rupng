@@ -16,9 +16,10 @@ import SelectInput from '@widgets/core/SelectInput';
 import SwitchInput from '@widgets/core/SwitchInput';
 import CodeEditorInput from '@widgets/core/CodeEditorInput';
 import ColorPicker from '@widgets/core/ColorPicker';
+import UrlInput from '@widgets/core/UrlInput';
 import RichTextEditor from '@widgets/app/rte/RichTextEditor';
 import SortableSocialRow from '@widgets/email/editor/SortableSocialRow';
-import { standardAttrs, EMAIL_COLORS, ALIGN_CHOICES, VALIGN_CHOICES, HERO_MODE_CHOICES, IMAGE_VARIANTS, DEFAULT_IMAGE_VARIANT } from '@widgets/email/editor/EmailEditorModel';
+import { standardAttrs, EMAIL_COLORS, ALIGN_CHOICES, VALIGN_CHOICES, HERO_MODE_CHOICES, IMAGE_VARIANTS, DEFAULT_IMAGE_VARIANT, FONT_CHOICES } from '@widgets/email/editor/EmailEditorModel';
 
 //
 // EmailBlockInspector — the right-pane property editor for the SELECTED block (band / column / content). Renders
@@ -80,15 +81,17 @@ export function EmailBlockInspector( props : EmailBlockInspector.Props ) : JSX.E
             { String( block.props?.assetGuid ?? "" ) !== "" &&
                 <SelectInput id="tpl-img-variant" label={"Variant"} value={ String( block.props?.variant ?? DEFAULT_IMAGE_VARIANT ) } choices={ IMAGE_VARIANTS } disabled={ readOnly } onChange={ ( value : string ) : void => props.onChangeVariant( value ) } /> }
             <TextInput id="tpl-img-alt" label={"Alt text"} value={ String( block.props?.alt ?? "" ) } fullWidth disabled={ readOnly } onChange={ ( value : string ) : void => props.onPatchProps( { alt: value } ) } />
-            <TextInput id="tpl-img-href" label={"Link (href)"} value={ String( block.props?.href ?? "" ) } fullWidth disabled={ readOnly } onChange={ ( value : string ) : void => props.onPatchProps( { href: value } ) } />
+            <UrlInput id="tpl-img-href" label={"Link (href)"} value={ String( block.props?.href ?? "" ) } disabled={ readOnly } onChange={ ( value : string ) : void => props.onPatchProps( { href: value } ) } />
         </> }
 
         {/* ── button ── */}
         { block.type === EmailTemplate.BlockType.BUTTON && <>
             <TextInput id="tpl-btn-text" label={"Label"} value={ String( block.props?.text ?? "" ) } fullWidth disabled={ readOnly } onChange={ ( value : string ) : void => props.onPatchProps( { text: value } ) } />
-            <TextInput id="tpl-btn-href" label={"Link (href)"} value={ String( block.props?.href ?? "" ) } fullWidth disabled={ readOnly } onChange={ ( value : string ) : void => props.onPatchProps( { href: value } ) } />
+            <UrlInput id="tpl-btn-href" label={"Link (href)"} value={ String( block.props?.href ?? "" ) } disabled={ readOnly } onChange={ ( value : string ) : void => props.onPatchProps( { href: value } ) } />
             <ColorPicker id="tpl-btn-bg" label={"Background color"} value={ String( block.props?.background ?? "#2563eb" ) } choices={ EMAIL_COLORS } disabled={ readOnly } onChange={ ( color : string ) : void => props.onPatchProps( { background: color } ) } />
             <ColorPicker id="tpl-btn-color" label={"Text color"} value={ String( block.props?.color ?? "#ffffff" ) } choices={ EMAIL_COLORS } disabled={ readOnly } onChange={ ( color : string ) : void => props.onPatchProps( { color: color } ) } />
+            <SelectInput id="tpl-btn-font" label={"Font"} value={ String( block.props?.fontFamily ?? "" ) } choices={ FONT_CHOICES } disabled={ readOnly } onChange={ ( value : string ) : void => props.onPatchProps( { fontFamily: value } ) } />
+            <TextInput id="tpl-btn-fontsize" label={"Font size (e.g. 16px)"} value={ String( block.props?.fontSize ?? "" ) } fullWidth disabled={ readOnly } onChange={ ( value : string ) : void => props.onPatchProps( { fontSize: value } ) } />
         </> }
 
         {/* ── spacer ── */}

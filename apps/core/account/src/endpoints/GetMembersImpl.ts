@@ -7,7 +7,7 @@ import AccountService from '../services/AccountService';
 //
 // List the members of the caller's ACTING account (X-Account → auth.accountId) — the `members` table
 // (PK accountId), enriched with the owner flag from `accounts`. Name/email are denormalized on the row
-// (captured on add); lastLoginAt is best-effort.
+// (captured on add); lastAccessedAt is best-effort.
 //
 // Self-heals the CALLER'S OWN row: older rows (pre-denormalization) or ones provisioned without capturing
 // identity can lack name/email, so this user would show blank in their own account's list. We stamp their
@@ -59,8 +59,8 @@ export class GetMembersImpl extends GetMembers
             name:        row.name || undefined,
             email:       ( row.email as Account.Member[ "email" ] ) || undefined,
             owner:       !!ownerId && row.userId === ownerId,
-            createdAt:   row.createdAt,
-            lastLoginAt: ( row.lastLoginAt as Account.Member[ "lastLoginAt" ] ) || undefined,
+            createdAt:      row.createdAt,
+            lastAccessedAt: ( row.lastAccessedAt as Account.Member[ "lastAccessedAt" ] ) || undefined,
         } ) );
 
         const reply : GetMembers.Response = Paging.paginate( members, this.query ?? {} );

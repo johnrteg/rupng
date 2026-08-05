@@ -16,25 +16,38 @@ import BrushOutlinedIcon    from '@mui/icons-material/BrushOutlined';
 import EditOutlinedIcon     from '@mui/icons-material/EditOutlined';
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
+import MoreVertIcon             from '@mui/icons-material/MoreVert';
+import ContentCopyOutlinedIcon  from '@mui/icons-material/ContentCopyOutlined';
+import DeleteOutlineOutlinedIcon from '@mui/icons-material/DeleteOutlineOutlined';
+import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
 
 import { Access } from '@repo/system';
-import { Media, GetCampaigns, StudioProject, GetStudioProjects, PostStudioProject, PatchStudioProject } from '@repo/api';
+import { Media, GetCampaigns, StudioProject, GetStudioProjects, PostStudioProject, PostStudioProjectCopy, PatchStudioProject, DeleteStudioProject, SvgDocument, PutSvgCanvas } from '@repo/api';
 import { RestfulService } from '@repo/endpoint';
 
 import LocaleService from '@model/service/LocaleService';
 
 import AuthPage             from '@widgets/app/AuthPage';
 import ButtonIcon           from '@widgets/core/ButtonIcon';
+import ButtonIconDropdown   from '@widgets/core/ButtonIconDropdown';
+import AlertPrompt          from '@widgets/core/AlertPrompt';
+import SnackAlert           from '@widgets/core/SnackAlert';
 import Pusher               from '@widgets/core/Pusher';
 import HelpButton           from "@widgets/core/HelpButton";
 
+import SvgServiceModel      from '@model/service/SvgService';
+import { makeBlankDoc, makeBlankPage } from '@widgets/svg/editor/SvgEditorModel';
+
 import CreateProjectDialog  from '@pages/media/studio/CreateProjectDialog';
 import StudioProjectDialog  from '@pages/media/studio/StudioProjectDialog';
-import StudioImageEditor    from '@pages/media/studio/image/StudioImageEditor';
 import StudioVideoEditor    from '@pages/media/studio/video/StudioVideoEditor';
+import SvgDesignEditor      from '@widgets/svg/SvgDesignEditor';
 
 // the sentinel campaign-group key for projects not assigned to any campaign
 const UNASSIGNED : string = "__unassigned__";
+
+// a tree row's kebab menu actions
+enum ProjectAction { COPY = "copy", DELETE = "delete" }
 
 //
 // Media : Studio — the creation & editing surface. Studio is PROJECT-centric (not the library): you create a
@@ -56,14 +69,18 @@ export function MediaStudio( _props : MediaStudio.Props ) : JSX.Element
     const [collapsed,setCollapsed]   = React.useState< Set<string> >( new Set<string>() );   // campaign group keys folded shut
     const [propsOpen,setPropsOpen]   = React.useState< boolean >( false );   // the properties (name + tags) dialog
     const [editing,setEditing]       = React.useState< boolean >( false );   // the open editor's edit-mode (gates the properties gear)
+    const [deleteTarget,setDeleteTarget] = React.useState< StudioProject.Entity | null >( null );   // pending delete confirm
+    const [snack,setSnack]           = React.useState< { message : string; severity : SnackAlert.Severity } | null >( null );
+    const [editorStatus,setEditorStatus] = React.useState< SvgDesignEditor.Status >( { dirty: false, saving: false } );   // the SVG editor's live dirty/saving, drives the title-area Save button
 
     const selected : StudioProject.Entity | undefined = projects.find( ( project : StudioProject.Entity ) => project.id === selectedId );
+    const editorRef : React.MutableRefObject<SvgDesignEditor.Handle | null> = React.useRef<SvgDesignEditor.Handle | null>( null );   // imperative Save/Cancel/Export for the SVG editor, triggered from the banner
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     React.useEffect( () => { void loadProjects(); void loadCampaigns(); }, [] );
 
-    // a project opens read-only → reset the edit-mode gate whenever the selection changes
-    React.useEffect( () : void => { setEditing( false ); }, [ selectedId ] );
+    // a project opens read-only → reset the edit-mode gate + the editor status whenever the selection changes
+    React.useEffect( () : void => { setEditing( false ); setEditorStatus( { dirty: false, saving: false } ); }, [ selectedId ] );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // load the account's Studio projects from the media service
@@ -143,12 +160,55 @@ export function MediaStudio( _props : MediaStudio.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // create a project (from the dialog) — POST it, add + select, close the dialog
+    // a tree row's kebab menu choice — copy duplicates the project, delete asks for confirmation first
+    function onProjectAction( project : StudioProject.Entity, action : string ) : void
+    {
+        switch( action )
+        {
+            case ProjectAction.COPY:   void copyProject( project ); break;
+            case ProjectAction.DELETE: setDeleteTarget( project ); break;
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // duplicate a project (metadata + canvas) into a new project, then reload the tree
+    async function copyProject( project : StudioProject.Entity ) : Promise<void>
+    {
+        const reply : RestfulService.Reply<PostStudioProjectCopy.Response> = await appmodel.server.fetch( new PostStudioProjectCopy( project.id ) );
+        if( reply.ok ) { setSnack( { message: "Project copied.", severity: "success" } ); void loadProjects(); }
+        else setSnack( { message: "Could not copy the project. Please try again.", severity: "error" } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // the delete confirm's YES action — soft-delete (recoverable) the pending target, then reload
+    async function onDeleteConfirmed( confirmed : AlertPrompt.Action ) : Promise<void>
+    {
+        const target : StudioProject.Entity | null = deleteTarget;
+        setDeleteTarget( null );
+        if( confirmed !== AlertPrompt.Action.YES || !target ) return;
+        const reply : RestfulService.Reply<DeleteStudioProject.Response> = await appmodel.server.fetch( new DeleteStudioProject( target.id ) );
+        if( !reply.ok ) { setSnack( { message: "Could not delete the project. Please try again.", severity: "error" } ); return; }
+        if( selectedId === target.id ) setSelectedId( null );
+        setSnack( { message: "Project deleted.", severity: "success" } );
+        void loadProjects();
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // create a project (from the dialog) — POST it, add + select, close the dialog.
+    // IMAGE projects also get an initial blank SVG doc written to S3 so the editor loads immediately.
     async function onCreate( name : string, type : Media.Kind, campaignId? : string ) : Promise<boolean>
     {
         const reply : RestfulService.Reply<PostStudioProject.Response> = await appmodel.server.fetch( new PostStudioProject( { name, kind: type, campaignId, tags: [] } ) );
         if( !reply.ok || !reply.data ) return false;
         const project : StudioProject.Entity = reply.data.project;
+
+        if( type === Media.Kind.IMAGE )
+        {
+            const svc : SvgServiceModel = new SvgServiceModel( appmodel );
+            const blank : SvgDocument.Doc = { ...makeBlankDoc( project.id ), pages: [ makeBlankPage( SvgDocument.PagePreset.LETTER ) ] };
+            await svc.putCanvas( project.id, blank );
+        }
+
         setProjects( [ project, ...projects ] );
         setSelectedId( project.id );
         setCreateOpen( false );
@@ -176,6 +236,13 @@ export function MediaStudio( _props : MediaStudio.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // the SVG editor's title-area actions — imperative (the editor owns its own doc/dirty state; the
+    // banner only triggers the action and reflects status reported via onStatusChange)
+    function onEditorExport() : void { editorRef.current?.openExport(); }
+    function onEditorCancel() : void { editorRef.current?.cancel(); }
+    function onEditorSave() : void { void editorRef.current?.save(); }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // the type icon for a project row
     function typeIcon( kind : Media.Kind ) : JSX.Element
     {
@@ -197,7 +264,8 @@ export function MediaStudio( _props : MediaStudio.Props ) : JSX.Element
         const tags : Array<string> = selected.tags ?? [];
         const isImage : boolean = selected.kind === Media.Kind.IMAGE;
         const isVideo : boolean = selected.kind === Media.Kind.VIDEO;
-        const hasEditor : boolean = isImage || isVideo;   // kinds that open an editor with an edit-mode toggle
+        const isEditorProject : boolean = isImage || isVideo;   // kinds that open a full editor (no audit lines in banner)
+        const hasEditor : boolean = isVideo;                    // kinds that have a read-only/edit-mode toggle (image uses SVG editor which is always editable)
 
         // the project banner: name (+ created/modified audit lines only for projects WITHOUT an editor — image
         // and video projects show those in their editor footer instead), with the properties gear on the right
@@ -210,11 +278,11 @@ export function MediaStudio( _props : MediaStudio.Props ) : JSX.Element
                             { typeIcon( selected.kind ) }
                             <Typography variant="h6" sx={{ color: "text.primary" }}>{ selected.name }</Typography>
                         </Stack>
-                        { !hasEditor &&
+                        { !isEditorProject &&
                             <Typography variant="caption" sx={{ color: "text.secondary" }}>
                                 { `Created ${ formatWhen( selected.createdAt ) }${ selected.createdBy ? ` by ${ selected.createdBy }` : "" }` }
                             </Typography> }
-                        { !hasEditor &&
+                        { !isEditorProject &&
                             <Typography variant="caption" sx={{ color: "text.secondary" }}>
                                 { `Modified ${ formatWhen( selected.modifiedAt ) }${ selected.modifiedBy ? ` by ${ selected.modifiedBy }` : "" }` }
                             </Typography> }
@@ -226,6 +294,13 @@ export function MediaStudio( _props : MediaStudio.Props ) : JSX.Element
                     {/* properties gear (edit) — far right; for editor projects only while in edit mode */}
                     { ( editing || !hasEditor ) &&
                         <ButtonIcon id="studio-properties" label={"Properties"} size="small" icon={ <SettingsOutlinedIcon fontSize="small" /> } onClick={ () : void => setPropsOpen( true ) } /> }
+                    {/* SVG editor title-area actions — gear (above) → export → Cancel/Save; consistent with the email template editor's title-area action placement (no in-canvas toolbar buttons for these) */}
+                    { isImage &&
+                        <ButtonIcon id="studio-export" label={"Export"} size="small" icon={ <FileDownloadOutlinedIcon fontSize="small" /> } onClick={ onEditorExport } /> }
+                    { isImage &&
+                        <Button size="small" variant="outlined" onClick={ onEditorCancel }>{"Cancel"}</Button> }
+                    { isImage &&
+                        <Button size="small" variant="contained" disabled={ !editorStatus.dirty || editorStatus.saving } onClick={ onEditorSave }>{"Save"}</Button> }
                 </Stack>
                 { tags.length > 0 &&
                     <Stack direction="row" spacing={ 1 } sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
@@ -233,12 +308,14 @@ export function MediaStudio( _props : MediaStudio.Props ) : JSX.Element
                     </Stack> }
             </Stack>;
 
-        // IMAGE / VIDEO projects open their editor (fills the pane); other types show the Scenarios placeholder
+        // IMAGE projects open the SVG design editor (always editable — no read-only toggle);
+        // VIDEO opens the video editor; others fall through to the Scenarios placeholder
         if( isImage )
             return  <Stack sx={{ height: "100%", minHeight: 0 }}>
                         <Box sx={{ p: 2, pb: 1, flexShrink: 0 }}>{ banner }</Box>
                         <Box sx={{ flexGrow: 1, minHeight: 0 }}>
-                            <StudioImageEditor key={ selected.id } project={ selected } editing={ editing } onProjectChanged={ onProjectChanged } onEditModeChange={ setEditing } />
+                            <SvgDesignEditor ref={ editorRef } key={ selected.id } projectId={ selected.id } projectName={ selected.name }
+                                             onClose={ () : void => setSelectedId( null ) } onStatusChange={ setEditorStatus } />
                         </Box>
                     </Stack>;
 
@@ -303,9 +380,17 @@ export function MediaStudio( _props : MediaStudio.Props ) : JSX.Element
                                                           {/* the campaign's projects, indented — folds with the folder */}
                                                           <Collapse in={ !collapsed.has( group.key ) } timeout="auto" unmountOnExit>
                                                               { group.projects.map( ( project : StudioProject.Entity ) => (
-                                                                  <ListItemButton key={ project.id } selected={ selectedId === project.id } onClick={ () : void => setSelectedId( project.id ) } sx={{ borderRadius: 1, pl: 4, py: 0.25 }}>
+                                                                  <ListItemButton key={ project.id } selected={ selectedId === project.id } onClick={ () : void => setSelectedId( project.id ) } sx={{ borderRadius: 1, pl: 4, py: 0.25, pr: 0.5 }}>
                                                                       <ListItemIcon sx={{ minWidth: 30, color: "text.secondary" }}>{ typeIcon( project.kind ) }</ListItemIcon>
                                                                       <ListItemText primary={ project.name } sx={{ "& .MuiListItemText-primary": { fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }} />
+                                                                      <ButtonIconDropdown id={ `studio-project-${ project.id }-menu` } label={"More"} size="small"
+                                                                                          icon={ <MoreVertIcon fontSize="small" /> }
+                                                                                          choices={
+                                                                                          [
+                                                                                              { value: ProjectAction.COPY,   label: "Copy",   icon: <ContentCopyOutlinedIcon fontSize="small" /> },
+                                                                                              { value: ProjectAction.DELETE, label: "Delete", icon: <DeleteOutlineOutlinedIcon fontSize="small" /> },
+                                                                                          ] }
+                                                                                          onChange={ ( action : string ) : void => onProjectAction( project, action ) } />
                                                                   </ListItemButton>
                                                               ) ) }
                                                           </Collapse>
@@ -329,6 +414,16 @@ export function MediaStudio( _props : MediaStudio.Props ) : JSX.Element
 
                 { propsOpen && selected &&
                     <StudioProjectDialog project={ selected } onSave={ onSaveProperties } onClose={ () : void => setPropsOpen( false ) } /> }
+
+                { deleteTarget &&
+                    <AlertPrompt id="studio-project-delete-confirm"
+                                 type={ AlertPrompt.Type.WARNING }
+                                 title={"Delete project"}
+                                 message={ `Delete "${ deleteTarget.name }"? It can be recovered later if this was a mistake.` }
+                                 yesText={"Delete"} yesColor="error" cancelText={"Cancel"}
+                                 onAction={ onDeleteConfirmed } /> }
+
+                { snack && <SnackAlert message={ snack.message } severity={ snack.severity } onClose={ () : void => setSnack( null ) } /> }
             </AuthPage>;
 }
 

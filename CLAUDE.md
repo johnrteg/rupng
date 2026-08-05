@@ -266,6 +266,18 @@ These are **guidance** — for hard enforcement of the type rules, see *Enforcem
 - Typecheck a package with `npx tsc --noEmit` (ignore cross-package `TS6059 rootDir` noise from bare `tsc`).
 - **New endpoint contracts stay parameterless-constructible** — the CDK gateway generator (`cloud/src/app.ts`
   → `apiEndpoints([ new Foo() ])`) instantiates each with no args, so every constructor arg must be optional.
+- **A new provider secret (`Providers.ts` entry, e.g. `email-mailgun`, `ai-anthropic`) needs THREE things wired,
+  not just the CDK secret.** (1) The `Providers.ts` registry entry + CDK provisioning
+  (`ServiceStack.makeSecret`/`PlatformStack.makeSecret`) creates the physical secret — but with **no value**;
+  CDK defaults to a random 32-char placeholder. (2) The real key must be pushed into it — locally, add an entry
+  to **`cloud/local/put-secrets.mjs`**'s `secrets` map sourced from `.env.local` (e.g.
+  `"local-email-secret-email-mailgun": env.MAILGUN_API_KEY`) and rerun the script; in deployed envs it's set
+  out-of-band (console/CLI/CI). (3) There is **no in-app UI/endpoint to write secret values** — provider config
+  endpoints (`PutEmailConfig`, …) only persist which secretRef/provider to use, never the key itself; `Secrets`
+  is read-only (`get`/`getJson`). **A secret sitting in `.env.local` but missing from `put-secrets.mjs` is a
+  silent trap** — the service resolves an unrelated auto-generated placeholder and every call fails
+  authentication (e.g. a `401` from the provider) with no hint that the key was never actually seeded. When
+  adding a new provider/secret, always add its `put-secrets.mjs` line in the same change.
 
 ## Adding a NEW service (checklist — each step fails a *different* build if skipped)
 

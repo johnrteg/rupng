@@ -311,6 +311,7 @@ The vocabulary, envelope, transports, and bus are all in place:
 * Donation platforms: [actblue](../apps/integrations/actblue/SPECS.md) · [winred](../apps/integrations/winred/SPECS.md)
 * Political / nonprofit CRMs: [ngpvan](../apps/integrations/ngpvan/SPECS.md) · [nationbuilder](../apps/integrations/nationbuilder/SPECS.md) · [i360](../apps/integrations/i360/SPECS.md) · [blackbaud](../apps/integrations/blackbaud/SPECS.md)
 * Storage (report-delivery destinations): [dropbox](../apps/integrations/dropbox/SPECS.md) · [google-drive](../apps/integrations/google-drive/SPECS.md)
+* TODO: add **Workato** (iPaaS automation bridge, alongside Zapier) — no `apps/integrations/workato` yet
 
 **Shared packages** (`packages/*`)
 * [endpoint](../packages/endpoint/SPECS.md) · [services](../packages/services/README.md) (+ [DATABASE](../packages/services/DATABASE.md)) · [ai](../packages/ai/README.md) · [cloud-manifest](../packages/cloud-manifest/README.md)

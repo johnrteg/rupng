@@ -26,7 +26,8 @@ export class SparkPostProvider implements EmailProvider
             const recipients : Array<{ address : { email : string } }> = outbound.to.map( ( email : string ) : { address : { email : string } } => ( { address: { email } } ) );
             const payload : Record<string, unknown> =
             {
-                content:    { from: outbound.from, subject: outbound.subject, html: outbound.html, text: outbound.text },
+                // reply-to override, when present, lives inside the content block as a plain string
+                content:    { from: outbound.from, subject: outbound.subject, html: outbound.html, text: outbound.text, reply_to: outbound.replyTo },
                 recipients,
             };
 

@@ -12,7 +12,10 @@
 #
 services:
   localstack:
-    image: localstack/localstack-pro:latest      # community image: localstack/localstack
+    # Pinned (not `:latest`) so a background `docker pull` can't swap in a newer LocalStack whose
+    # persistence format may not restore our on-disk state (.volume) — that silently wipes local data.
+    # Bump this deliberately, and expect to redeploy if the persisted state doesn't load on the new version.
+    image: localstack/localstack-pro:${LOCALSTACK_VERSION:-2026.5.0}   # community image: localstack/localstack
     ports:
       - "4566:4566"                               # the single AWS edge endpoint
       - "4510-4559:4510-4559"                     # external service ports (Lambda, etc.)

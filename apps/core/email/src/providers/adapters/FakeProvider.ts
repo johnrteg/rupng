@@ -41,6 +41,8 @@ export class FakeProvider implements EmailProvider
                 text:           outbound.text,
                 headers:        outbound.headers,
                 idempotencyKey: outbound.idempotencyKey,
+                // pass replyTo through for test/dev visibility (the fake service's SendBody mirrors Outbound)
+                replyTo:        outbound.replyTo,
             };
 
             // Bearer-authed send (per-account key if resolved, else the well-known default)

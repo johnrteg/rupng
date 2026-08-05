@@ -1,6 +1,6 @@
 //
 import { PatchEmailTemplate, EmailTemplate } from "@repo/api";
-import { NetworkUtils, type Type } from "@repo/common";
+import { EmailUtils, NetworkUtils, type Type } from "@repo/common";
 import { RestfulEndpoint } from "@repo/endpoint";
 import EmailService from "../services/EmailService";
 
@@ -23,6 +23,10 @@ export class PatchEmailTemplateImpl extends PatchEmailTemplate
         const body : PatchEmailTemplate.Body | null = this.body;
         if( !body ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "nothing to update" } };
 
+        // the body schema only shapes from/replyTo — the address itself is validated here (no format:"email" in body schemas)
+        if( body.from && !EmailUtils.isValid( body.from.email ) )    return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "from is not a valid email address" } };
+        if( body.replyTo && !EmailUtils.isValid( body.replyTo.email ) ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "replyTo is not a valid email address" } };
+
         // load from the account partition, else the SYSTEM partition
         const own : Type.Result<EmailTemplate.Entity | undefined> = await this.service.getTemplate( auth.accountId, id );
         let template : EmailTemplate.Entity | undefined = own.ok ? own.data : undefined;
@@ -37,6 +41,8 @@ export class PatchEmailTemplateImpl extends PatchEmailTemplate
         if( body.name !== undefined )             template.name = body.name.trim();
         if( body.subject !== undefined )          template.subject = body.subject;
         if( body.notificationType !== undefined ) template.notificationType = ( body.notificationType as string ) === "" ? undefined : body.notificationType;
+        if( body.from !== undefined )             template.from = body.from === "" ? undefined : body.from;
+        if( body.replyTo !== undefined )          template.replyTo = body.replyTo === "" ? undefined : body.replyTo;
         if( body.doc !== undefined )
         {
             template.doc = body.doc;

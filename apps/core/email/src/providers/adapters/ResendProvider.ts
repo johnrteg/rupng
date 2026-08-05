@@ -30,6 +30,8 @@ export class ResendProvider implements EmailProvider
                 subject: outbound.subject,
                 html:    outbound.html,
                 text:    outbound.text,
+                // reply-to override, when present — Resend accepts the same formatted string as `from`
+                reply_to: outbound.replyTo,
             };
 
             const response : Response = await fetch( ResendProvider.SEND_URL, {

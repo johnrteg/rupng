@@ -45,7 +45,7 @@ import { LogView, LEVELS, LogRow, parseLine, recLevelColor, ANSI } from "./LogVi
 
 type TabValue = LogStream | "web" | "proxy" | "api" | "config" | "secrets" | "data" | "cognito" | "storage" | "claude" | "jobs";
 
-const STREAM_LABEL : Record<LogStream, string> = { build: "Build", image: "Docker", deploy: "Deploy", runtime: "Trace" };
+const STREAM_LABEL : Record<LogStream, string> = { build: "Build", image: "Docker", deploy: "Deploy", runtime: "Log" };
 
 const MAX_RENDER = 2500;
 

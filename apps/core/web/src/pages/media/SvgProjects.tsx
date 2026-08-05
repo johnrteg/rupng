@@ -7,15 +7,24 @@ import { Box, Button, Card, CardActionArea, CardContent, CircularProgress, Stack
 import AddOutlinedIcon     from "@mui/icons-material/AddOutlined";
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
 import DesignServicesOutlinedIcon from "@mui/icons-material/DesignServicesOutlined";
+import MoreVertIcon             from "@mui/icons-material/MoreVert";
+import ContentCopyOutlinedIcon  from "@mui/icons-material/ContentCopyOutlined";
+import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 
-import { StudioProject, Media, GetStudioProjects } from "@repo/api";
+import { StudioProject, Media, GetStudioProjects, PostStudioProjectCopy, DeleteStudioProject } from "@repo/api";
 import { RestfulService } from "@repo/endpoint";
 
 import AuthPage   from "@widgets/app/AuthPage";
 import ButtonIcon from "@widgets/core/ButtonIcon";
+import ButtonIconDropdown from "@widgets/core/ButtonIconDropdown";
+import AlertPrompt from "@widgets/core/AlertPrompt";
+import SnackAlert  from "@widgets/core/SnackAlert";
 import LocaleService from "@model/service/LocaleService";
 import SvgProjectEditor from "@pages/media/SvgProjectEditor";
 import NewSvgProjectDialog from "@pages/media/dialogs/NewSvgProjectDialog";
+
+// the per-card kebab menu actions
+enum ProjectAction { COPY = "copy", DELETE = "delete" }
 
 //
 // SvgProjects — the SVG design gallery (mounted under Media → Studio). Lists the account's designs (studio
@@ -30,6 +39,8 @@ export function SvgProjects() : JSX.Element
     const [ loading, setLoading ]   = React.useState<boolean>( true );
     const [ editingId, setEditingId ] = React.useState<string | null>( null );   // open editor for this project
     const [ newOpen, setNewOpen ]     = React.useState<boolean>( false );        // new-design dialog
+    const [ deleteTarget, setDeleteTarget ] = React.useState<StudioProject.Entity | null>( null );   // pending delete confirm
+    const [ snack, setSnack ]         = React.useState<{ message : string; severity : SnackAlert.Severity } | null>( null );
 
     React.useEffect( componentLoaded, [] );
 
@@ -61,6 +72,38 @@ export function SvgProjects() : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // a card's kebab menu choice — copy duplicates the design, delete asks for confirmation first
+    function onCardAction( project : StudioProject.Entity, action : string ) : void
+    {
+        switch( action )
+        {
+            case ProjectAction.COPY:   void copyProject( project ); break;
+            case ProjectAction.DELETE: setDeleteTarget( project ); break;
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // duplicate a design (metadata + canvas) into a new project, then refresh the list
+    async function copyProject( project : StudioProject.Entity ) : Promise<void>
+    {
+        const reply : RestfulService.Reply<PostStudioProjectCopy.Response> = await appmodel.server.fetch( new PostStudioProjectCopy( project.id ) );
+        if( reply.ok ) { setSnack( { message: "Design copied.", severity: "success" } ); void load(); }
+        else setSnack( { message: "Could not copy the design. Please try again.", severity: "error" } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // the delete confirm's YES action — soft-delete (recoverable) the pending target, then refresh
+    async function onDeleteConfirmed( confirmed : AlertPrompt.Action ) : Promise<void>
+    {
+        const target : StudioProject.Entity | null = deleteTarget;
+        setDeleteTarget( null );
+        if( confirmed !== AlertPrompt.Action.YES || !target ) return;
+        const reply : RestfulService.Reply<DeleteStudioProject.Response> = await appmodel.server.fetch( new DeleteStudioProject( target.id ) );
+        if( reply.ok ) { setSnack( { message: "Design deleted.", severity: "success" } ); void load(); }
+        else setSnack( { message: "Could not delete the design. Please try again.", severity: "error" } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // a new design was created — open it in the editor and refresh the list
     function onCreated( projectId : string ) : void
     {
@@ -82,7 +125,17 @@ export function SvgProjects() : JSX.Element
     function designCard( project : StudioProject.Entity ) : JSX.Element
     {
         const edited : string = appmodel.ui.locale.date( new Date( project.modifiedAt ), LocaleService.Format.MEDIUM );
-        return  <Card key={ project.id } variant="outlined" sx={{ width: 200 }}>
+        return  <Card key={ project.id } variant="outlined" sx={{ width: 200, position: "relative" }}>
+                    <Box sx={{ position: "absolute", top: 4, right: 4, zIndex: 1 }}>
+                        <ButtonIconDropdown id={ `svg-project-${ project.id }-menu` } label={"More"} size="small"
+                                            icon={ <MoreVertIcon fontSize="small" /> }
+                                            choices={
+                                            [
+                                                { value: ProjectAction.COPY,   label: "Copy",   icon: <ContentCopyOutlinedIcon fontSize="small" /> },
+                                                { value: ProjectAction.DELETE, label: "Delete", icon: <DeleteOutlineOutlinedIcon fontSize="small" /> },
+                                            ] }
+                                            onChange={ ( action : string ) : void => onCardAction( project, action ) } />
+                    </Box>
                     <CardActionArea onClick={ () : void => openDesign( project.id ) }>
                         <Box sx={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center", bgcolor: "action.hover" }}>
                             <DesignServicesOutlinedIcon sx={{ fontSize: 40, color: "text.secondary" }} />
@@ -98,7 +151,10 @@ export function SvgProjects() : JSX.Element
     ////////////////////////////////////////////////////////////////////////////////////////////
     // when a design is open, show the full-screen editor instead of the gallery
     if( editingId !== null )
-        return <SvgProjectEditor projectId={ editingId } onBack={ onBack } />;
+    {
+        const editingProject : StudioProject.Entity | undefined = projects.find( ( p : StudioProject.Entity ) : boolean => p.id === editingId );
+        return <SvgProjectEditor projectId={ editingId } projectName={ editingProject?.name } onBack={ onBack } />;
+    }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     return  <AuthPage title={"Designs"}>
@@ -119,6 +175,16 @@ export function SvgProjects() : JSX.Element
                 </Box>
 
                 { newOpen && <NewSvgProjectDialog open={ newOpen } onClose={ () : void => setNewOpen( false ) } onCreated={ onCreated } /> }
+
+                { deleteTarget &&
+                    <AlertPrompt id="svg-project-delete-confirm"
+                                 type={ AlertPrompt.Type.WARNING }
+                                 title={"Delete design"}
+                                 message={ `Delete "${ deleteTarget.name }"? It can be recovered later if this was a mistake.` }
+                                 yesText={"Delete"} yesColor="error" cancelText={"Cancel"}
+                                 onAction={ onDeleteConfirmed } /> }
+
+                { snack && <SnackAlert message={ snack.message } severity={ snack.severity } onClose={ () : void => setSnack( null ) } /> }
             </AuthPage>;
 }
 

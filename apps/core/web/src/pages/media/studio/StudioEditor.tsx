@@ -15,7 +15,7 @@ import VideoInput from '@widgets/core/VideoInput';
 import AudioInput from '@widgets/core/AudioInput';
 import CampaignSelect from '@widgets/app/CampaignSelect';
 import CaptionEditorDialog from '@pages/media/dialogs/CaptionEditorDialog';
-import Pusher from "../../../widgets/core/Pusher";
+import Pusher from "@widgets/core/Pusher";
 
 //
 // StudioEditor — the Studio's RIGHT editing surface for the selected asset. This is the FOUNDATION (more to
