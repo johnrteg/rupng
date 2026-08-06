@@ -1,5 +1,6 @@
 //
 import { promises as fs } from "node:fs";
+import { existsSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -279,6 +280,14 @@ export namespace MediaAnalyzer
         return parts;
     }
 
+    /** Map a {@link StudioProject.BlendMode} to ffmpeg's `blend` filter mode name — every non-NORMAL value
+     *  happens to share ffmpeg's own mode name (CSS `mix-blend-mode` and ffmpeg's blend modes line up 1:1 for
+     *  this set), so this is an identity lookup that also documents the mapping explicitly. */
+    function ffBlendMode( mode : StudioProject.BlendMode ) : string
+    {
+        return mode;
+    }
+
     /** Build the ffmpeg color-EFFECTS chain for a visual layer (`,eq=…`, `,gblur=…`, `,vignette`) from a clip's
      *  filters — neutral values are omitted; grayscale folds into `eq` saturation=0. Returns "" (no filters) or a
      *  leading-comma chain to splice into the layer prep. Mirrors the preview's CSS `filter`. */
@@ -302,13 +311,59 @@ export namespace MediaAnalyzer
         return parts.length > 0 ? "," + parts.join( "," ) : "";
     }
 
-    /** Build the drawtext STYLE options (fill / outline / shadow / background box) from a text layer's style,
-     *  filling unset fields from {@link StudioProject.DEFAULT_TEXT_STYLE} so an unstyled layer draws the legacy
-     *  white-with-shadow look. Widths/padding scale with the font size to match the preview across formats. */
+    /** The bundled font files (media-21.19) — one regular + one bold TTF per {@link StudioProject.TextFont}
+     *  (DejaVu Sans/Serif/Mono, SIL/Bitstream-Vera licensed, see `assets/fonts/LICENSE`), so `fontFamily`/`bold`
+     *  actually render in the ffmpeg export instead of falling back to ffmpeg's single default font. */
+    const FONT_FILE_NAMES : Record<StudioProject.TextFont, { regular : string; bold : string }> =
+    {
+        [ StudioProject.TextFont.SANS ]:  { regular: "sans.ttf",  bold: "sans-bold.ttf" },
+        [ StudioProject.TextFont.SERIF ]: { regular: "serif.ttf", bold: "serif-bold.ttf" },
+        [ StudioProject.TextFont.MONO ]:  { regular: "mono.ttf",  bold: "mono-bold.ttf" },
+    };
+
+    /** The `assets/fonts` directory relative to THIS module — tried at both the dev (`src/pipeline/` → up two)
+     *  and bundled (`bin/` → up one) layouts, the same self-locating approach `ffmpeg-static`/`ffprobe-static`
+     *  use for their own binaries. Resolved once and cached (the layout can't change at runtime). */
+    let fontsDir : string | null | undefined = undefined;
+    function resolveFontsDir() : string | null
+    {
+        if( fontsDir !== undefined ) return fontsDir;
+        const candidates : Array<string> = [
+            path.join( __dirname, "..", "..", "assets", "fonts" ),   // dev: src/pipeline/ -> apps/core/media/assets/fonts
+            path.join( __dirname, "..", "assets", "fonts" ),          // bundled: bin/ -> apps/core/media/assets/fonts
+        ];
+        fontsDir = candidates.find( ( candidate : string ) : boolean => existsSync( candidate ) ) ?? null;
+        return fontsDir;
+    }
+
+    /** Resolve the absolute TTF path for a {@link StudioProject.TextFont} + weight, or null if the bundled
+     *  fonts directory can't be found (drawtext then falls back to ffmpeg's default font). */
+    function fontFilePath( font : StudioProject.TextFont, bold : boolean ) : string | null
+    {
+        const dir : string | null = resolveFontsDir();
+        if( dir === null ) return null;
+        const names : { regular : string; bold : string } = FONT_FILE_NAMES[ font ];
+        return path.join( dir, bold ? names.bold : names.regular );
+    }
+
+    /** Escape a filesystem path for use inside an ffmpeg filter value (drawtext `fontfile=…`), where `:` and
+     *  `\` are filtergraph metacharacters and the whole value is single-quoted. */
+    function drawtextPathEscape( value : string ) : string
+    {
+        return value.replace( /\\/g, "\\\\" ).replace( /'/g, "’" ).replace( /:/g, "\\:" );
+    }
+
+    /** Build the drawtext STYLE options (font file / fill / outline / shadow / background box) from a text
+     *  layer's style, filling unset fields from {@link StudioProject.DEFAULT_TEXT_STYLE} so an unstyled layer
+     *  draws the legacy white-with-shadow look. Widths/padding scale with the font size to match the preview
+     *  across formats. */
     function drawtextStyleOptions( style : StudioProject.TextStyle | undefined, fontSize : number ) : Array<string>
     {
         const resolved : StudioProject.TextStyle = { ...StudioProject.DEFAULT_TEXT_STYLE, ...( style ?? {} ) };
         const options : Array<string> = [ `fontcolor=${ ffColor( resolved.color ?? "#ffffff" ) }` ];
+        // font family/weight → a bundled TTF (falls back to ffmpeg's default font if the assets dir is missing)
+        const fontPath : string | null = fontFilePath( resolved.fontFamily ?? StudioProject.TextFont.SANS, resolved.bold === true );
+        if( fontPath !== null ) options.push( `fontfile='${ drawtextPathEscape( fontPath ) }'` );
         // outline → border; width relative to the font size
         if( resolved.outline !== undefined && resolved.outline.widthPct > 0 )
         {
@@ -326,6 +381,37 @@ export namespace MediaAnalyzer
             options.push( `boxborderw=${ Math.max( 1, Math.round( resolved.background.padPct * fontSize ) ) }` );
         }
         return options;
+    }
+
+    /** Build the drawtext x/y/fontsize EXPRESSIONS for a TEXT layer's entry animation, animating for real via
+     *  ffmpeg time-expressions (evaluated per-frame, same eval engine already driving the alpha fade ramps).
+     *  SLIDE_* animates position from off-screen to the target; POP animates `fontsize` up from small (drawtext
+     *  re-measures `text_w`/`text_h` each frame, so the target x/y — which reference them — stay centered as it
+     *  scales). FADE and TYPEWRITER have no drawtext geometry equivalent (typewriter needs per-character reveal,
+     *  which would need per-frame text generation — out of reach for a single drawtext node), so both fall back
+     *  to the static target position; their "animation" is the caller's plain alpha fade-in. */
+    function textAnimationGeometry( animateIn : StudioProject.TextAnimateIn | undefined, start : number, width : number, height : number, fontSize : number, targetXExpr : string, targetYExpr : string ) : { xExpr : string; yExpr : string; fontSizeExpr : string }
+    {
+        const identity : { xExpr : string; yExpr : string; fontSizeExpr : string } = { xExpr: targetXExpr, yExpr: targetYExpr, fontSizeExpr: String( fontSize ) };
+        if( animateIn === undefined ) return identity;
+        const dur : number = Math.max( 0.05, animateIn.durationSec );
+        const progress : string = `min(1,(t-${ start })/${ dur })`;
+        const active : string = `lt(t-${ start },${ dur })`;
+        switch( animateIn.type )
+        {
+            case StudioProject.TextAnimation.SLIDE_LEFT:      // settles at target, enters from off-screen RIGHT
+                return { ...identity, xExpr: `if(${ active },(${ targetXExpr })+(${ width }-(${ targetXExpr }))*(1-${ progress }),${ targetXExpr })` };
+            case StudioProject.TextAnimation.SLIDE_RIGHT:     // enters from off-screen LEFT
+                return { ...identity, xExpr: `if(${ active },(${ targetXExpr })+(-text_w-(${ targetXExpr }))*(1-${ progress }),${ targetXExpr })` };
+            case StudioProject.TextAnimation.SLIDE_UP:        // enters from BELOW the frame
+                return { ...identity, yExpr: `if(${ active },(${ targetYExpr })+(${ height }-(${ targetYExpr }))*(1-${ progress }),${ targetYExpr })` };
+            case StudioProject.TextAnimation.SLIDE_DOWN:      // enters from ABOVE the frame
+                return { ...identity, yExpr: `if(${ active },(${ targetYExpr })+(-text_h-(${ targetYExpr }))*(1-${ progress }),${ targetYExpr })` };
+            case StudioProject.TextAnimation.POP:             // scales up from 40% size (caller adds the fade)
+                return { ...identity, fontSizeExpr: `if(${ active },max(1,round(${ fontSize }*(0.4+0.6*${ progress }))),${ fontSize })` };
+            default:
+                return identity;   // FADE / TYPEWRITER — geometry stays static; caller's alpha fade carries it
+        }
     }
 
     /** Build a drawtext filter for one relative overlay against a WxH frame (x/y expressions in ffmpeg vars). */
@@ -448,6 +534,7 @@ export namespace MediaAnalyzer
         transform?    : StudioProject.ClipTransform;   // per-clip fit / scale / rotation / opacity / position
         kenBurns?     : StudioProject.KenBurns;         // animated pan-zoom (exported as a static midpoint zoom)
         filters?      : StudioProject.ClipFilters;      // color effects: brightness / contrast / saturation / grayscale / blur / vignette
+        blend?        : StudioProject.BlendMode;        // how this layer composites over the ones beneath (real for the default/untransformed layout — see {@link ffBlendMode})
     }
 
     /** One burned-in text layer for {@link renderComposite}: relative geometry + an absolute time window. */
@@ -463,6 +550,7 @@ export namespace MediaAnalyzer
         fadeInSec?  : number;
         fadeOutSec? : number;
         style?      : StudioProject.TextStyle;   // fill / outline / shadow / background (drawtext options)
+        animateIn?  : StudioProject.TextAnimateIn;   // entry animation (slide/pop animate for real; see {@link textAnimationGeometry})
     }
 
     /** A logo/watermark burned over the WHOLE composite (top-most): the image bytes + its corner placement,
@@ -564,7 +652,23 @@ export namespace MediaAnalyzer
                 {
                     // default: cover-fit + crop to the frame, apply effects, composited full-frame
                     filters.push( `[${ inputIndex }:v]scale=${ width }:${ height }:force_original_aspect_ratio=increase,crop=${ width }:${ height }${ colorChain },setsar=1,fps=${ fps },${ sourceTrim }${ reverseFilter },${ setptsExpr }${ fade }[v${ index }]` );
-                    filters.push( `[${ last }][v${ index }]overlay=eof_action=pass:enable='between(t,${ start },${ end })'[o${ index }]` );
+                    // a non-NORMAL blend mode composites via ffmpeg's `blend` (pixel-mode math) instead of plain
+                    // `overlay` — safe here because this layer already exactly fills the frame at (0,0), so
+                    // blend's "same-size, pixel-aligned" requirement holds (the transform/Ken Burns path below can
+                    // place a layer off-center/at another size, where `blend` doesn't apply — those still composite
+                    // as `normal`, per {@link StudioProject.BlendMode}'s doc comment)
+                    if( layer.blend !== undefined && layer.blend !== StudioProject.BlendMode.NORMAL )
+                    {
+                        // `blend`'s math is per-COMPONENT — run in yuv420p (the pipeline's working format) it
+                        // multiplies/screens luma+chroma planes directly, which doesn't correspond to RGB math
+                        // (chroma is centered on 128, not 0) and produces garbage colors. Force both inputs to
+                        // an RGB planar format first, blend there, then convert back for the rest of the chain.
+                        filters.push( `[v${ index }]format=gbrp[vb${ index }]` );
+                        filters.push( `[${ last }]format=gbrp[lb${ index }]` );
+                        filters.push( `[vb${ index }][lb${ index }]blend=all_mode=${ ffBlendMode( layer.blend ) }:eof_action=pass:enable='between(t,${ start },${ end })',format=yuv420p[o${ index }]` );
+                    }
+                    else
+                        filters.push( `[${ last }][v${ index }]overlay=eof_action=pass:enable='between(t,${ start },${ end })'[o${ index }]` );
                 }
                 else
                 {
@@ -601,12 +705,15 @@ export namespace MediaAnalyzer
             const drawnodes : Array<string> = texts.map( ( text : CompositeTextLayer ) : string =>
             {
                 const fontSize : number = Math.max( 8, Math.round( text.fontPct * height ) );
-                const xExpr : string = text.align === "left" ? `(w*${ text.xPct })`
+                const targetXExpr : string = text.align === "left" ? `(w*${ text.xPct })`
                     : text.align === "right" ? `(w*${ text.xPct })-text_w`
                     : `(w*${ text.xPct })-(text_w/2)`;
-                const yExpr : string = `(h*${ text.yPct })-(text_h/2)`;
+                const targetYExpr : string = `(h*${ text.yPct })-(text_h/2)`;
                 const start : number = Math.max( 0, text.startSec );
                 const end : number = start + Math.max( 0.1, text.durationSec );
+                // slide/pop entry animations drive REAL x/y/fontsize expressions; fade/typewriter keep the static
+                // target position (their "animation" is the alpha ramp below)
+                const geometry : { xExpr : string; yExpr : string; fontSizeExpr : string } = textAnimationGeometry( text.animateIn, start, width, height, fontSize, targetXExpr, targetYExpr );
                 // transition: ramp text opacity via an alpha expression over the fade windows (single-quoted → commas safe)
                 const fadeIn : number = Math.max( 0, text.fadeInSec ?? 0 );
                 const fadeOut : number = Math.max( 0, text.fadeOutSec ?? 0 );
@@ -616,7 +723,7 @@ export namespace MediaAnalyzer
                 const alpha : string = ramp !== "" ? `:alpha='${ ramp }'` : "";
                 // style options (fill / outline / shadow / background) sit between the text and the geometry
                 const styleOptions : string = drawtextStyleOptions( text.style, fontSize ).join( ":" );
-                return `drawtext=text='${ drawtextEscape( text.text ) }':${ styleOptions }:fontsize=${ fontSize }:x=${ xExpr }:y=${ yExpr }:enable='between(t,${ start },${ end })'${ alpha }`;
+                return `drawtext=text='${ drawtextEscape( text.text ) }':${ styleOptions }:fontsize='${ geometry.fontSizeExpr }':x='${ geometry.xExpr }':y='${ geometry.yExpr }':enable='between(t,${ start },${ end })'${ alpha }`;
             } );
             const textOut : string = watermark !== undefined ? "vtext" : "vout";
             if( drawnodes.length > 0 ) filters.push( `[${ last }]${ drawnodes.join( "," ) }[${ textOut }]` );
@@ -698,13 +805,23 @@ export namespace MediaAnalyzer
      *  (no ffmpeg-graph approximations). Bundles the shared composition entry, selects the composition, and
      *  renders it to mp4 at the given format, feeding the doc as inputProps.
      *
-     *  UNVERIFIED / GATED: the @remotion/* render deps carry headless Chromium and are heavy, so they're loaded
-     *  via NON-LITERAL dynamic imports — this module compiles and the ffmpeg engine keeps working WITHOUT them.
-     *  Until the Chromium-capable render worker installs `@remotion/bundler` + `@remotion/renderer` and exposes
-     *  the shared composition entry (`@repo/studio-composition`: `registerRoot` + a `<Composition>` for
-     *  `StudioVideoComposition`), this returns null (the Job then fails cleanly and the config should stay on
-     *  the ffmpeg engine). Also note: the composition resolves each clip's `src` — those URLs must be valid at
-     *  render time (refresh signed URLs into the doc before enqueueing a remotion render). */
+     *  `@remotion/bundler` + `@remotion/renderer` carry headless Chromium and are heavy, so they're loaded via
+     *  NON-LITERAL dynamic imports — this module compiles and the ffmpeg engine keeps working even on a worker
+     *  that lacks them (returns null; the Job then fails cleanly and the config should stay on the ffmpeg
+     *  engine there). Verified working end-to-end locally, AND against the actual built runtime Docker image —
+     *  bundling + `require.resolve` of the shared composition entry both work there (see the Dockerfile's
+     *  `packages/` copy + `chown` for what that needed).
+     *
+     *  HARD BLOCKER on the shared `node:22-alpine` runner image specifically: Remotion's Chromium download has
+     *  no working build for Alpine/musl libc (confirmed — both the arm64 AND x64 `chrome-headless-shell`
+     *  assets 400 from Remotion's/Playwright's CDN for this platform; this is an upstream gap, not a network
+     *  fluke). This mirrors why the SVG export pipeline's Puppeteer/`@sparticuz/chromium` render runs as its
+     *  own Lambda (a glibc/Amazon-Linux runtime) rather than in this generic Alpine ECS image — the same split
+     *  is needed here: the REMOTION engine must run on a glibc base (a separate Dockerfile/Lambda), not this
+     *  service's default image. DO NOT flip `MediaConfig.DEFAULT.render.engine` to REMOTION until that worker
+     *  exists; today it would fail every job. Also note: the composition resolves
+     *  each clip's `src` — the CALLER must refresh signed URLs into `doc` before invoking this (see
+     *  `MediaService.resolveClipSources`); this function renders exactly the `src`s it's given. */
     export async function renderCompositeRemotion( doc : StudioProject.VideoDoc, width : number, height : number, fps : number, durationSec : number ) : Promise<Uint8Array | null>
     {
         const runId : string = randomUUID();
@@ -723,9 +840,14 @@ export namespace MediaAnalyzer
             await fs.mkdir( workDir, { recursive: true } );
             const totalFrames : number = Math.max( 1, Math.round( Math.max( 0.1, durationSec ) * fps ) );
             const inputProps : { doc : StudioProject.VideoDoc } = { doc };
+            // ENTRY_POINT is a bare module specifier ("@repo/studio-composition/Root") — @remotion/bundler needs
+            // an absolute file path, so resolve it via Node's own module resolution (honors the package's
+            // "./Root" -> "./src/Root.tsx" export map) before handing it to the bundler
+            const rootEntryPath : string = require.resolve( entry.ENTRY_POINT );
+
             // bundle the composition site → pick the composition (overriding its size/fps/length to this format)
             // → render to mp4 via headless Chromium
-            const serveUrl : string = await bundler.bundle( { entryPoint: entry.ENTRY_POINT } );
+            const serveUrl : string = await bundler.bundle( { entryPoint: rootEntryPath } );
             const composition : { durationInFrames : number } = await renderer.selectComposition( { serveUrl, id: entry.COMPOSITION_ID, inputProps } );
             await renderer.renderMedia( { serveUrl, codec: "h264", outputLocation: outPath, inputProps,
                 composition: { ...composition, width, height, fps, durationInFrames: totalFrames } } );

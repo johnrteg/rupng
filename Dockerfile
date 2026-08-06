@@ -42,11 +42,23 @@ ARG APP_PATH
 WORKDIR /app
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 fastify
 
-# Only what the bundled service needs at runtime: prod node_modules (for ajv), the app's
-# package.json (loadPackageInfo reads it), and the bundle itself. No packages/ or app src.
+# Normally: prod node_modules (for ajv), the app's package.json (loadPackageInfo reads it), and the
+# bundle itself — no packages/ or app src, since every @repo/* import is inlined into the bundle by
+# esbuild. The ONE exception: a runtime dynamic import with a NON-LITERAL specifier (e.g. media's
+# optional `@remotion/*` + `@repo/studio-composition` Chromium render path) can't be statically
+# inlined, so it resolves via node_modules at runtime — and since `@repo/*` packages are WORKSPACE
+# SYMLINKS (node_modules/@repo/x -> ../../packages/x), that symlink is dangling unless packages/ is
+# also copied. `turbo prune` already scoped packages/ to just this app's dependency graph, so this
+# is small and safe to include for every service.
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/apps/${APP_PATH}/package.json ./apps/${APP_PATH}/package.json
 COPY --from=builder /app/apps/${APP_PATH}/bin ./apps/${APP_PATH}/bin
+
+# /app is root-owned from the COPY steps above; a service that writes under its own tree at runtime
+# (e.g. media's Remotion render — webpack's bundle cache, and Chromium's one-time download, both
+# default to a path under here) needs the non-root runtime user to actually own it.
+RUN chown -R fastify:nodejs /app
 
 USER fastify
 EXPOSE 3000

@@ -163,7 +163,10 @@ export namespace StudioProject
         { brightness: 0, contrast: 1, saturation: 1, grayscale: false, blur: 0, vignette: false };
 
     /** How a visual layer BLENDS over the layers beneath it (CSS `mix-blend-mode` values). A closed set → enum.
-     *  Preview-only fidelity: the ffmpeg overlay graph composites `normal`; other modes render as normal. */
+     *  The ffmpeg render maps every value here 1:1 to ffmpeg's own `blend` filter mode name, so a clip using the
+     *  DEFAULT (untransformed, cover-fit) layout renders its blend mode for real. A clip with a `ClipTransform`/
+     *  `KenBurns` (positioned off-center, scaled, or rotated) still composites as `normal` — ffmpeg's `blend`
+     *  filter requires same-size, pixel-aligned inputs, which only the default full-frame layout guarantees. */
     export enum BlendMode
     {
         NORMAL   = "normal",
@@ -329,9 +332,11 @@ export namespace StudioProject
     export const DEFAULT_TEXT_GEOMETRY : { xPct : number; yPct : number; fontPct : number; align : "center" } =
         { xPct: 0.5, yPct: 0.88, fontPct: 0.08, align: "center" };
 
-    /** The font FAMILY a text layer uses. The preview renders the matching CSS stack; the server render
-     *  currently draws with its single bundled font, so family (and bold) are PREVIEW-fidelity until the
-     *  render bundles matching font files. A small, nameable closed set — hence an enum, not a free string. */
+    /** The font FAMILY a text layer uses. The preview renders the matching CSS stack; the ffmpeg render maps
+     *  each value to a bundled TTF (regular + bold, see `apps/core/media/assets/fonts`) so the choice renders
+     *  server-side too — the preview's CSS stack and the bundled TTF are visually similar but not pixel-identical
+     *  (that needs the Remotion/Chromium render path). A small, nameable closed set — hence an enum, not a
+     *  free string. */
     export enum TextFont
     {
         SANS  = "sans-serif",
@@ -348,12 +353,12 @@ export namespace StudioProject
     export interface TextBackground { color : string; opacity : number; padPct : number; }
 
     /** Visual STYLING for a TEXT clip / overlay. Colors here are free-form CONTENT values (hex) chosen by the
-     *  user — NOT app theme tokens. `color` (fill), `outline`, `shadow`, and `background` all map to ffmpeg
-     *  drawtext options so preview and render match; `fontFamily`/`bold` are preview-fidelity (see {@link TextFont}). */
+     *  user — NOT app theme tokens. `color` (fill), `outline`, `shadow`, `background`, `fontFamily`, and `bold`
+     *  all map to ffmpeg drawtext options so preview and render match (see {@link TextFont}). */
     export interface TextStyle
     {
-        fontFamily? : TextFont;         // preview CSS stack; render uses its bundled font
-        bold?       : boolean;          // preview weight; render uses its bundled font
+        fontFamily? : TextFont;         // preview CSS stack; render maps to a bundled TTF
+        bold?       : boolean;          // preview weight; render maps to the bundled TTF's bold variant
         color?      : string;           // fill color (hex) — default white
         outline?    : TextOutline;      // stroke around the glyphs
         shadow?     : boolean;          // drop shadow (default true — matches the legacy look)
@@ -367,7 +372,11 @@ export namespace StudioProject
 
     /** The entry ANIMATION a TEXT layer plays as it appears (over its first `durationSec`). Distinct from a
      *  clip {@link Transition} (which overlaps the PREVIOUS clip): this animates the text itself IN, in place.
-     *  Preview renders each faithfully; the server render approximates slide/pop/typewriter as a fade-in. */
+     *  Preview renders each faithfully; the ffmpeg render animates the SLIDE variants and POP for real via
+     *  drawtext x/y/fontsize expressions. FADE is already just an alpha ramp both places. TYPEWRITER is the
+     *  one exception — revealing
+     *  characters over time has no single-drawtext-node equivalent (it would need per-frame text generation),
+     *  so it still approximates as a plain fade-in server-side. */
     export enum TextAnimation
     {
         FADE        = "fade",         // opacity ramp in

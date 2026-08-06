@@ -4,6 +4,11 @@
     "private": true,
     "main": "./bin/index.js",
     "types": "./bin/index.d.ts",
+    "exports": {
+        ".": "./bin/index.js",
+        "./Root": "./src/Root.tsx",
+        "./package.json": "./package.json"
+    },
     "scripts": {
         "build": "tsc -p tsconfig.build.json",
         "typecheck": "tsc --noEmit"

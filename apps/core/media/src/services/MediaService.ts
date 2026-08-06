@@ -1074,6 +1074,46 @@ export class MediaService extends Service
         return this.sqs.send( queue, { accountId, projectId, userId } );
     }
 
+    /** Refresh every clip's (and the watermark's) `src` to a FRESH, long-lived signed GET url, keyed off its
+     *  durable `assetGuid` — for the Remotion/Chromium render, which fetches media straight from `src` inside
+     *  the rendered page rather than spooling S3 bytes itself (unlike the ffmpeg path), so a stale/expired
+     *  preview URL would otherwise fail silently mid-render. TTL matches the `studio-render-remotion` queue's
+     *  visibility timeout so a slow render never outlives its own URLs. Resolves each distinct `assetGuid` once. */
+    private async resolveClipSources( accountId : string, doc : StudioProject.VideoDoc ) : Promise<StudioProject.VideoDoc>
+    {
+        const ttlSec : number = 1800;
+        const resolved : Map<string, string | null> = new Map<string, string | null>();
+
+        // resolve ONE asset's fresh signed url (cached — several clips may share the same assetGuid)
+        const resolveOne = async ( assetGuid : string ) : Promise<string | null> =>
+        {
+            const cached : string | null | undefined = resolved.get( assetGuid );
+            if( cached !== undefined ) return cached;
+            const got : Type.Result<Media.Asset | undefined> = await this.dynamo.get<Media.Asset>( "media", { accountId, guid: assetGuid } );
+            const original : Media.Item | undefined = got.ok && got.data ? Media.originalItem( got.data ) : undefined;
+            if( !got.ok || !got.data || original === undefined ) { resolved.set( assetGuid, null ); return null; }
+            const signed : Type.Result<string> = await this.s3.presignGet( "media", MediaPipeline.itemKey( got.data, original ), ttlSec );
+            const url : string | null = signed.ok ? signed.data : null;
+            resolved.set( assetGuid, url );
+            return url;
+        };
+
+        // refresh every media clip's src, then the watermark's — leaving clips without an assetGuid untouched
+        const clips : Array<StudioProject.TimelineClip> = await Promise.all( ( doc.clips ?? [] ).map( async ( clip : StudioProject.TimelineClip ) : Promise<StudioProject.TimelineClip> =>
+        {
+            if( !clip.assetGuid ) return clip;
+            const src : string | null = await resolveOne( clip.assetGuid );
+            return src !== null ? { ...clip, src } : clip;
+        } ) );
+        let watermark : StudioProject.Watermark | undefined = doc.watermark;
+        if( watermark !== undefined )
+        {
+            const src : string | null = await resolveOne( watermark.assetGuid );
+            if( src !== null ) watermark = { ...watermark, src };
+        }
+        return { ...doc, clips, watermark };
+    }
+
     /** Render a video project's timeline → mp4 and save it to the library (create, or update the linked asset
      *  in place). Resolves each scene's DURABLE source bytes from S3, composites with ffmpeg, uploads, links
      *  the asset to the project, and emits `media.job` progress. */
@@ -1114,12 +1154,16 @@ export class MediaService extends Service
         // straight from the doc/inputProps, so it SKIPS the ffmpeg layer gathering (no spooling S3 bytes).
         if( engine === MediaConfig.RenderEngine.REMOTION )
         {
+            // the Chromium render fetches each clip's `src` itself (no S3 spooling) — those URLs are the
+            // TIME-LIMITED ones the editor last saved, so refresh them to fresh, render-length-safe signed
+            // URLs first (a stale/expired URL would otherwise fail silently inside the Chromium page)
+            const resolvedTimeline : StudioProject.VideoDoc = await this.resolveClipSources( accountId, timeline );
             const remotionRenders : Array<{ profile : string; bytes : Uint8Array }> = [];
             for( let index : number = 0; index < formats.length; index++ )
             {
                 const format : { key : string; width : number; height : number } = formats[ index ];
                 void this.emitJobStage( accountId, projectId, "studio-render", Events.JobStage.RUNNING, { progress: 40 + Math.round( ( index / formats.length ) * 50 ), message: `rendering ${ format.key } (remotion)`, userId } );
-                const out : Uint8Array | null = await MediaAnalyzer.renderCompositeRemotion( timeline, format.width, format.height, timeline.fps, durationSec );
+                const out : Uint8Array | null = await MediaAnalyzer.renderCompositeRemotion( resolvedTimeline, format.width, format.height, timeline.fps, durationSec );
                 if( out !== null ) remotionRenders.push( { profile: format.key, bytes: out } );
             }
             if( remotionRenders.length === 0 ) { fail( "remotion render produced no output (Chromium worker + shared composition required)" ); return; }
@@ -1155,17 +1199,21 @@ export class MediaService extends Service
                 // text → a burned overlay (relative geometry, defaulted from the shared model)
                 if( clip.kind === StudioProject.VideoSceneKind.TEXT )
                 {
-                    // an entry animation renders as an alpha fade-in over its duration; slide/pop/typewriter
-                    // have no drawtext equivalent in the overlay graph, so they export as a fade (preview-only fidelity)
-                    const animInSec : number = clip.animateIn !== undefined ? Math.max( 0, clip.animateIn.durationSec ) : 0;
+                    // SLIDE_*/POP entry animations drive real drawtext x/y/fontsize expressions (see
+                    // MediaAnalyzer.textAnimationGeometry) — POP still gets an alpha ramp too ("pop... with a
+                    // fade"). FADE/TYPEWRITER have no drawtext geometry equivalent (typewriter would need
+                    // per-frame text generation), so they fall back to a plain alpha fade-in over the animation's
+                    // duration, same as before.
+                    const animatesGeometry : boolean = clip.animateIn !== undefined && clip.animateIn.type !== StudioProject.TextAnimation.FADE && clip.animateIn.type !== StudioProject.TextAnimation.TYPEWRITER && clip.animateIn.type !== StudioProject.TextAnimation.POP;
+                    const animInSec : number = clip.animateIn !== undefined && !animatesGeometry ? Math.max( 0, clip.animateIn.durationSec ) : 0;
                     const textFadeInSec : number | undefined = animInSec > 0 ? Math.max( adjFadeInSec ?? 0, animInSec ) : adjFadeInSec;
-                    texts.push( { text: clip.text ?? "", startSec: adjStartSec, durationSec: adjDurationSec, xPct: clip.xPct ?? StudioProject.DEFAULT_TEXT_GEOMETRY.xPct, yPct: clip.yPct ?? 0.5, fontPct: clip.fontPct ?? StudioProject.DEFAULT_TEXT_GEOMETRY.fontPct, align: clip.align ?? StudioProject.DEFAULT_TEXT_GEOMETRY.align, fadeInSec: textFadeInSec, fadeOutSec: clip.fadeOutSec, style: clip.style } );
+                    texts.push( { text: clip.text ?? "", startSec: adjStartSec, durationSec: adjDurationSec, xPct: clip.xPct ?? StudioProject.DEFAULT_TEXT_GEOMETRY.xPct, yPct: clip.yPct ?? 0.5, fontPct: clip.fontPct ?? StudioProject.DEFAULT_TEXT_GEOMETRY.fontPct, align: clip.align ?? StudioProject.DEFAULT_TEXT_GEOMETRY.align, fadeInSec: textFadeInSec, fadeOutSec: clip.fadeOutSec, style: clip.style, animateIn: clip.animateIn } );
                     continue;
                 }
                 // solid color card → a generated layer (no asset bytes); a lavfi color source at render time
                 if( clip.kind === StudioProject.VideoSceneKind.SOLID )
                 {
-                    media.push( { kind: "solid", bytes: new Uint8Array(), color: clip.color, startSec: adjStartSec, durationSec: adjDurationSec, fadeInSec: adjFadeInSec, fadeOutSec: clip.fadeOutSec, transform: clip.transform, filters: clip.filters } );
+                    media.push( { kind: "solid", bytes: new Uint8Array(), color: clip.color, startSec: adjStartSec, durationSec: adjDurationSec, fadeInSec: adjFadeInSec, fadeOutSec: clip.fadeOutSec, transform: clip.transform, filters: clip.filters, blend: clip.blend } );
                     continue;
                 }
                 // SVG shape/graphic → recolor + rasterize to a transparent PNG (sharp), composited as an image.
@@ -1175,7 +1223,7 @@ export class MediaService extends Service
                     const svg : string = StudioProject.buildShapeSvg( clip.shape, clip.shapeStyle );
                     const png : Uint8Array | null = await MediaAnalyzer.rasterizeSvg( svg, 1024 );
                     if( png !== null )
-                        media.push( { kind: "image", bytes: png, ext: "png", startSec: adjStartSec, durationSec: adjDurationSec, fadeInSec: adjFadeInSec, fadeOutSec: clip.fadeOutSec, transform: clip.transform ?? { fit: StudioProject.FitMode.CONTAIN }, kenBurns: clip.kenBurns, filters: clip.filters } );
+                        media.push( { kind: "image", bytes: png, ext: "png", startSec: adjStartSec, durationSec: adjDurationSec, fadeInSec: adjFadeInSec, fadeOutSec: clip.fadeOutSec, transform: clip.transform ?? { fit: StudioProject.FitMode.CONTAIN }, kenBurns: clip.kenBurns, filters: clip.filters, blend: clip.blend } );
                     continue;
                 }
                 // image/video composite visually; audio contributes to the mixed soundtrack — all resolve bytes
@@ -1199,7 +1247,7 @@ export class MediaService extends Service
                     bytesCache.set( clip.assetGuid, resolved );
                 }
                 const kind : "image" | "video" | "audio" = clip.kind === StudioProject.VideoSceneKind.VIDEO ? "video" : clip.kind === StudioProject.VideoSceneKind.AUDIO ? "audio" : "image";
-                media.push( { kind, bytes: resolved.bytes, ext: resolved.ext, startSec: adjStartSec, durationSec: adjDurationSec, trimStartSec: clip.trimStartSec, hasAudio: resolved.hasAudio, muted: track.muted === true, volume: clip.volume, loop: clip.loop, speed: clip.speed, reverse: clip.reverse, fadeInSec: adjFadeInSec, fadeOutSec: clip.fadeOutSec, transform: clip.transform, kenBurns: clip.kenBurns, filters: clip.filters } );
+                media.push( { kind, bytes: resolved.bytes, ext: resolved.ext, startSec: adjStartSec, durationSec: adjDurationSec, trimStartSec: clip.trimStartSec, hasAudio: resolved.hasAudio, muted: track.muted === true, volume: clip.volume, loop: clip.loop, speed: clip.speed, reverse: clip.reverse, fadeInSec: adjFadeInSec, fadeOutSec: clip.fadeOutSec, transform: clip.transform, kenBurns: clip.kenBurns, filters: clip.filters, blend: clip.blend } );
             }
         }
         if( media.length === 0 && texts.length === 0 ) { fail( "no renderable clips" ); return; }
