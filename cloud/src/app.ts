@@ -11,7 +11,7 @@
 import * as cdk from "aws-cdk-lib";
 import { Environment, ResourceManifest, PlatformManifest } from "@repo/cloud-manifest";
 import { Providers } from "@repo/system";
-import { ServiceStack, type GatewayRegistry } from "./lib/ServiceStack";
+import { ServiceStack, type GatewayRegistry, type AlbRegistry } from "./lib/ServiceStack";
 import { PlatformStack } from "./lib/PlatformStack";
 import { isLocal, DestroyAll } from "./lib/local";
 
@@ -27,6 +27,9 @@ import { manifest as webManifest } from "web/manifest";       // apps/core/web/s
 import { manifest as contactManifest } from "contact/manifest";   // apps/core/contact/src/CloudManifest.ts (contacts + segments DDB)
 import { manifest as campaignManifest } from "campaign/manifest"; // apps/core/campaign/src/CloudManifest.ts (campaigns DDB)
 import { manifest as emailManifest } from "email/manifest";   // apps/core/email/src/CloudManifest.ts (templates + send-log + suppression + blasts DDB, S3, send/feedback/batch SQS)
+import { manifest as marketplaceManifest } from "marketplace/manifest"; // apps/core/marketplace/src/CloudManifest.ts (installations DDB + OAuth broker)
+import { manifest as socialManifest } from "social/manifest"; // apps/core/social/src/CloudManifest.ts (connections DDB)
+import { manifest as monitorManifest } from "monitor/manifest"; // apps/core/monitor/src/CloudManifest.ts (no owned tables — reads other services' resources live)
 
 // Generate the API Gateway routes from the service's public RestfulEndpoint defs (same defs the web
 // client + server share), so the gateway can't drift from the contract — the endpoints carry their own
@@ -57,7 +60,20 @@ import {
     GetImportMaps, GetImportMap, PostImportMap, PatchImportMap, DeleteImportMap, PostImportMapCopy,
     GetCampaigns, GetCampaign, PostCampaign, PatchCampaign, DeleteCampaign,
     PostEmailSend, GetEmailTemplates, GetEmailTemplate, PostEmailTemplate, PatchEmailTemplate, DeleteEmailTemplate, PostEmailTemplatePublish, PostEmailTemplatePreview, GetEmailTemplateVersion, PostEmailTemplateRevert, PostEmailPreview, GetEmailConfig, PutEmailConfig,
-    PostEmailBatch, GetEmailBlasts, PatchEmailBlast, DeleteEmailBlast, GetEmailLog
+    PostEmailBatch, GetEmailBlasts, PatchEmailBlast, DeleteEmailBlast, GetEmailLog,
+    PostInstallation, GetInstallationToken, DeleteInstallation,
+    GetCatalog, GetCatalogItem, PostCatalog, PatchCatalog,
+    GetInstallations, GetInstallation, PostInstallationEnable, PatchInstallation,
+    PostInstallationPause, PostInstallationResume, PostInstallationConnect, PostInstallationReauth, UninstallInstallation,
+    GetInstallationHealth, PostInstallationHealthCheck,
+    PostInternalUsage, GetUsage, GetInstallationUsage, PostInternalAction,
+    GetConnections, PostConnection, DeleteConnection,
+    GetPosts, PostPost, GetPost, DeletePost, GetPostRenditions, PostPostPublish,
+    GetSocialConfig, PutSocialConfig,
+    GetInbox, PatchInboxItem, PostInboxRefresh,
+    PostPostSubmit, PostPostApproval, GetPostComments, PostPostComment, PatchPostComment, GetPostAudit,
+    PostSocialWebhook, PostSocialDataDeletion,
+    GetMonitorWidgets, GetMonitorWidgetData, GetMonitorConfig, PutMonitorConfig,
 } from "@repo/api";
 if( appManifest.owns.api )
     appManifest.owns.api.endpoints = [ ...( appManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetBootstrap(), new GetOpenApi(), new GetArticle() ] ) ];
@@ -130,6 +146,31 @@ if( emailManifest.owns.api )
         new PostEmailTemplatePublish(), new PostEmailTemplatePreview(), new GetEmailTemplateVersion(), new PostEmailTemplateRevert(), new PostEmailPreview(),
         new GetEmailConfig(), new PutEmailConfig(), new GetEmailLog()
     ] ) ];
+if( marketplaceManifest.owns.api )
+    marketplaceManifest.owns.api.endpoints = [ ...( marketplaceManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        // internal (S2S) installations API — a consuming service (e.g. social) creates a connection and
+        // resolves a fresh token; the account-facing browse/enable API is a later addition
+        new PostInstallation(), new GetInstallationToken(), new DeleteInstallation(),
+        new GetCatalog(), new GetCatalogItem(), new PostCatalog(), new PatchCatalog(),
+        new GetInstallations(), new GetInstallation(), new PostInstallationEnable(), new PatchInstallation(),
+        new PostInstallationPause(), new PostInstallationResume(), new PostInstallationConnect(), new PostInstallationReauth(), new UninstallInstallation(),
+        new GetInstallationHealth(), new PostInstallationHealthCheck(),
+        new PostInternalUsage(), new GetUsage(), new GetInstallationUsage(), new PostInternalAction()
+    ] ) ];
+if( socialManifest.owns.api )
+    socialManifest.owns.api.endpoints = [ ...( socialManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        // connections CRUD + posts CRUD/publish/approval-workflow + inbox + webhook intake
+        new GetConnections(), new PostConnection(), new DeleteConnection(),
+        new GetPosts(), new PostPost(), new GetPost(), new DeletePost(), new GetPostRenditions(), new PostPostPublish(),
+        new PostPostSubmit(), new PostPostApproval(), new GetPostComments(), new PostPostComment(), new PatchPostComment(), new GetPostAudit(),
+        new GetInbox(), new PatchInboxItem(), new PostInboxRefresh(),
+        new PostSocialWebhook(), new PostSocialDataDeletion(),
+        new GetSocialConfig(), new PutSocialConfig()
+    ] ) ];
+if( monitorManifest.owns.api )
+    monitorManifest.owns.api.endpoints = [ ...( monitorManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        new GetMonitorWidgets(), new GetMonitorWidgetData(), new GetMonitorConfig(), new PutMonitorConfig(),
+    ] ) ];
 
 // ── Resolve environment from CDK context: `cdk synth -c env=staging` (default dev) ──
 //    Local cloud dev: `cdklocal deploy -c env=local` (deploys to LocalStack). See cloud/local/.
@@ -179,11 +220,20 @@ const manifests : Array<ResourceManifest> = [
     contactManifest,
     campaignManifest,
     emailManifest,
+    marketplaceManifest,
+    socialManifest,
+    monitorManifest,
 ];
 
 // Shared gateway registry: each ServiceStack publishes its API Gateway(s) here and a CDN (web) reads
 // them to route API prefixes cross-stack. Producers must precede consumers in `manifests` (app → web).
 const gateways : GatewayRegistry = new Map();
+
+// Shared ALB registry: each ServiceStack that builds an ECS service publishes its internal ALB DNS
+// here; a sibling stack's `uses: [{ kind: SERVICE }]` reference reads it back into a `<SERVICE>_INTERNAL_URL`
+// env var (the only wired path for direct S2S HTTP calls — bypasses the API Gateway entirely). Same
+// producer-before-consumer ordering requirement as `gateways` (e.g. marketplace → social).
+const albs : AlbRegistry = new Map();
 
 for( const manifest of manifests )
 {
@@ -192,6 +242,7 @@ for( const manifest of manifests )
         deployEnv,                                   // our deployment environment
         vpc       : platform.vpc,                    // shared VPC for RDS / ECS / ElastiCache
         gateways,                                    // cross-stack gateway routing (web CDN → app gateway)
+        albs,                                        // cross-stack internal ALB routing (S2S)
         platformSecrets : platform.secrets,          // shared AI provider keys (read-granted + ARN-injected)
         stackName : `${manifest.service}-${deployEnv}`,
         env       : { account, region },             // the AWS account/region (cdk.StackProps)

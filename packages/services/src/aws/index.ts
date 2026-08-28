@@ -23,3 +23,5 @@ export { Search } from "./Search";
 export { MediaConvert } from "./MediaConvert";
 export { WebSocketApi } from "./WebSocketApi";
 export { Database } from "./Database";
+export { CloudWatch } from "./CloudWatch";
+export { Ecs } from "./Ecs";

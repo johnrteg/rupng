@@ -301,8 +301,11 @@ export namespace Events
      */
     export interface EventPayload
     {
-        [Object.MEDIA_ASSET]: Payloads.MediaAsset;
-        [Object.MEDIA_JOB]:   JobProgress;   // async processing progress (media-19.2)
+        [Object.MEDIA_ASSET]:    Payloads.MediaAsset;
+        [Object.MEDIA_JOB]:      JobProgress;   // async processing progress (media-19.2)
+        [Object.SOCIAL_ACCOUNT]: Payloads.SocialAccount;
+        [Object.SOCIAL_POST]:    Payloads.SocialPost;
+        [Object.MARKETPLACE_INTEGRATION]: Payloads.MarketplaceIntegration;
         // … one per published entity (e.g. [Object.CONTACT_CONTACT]: Payloads.Contact) as services land.
     }
 

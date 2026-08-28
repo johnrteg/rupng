@@ -160,6 +160,24 @@ export class Application
     /** AppConfig facade — runtime config + feature flags. Common to all services + jobs. */
     protected get appConfig() : AppConfig { return this._appConfig ??= new AppConfig( this.cloud ); }
 
+    ////////////////////////////////////////////////////////////////////////
+    /** Apply this service's configured log level WITHOUT a redeploy — reads the optional `logLevel` field
+     *  off the SAME `config/settings` AppConfig profile every service already has (media-1/auth-1/account-1,
+     *  …), and (if present and different) updates the shared `Trace` instance's minimum level. Deliberately
+     *  loosely-typed (reads just the one field, not each service's full Config type) so this works for EVERY
+     *  service/Job — including one that hasn't declared `logLevel` in its own Config model yet. Best-effort:
+     *  a missing profile / unset field / fetch failure just leaves the current (env-var-seeded) level alone.
+     *  Called once at boot (`config()`, covers one-shot Jobs) and on an interval by `Daemon` (covers
+     *  long-running Service/Consumer processes picking up a CHANGE while already running). */
+    protected async refreshLogLevel() : Promise<void>
+    {
+        const got : Type.Result<Application.LogLevelConfig | undefined> = await this.appConfig.json<Application.LogLevelConfig>( "config", "settings" );
+        if( !got.ok || !got.data?.logLevel ) return;
+
+        const level : Trace.Level = Trace.parseLevel( got.data.logLevel );
+        if( level !== this.log.level() ) this.log.setLevel( level );
+    }
+
     /** KMS facade — encrypt/decrypt + envelope data keys. Common to all services + jobs. */
     protected get kms() : Kms { return this._kms ??= new Kms( this.cloud ); }
 
@@ -296,6 +314,7 @@ export class Application
     protected async config() : Promise<void>
     {
         await this.getConfig();
+        await this.refreshLogLevel();   // pick up a live `logLevel` override at boot (every Application kind)
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -346,6 +365,11 @@ export namespace Application
     export interface Config
     {
     }
+
+    /** The one field {@link Application.refreshLogLevel} looks for on a service's `config/settings` profile —
+     *  read loosely (not the service's full typed Config) so it works before that Config model formally
+     *  declares `logLevel` (SCHEMA/DEFAULT); a service that DOES declare it also gets Console editing. */
+    export interface LogLevelConfig { logLevel? : string; }
 
     // a subset of package.json fields; the index signature keeps any other fields accessible
     export interface PackageInfo

@@ -13,6 +13,7 @@ export class GetStudioCanvasImpl extends GetStudioCanvas
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: GetStudioCanvasImpl", { accountId: auth.accountId, id: this.query?.id } );
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
         const id : string = this.query?.id ?? "";
         if( !id ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "id required" } };

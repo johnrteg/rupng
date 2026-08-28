@@ -1,6 +1,7 @@
 //
 import { Application, Service, Ports, Register, Kafka } from "@repo/services";
-import { GetBootstrap } from "@repo/api";
+import { GetBootstrap, AppServiceConfig } from "@repo/api";
+import { Type } from "@repo/common";
 
 //
 // common app (BFF) server base — the domain base every concrete app role extends.
@@ -35,9 +36,14 @@ export class AppService extends Service
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
+    /** Seed the internal `settings` config (today just `logLevel`) on a fresh environment so the service
+     *  (and the Console Config tab) have usable defaults from first boot — distinct from the PUBLIC `web`
+     *  bootstrap blob, seeded separately by `AppPublicService`. */
     protected async init() : Promise<void>
     {
         super.init();
+        const seeded : Type.Result<AppServiceConfig.Config> = await this.appConfig.ensureSeeded( "config", "settings", AppServiceConfig.DEFAULT );
+        if( !seeded.ok ) this.log.warn( "app settings config seed failed — using DEFAULT until deployed", { error: seeded.error } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////

@@ -15,6 +15,7 @@ export class GetSvgAssetsImpl extends GetSvgAssets
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: GetSvgAssetsImpl", { accountId: auth.accountId } );
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
 
         const got : Type.Result<Array<SvgAsset.Summary>> = await this.svgAssets.list( auth.accountId );

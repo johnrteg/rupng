@@ -69,7 +69,8 @@ export namespace MediaPipeline
     /** Enqueue the scan stage for a freshly-uploaded envelope. */
     export async function enqueueScan( deps : MediaPipeline.Deps, accountId : string, guid : string ) : Promise<void>
     {
-        await deps.sqs.send( "media-scan", { accountId, guid } );
+        const queued : Type.Result<void> = await deps.sqs.send( "media-scan", { accountId, guid } );
+        if( queued.ok ) deps.log.trace( "message enqueued (SQS media-scan)", { accountId, guid } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////
@@ -124,7 +125,8 @@ export namespace MediaPipeline
             // fail-open: advance to processing but RECORD that it went through unscanned (visible in Info)
             const failOpenScan : Media.ScanResult = { clean: true, provider, failOpen: true, scannedAt };
             await deps.dynamo.put( TABLE, { ...asset, status: Media.Status.PROCESSING, scanThreat: undefined, scan: failOpenScan, modifiedAt: scannedAt } );
-            await deps.sqs.send( "media-process", { accountId, guid } );
+            const queued : Type.Result<void> = await deps.sqs.send( "media-process", { accountId, guid } );
+            if( queued.ok ) deps.log.trace( "message enqueued (SQS media-process)", { accountId, guid } );
             return;
         }
 
@@ -140,7 +142,8 @@ export namespace MediaPipeline
         // clean → record the clean result + advance to processing
         const cleanScan : Media.ScanResult = { clean: true, provider, engine: verdict.data.engine, scannedAt };
         await deps.dynamo.put( TABLE, { ...asset, status: Media.Status.PROCESSING, scanThreat: undefined, scan: cleanScan, modifiedAt: scannedAt } );
-        await deps.sqs.send( "media-process", { accountId, guid } );
+        const queued : Type.Result<void> = await deps.sqs.send( "media-process", { accountId, guid } );
+        if( queued.ok ) deps.log.trace( "message enqueued (SQS media-process)", { accountId, guid } );
         deps.log.info( "media.scan clean → processing", { accountId, guid, engine: verdict.data.engine } );
     }
 
@@ -148,14 +151,16 @@ export namespace MediaPipeline
     /** Enqueue the process stage for a NAMED profile (on-demand PLATFORM items) — profile rides in the body. */
     export async function enqueueProcess( deps : MediaPipeline.Deps, accountId : string, guid : string, profileName : string ) : Promise<void>
     {
-        await deps.sqs.send( "media-process", { accountId, guid, profile: profileName } );
+        const queued : Type.Result<void> = await deps.sqs.send( "media-process", { accountId, guid, profile: profileName } );
+        if( queued.ok ) deps.log.trace( "message enqueued (SQS media-process)", { accountId, guid, profile: profileName } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     /** Enqueue a metadata re-probe (the UI "rescan" action) — re-probes the ORIGINAL item's meta only. */
     export async function enqueueRescan( deps : MediaPipeline.Deps, accountId : string, guid : string ) : Promise<void>
     {
-        await deps.sqs.send( "media-process", { accountId, guid, rescan: true } );
+        const queued : Type.Result<void> = await deps.sqs.send( "media-process", { accountId, guid, rescan: true } );
+        if( queued.ok ) deps.log.trace( "message enqueued (SQS media-process)", { accountId, guid } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////

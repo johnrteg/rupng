@@ -20,6 +20,7 @@ import FolderZipOutlinedIcon      from '@mui/icons-material/FolderZipOutlined';
 import CompressOutlinedIcon       from '@mui/icons-material/CompressOutlined';
 import HighQualityOutlinedIcon    from '@mui/icons-material/HighQualityOutlined';
 import SubtitlesOutlinedIcon      from '@mui/icons-material/SubtitlesOutlined';
+import MovieFilterOutlinedIcon    from '@mui/icons-material/MovieFilterOutlined';
 import RecordVoiceOverOutlinedIcon from '@mui/icons-material/RecordVoiceOverOutlined';
 import MoreVertIcon               from '@mui/icons-material/MoreVert';
 import DeleteOutlineOutlinedIcon  from '@mui/icons-material/DeleteOutlineOutlined';
@@ -60,12 +61,16 @@ import MediaGridItem          from '@pages/media/MediaGridItem';
 import ItemVersionsDialog      from '@pages/media/dialogs/ItemVersionsDialog';
 import ItemInfoDialog          from '@pages/media/dialogs/ItemInfoDialog';
 import CopyAssetDialog         from '@pages/media/dialogs/CopyAssetDialog';
-import CaptionEditorDialog     from '@pages/media/dialogs/CaptionEditorDialog';
+import TranscriptEditorDialog  from '@pages/media/dialogs/transcript/TranscriptEditorDialog';
+import BurnCaptionsDialog      from '@pages/media/dialogs/transcript/BurnCaptionsDialog';
 import DensityDialog           from '@pages/media/dialogs/DensityDialog';
 import HelpButton from "../../widgets/core/HelpButton";
 
 // row-action ids (referenced by symbol, not retyped literals)
 enum AssetAction { PREVIEW = "preview", OPEN = "open", INFO = "info", EDIT = "edit", VARIANTS = "variants", REFRESH_VARIANTS = "refresh_variants", DENSITY = "density", POSTER = "poster", COMPRESS = "compress", TRANSCRIBE = "transcribe", EXTRACT_AUDIO = "extract_audio", RESCAN = "rescan", SCAN = "scan", COPY = "copy", CLONE_VOICE = "clone_voice", DOWNLOAD = "download", DOWNLOAD_ZIP = "download_zip", DELETE = "delete", MORE = "more" }
+
+// expanded-row item action ids — the per-item sub-table nested inside a row's expansion
+enum ItemAction { VIEW = "view", INFO = "info", OPEN = "open", DOWNLOAD = "download", CAPTION = "caption", BURN = "burn", VERSIONS = "versions" }
 
 // the four library view modes: the existing table + three image-grid sizes
 enum ViewMode { TABLE = "table", SMALL = "small", MEDIUM = "medium", LARGE = "large" }
@@ -150,6 +155,7 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
     const [previewItem,setPreviewItem]     = React.useState< { asset : Media.Asset; item : Media.Item } | null >( null );
     const [infoItem,setInfoItem]           = React.useState< { asset : Media.Asset; item : Media.Item } | null >( null );
     const [captionItem,setCaptionItem]     = React.useState< { asset : Media.Asset; item : Media.Item } | null >( null );
+    const [burnItem,setBurnItem]           = React.useState< { asset : Media.Asset; item : Media.Item } | null >( null );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     React.useEffect( () => void load(), [] );
@@ -254,8 +260,53 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // per-item action ids for the expanded item sub-table (gated by the item's own state, not a static list)
+    function itemActionsFor( ready : boolean, previewable : boolean, editableCaption : boolean ) : Array<string>
+    {
+        return [
+            ...( ready && previewable ? [ ItemAction.VIEW as string ] : [] ),
+            ItemAction.INFO,
+            ...( ready ? [ ItemAction.OPEN as string, ItemAction.DOWNLOAD as string ] : [] ),
+            ...( editableCaption ? [ ItemAction.CAPTION as string, ItemAction.BURN as string ] : [] ),
+            ItemAction.VERSIONS,
+        ];
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // item sub-table's "State" cell — the same Ready/Pending chip style the asset table uses
+    function itemStateRenderer( _col : TableInput.Column, row : TableInput.Row ) : JSX.Element
+    {
+        const ready : boolean = row.state === Media.Status.OK;
+        return <Chip size="small" variant="outlined" color={ ready ? "success" : "info" } label={ ready ? "Ready" : "Pending" } />;
+    }
+
+    // item sub-table config — Item/Dimensions/Size/Format/Version/State/Actions
+    const itemColumns : Array<TableInput.Column> =
+    [
+        { field: "item",       label: "Item",       type: TableInput.ColumnType.STRING, options: { noWrap: true } },
+        { field: "dimensions", label: "Dimensions", type: TableInput.ColumnType.STRING },
+        { field: "size",       label: "Size",       type: TableInput.ColumnType.BYTES },
+        { field: "format",     label: "Format",     type: TableInput.ColumnType.STRING },
+        { field: "version",    label: "Version",    type: TableInput.ColumnType.STRING },
+        { field: "state",      label: "State",      type: TableInput.ColumnType.CUSTOM, renderer: itemStateRenderer },
+        { field: "actions",    label: "",           type: TableInput.ColumnType.ACTION },
+    ];
+    const itemActionDefs : Array<TableInput.Action> =
+    [
+        { id: ItemAction.VIEW,     label: "View item",       icon: <VisibilityOutlinedIcon fontSize="small" /> },
+        { id: ItemAction.INFO,     label: "Item info",       icon: <InfoOutlinedIcon fontSize="small" /> },
+        { id: ItemAction.OPEN,     label: "Open in new tab", icon: <OpenInNewOutlinedIcon fontSize="small" /> },
+        { id: ItemAction.DOWNLOAD, label: "Download item",   icon: <DownloadOutlinedIcon fontSize="small" /> },
+        { id: ItemAction.CAPTION,  label: "Edit transcript", icon: <SubtitlesOutlinedIcon fontSize="small" /> },
+        { id: ItemAction.BURN,     label: "Burn into video", icon: <MovieFilterOutlinedIcon fontSize="small" /> },
+        { id: ItemAction.VERSIONS, label: "Version history", icon: <HistoryOutlinedIcon fontSize="small" /> },
+    ];
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // expanded row → the envelope's ITEMS (media-1.2): the ORIGINAL plus every derived item, each with its
-    // own metrics, per-item S3 version history/revert (media-1.4), open, and download.
+    // own metrics, per-item S3 version history/revert (media-1.4), open, and download — rendered as a nested
+    // TableInput (the house widget) rather than a hand-rolled CSS grid, so it inherits the same cell
+    // formatting/spacing as the outer asset table.
     function itemsRenderer( row : TableInput.Row ) : JSX.Element
     {
         const asset : Media.Asset | undefined = assets.find( ( entry ) => entry.guid === row.id );
@@ -265,42 +316,30 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
         // ORIGINAL first, then derived — the order the user reads the envelope
         const ordered : Array<Media.Item> = [ ...items ].sort( ( first, second ) =>
             ( first.usage === Media.Usage.ORIGINAL ? 0 : 1 ) - ( second.usage === Media.Usage.ORIGINAL ? 0 : 1 ) );
+        // map each item to a TableInput row, gating its action set by state/kind/usage
+        const itemRows : Array<TableInput.Row> = ordered.map( ( item ) =>
+        {
+            const ready : boolean = item.status === Media.Status.OK;
+            const previewable : boolean = item.kind === Media.Kind.IMAGE || item.kind === Media.Kind.VIDEO || item.kind === Media.Kind.AUDIO;
+            const editableCaption : boolean = item.usage === Media.Usage.TRANSCRIPT && ( item.profile === "srt" || item.profile === "vtt" );
+            return  {
+                        id:         item.id,
+                        item:       itemLabel( item ),
+                        dimensions: itemDimensions( item ),
+                        size:       item.size ?? 0,
+                        format:     item.extension || "—",
+                        version:    `v${ item.version }`,
+                        state:      item.status,
+                        actions:    itemActionsFor( ready, previewable, editableCaption ),
+                    };
+        } );
         return  <Box sx={{ p: 2 }}>
-                    <Box sx={{ display: "grid", gridTemplateColumns: "minmax(140px,1fr) auto auto auto auto auto auto", columnGap: 2, rowGap: 0.5, alignItems: "center" }}>
-                        {/* header */}
-                        <Typography variant="caption" sx={{ color: "text.secondary" }}>{"Item"}</Typography>
-                        <Typography variant="caption" sx={{ color: "text.secondary" }}>{"Dimensions"}</Typography>
-                        <Typography variant="caption" sx={{ color: "text.secondary" }}>{"Size"}</Typography>
-                        <Typography variant="caption" sx={{ color: "text.secondary" }}>{"Format"}</Typography>
-                        <Typography variant="caption" sx={{ color: "text.secondary" }}>{"Version"}</Typography>
-                        <Typography variant="caption" sx={{ color: "text.secondary" }}>{"State"}</Typography>
-                        <Box />
-                        {/* rows */}
-                        { ordered.map( ( item ) =>
-                        {
-                            const key : string = Media.itemKey( item.usage, item.profile );
-                            const ready : boolean = item.status === Media.Status.OK;
-                            const previewable : boolean = item.kind === Media.Kind.IMAGE || item.kind === Media.Kind.VIDEO || item.kind === Media.Kind.AUDIO;
-                            const editableCaption : boolean = item.usage === Media.Usage.TRANSCRIPT && ( item.profile === "srt" || item.profile === "vtt" );
-                            return  <React.Fragment key={ item.id }>
-                                        <Typography variant="body2" noWrap>{ itemLabel( item ) }</Typography>
-                                        <Typography variant="body2">{ itemDimensions( item ) }</Typography>
-                                        <Typography variant="body2">{ item.size ? appmodel.ui.locale.bytes( item.size ) : "—" }</Typography>
-                                        <Typography variant="body2">{ item.extension || "—" }</Typography>
-                                        <Typography variant="body2" sx={{ color: "text.secondary" }}>{ `v${ item.version }` }</Typography>
-                                        <Chip size="small" variant="outlined" color={ ready ? "success" : "info" } label={ ready ? "Ready" : "Pending" } />
-                                        <Stack direction="row" spacing={ 0.5 }>
-                                            <ButtonIcon id={ `view-${ row.id }-${ key }` } icon={ <VisibilityOutlinedIcon fontSize="small" /> } label={"View item"} size="small" disabled={ !ready || !previewable } onClick={ () => setPreviewItem( { asset, item } ) } />
-                                            <ButtonIcon id={ `info-${ row.id }-${ key }` } icon={ <InfoOutlinedIcon fontSize="small" /> } label={"Item info"} size="small" onClick={ () => setInfoItem( { asset, item } ) } />
-                                            <ButtonIcon id={ `open-${ row.id }-${ key }` } icon={ <OpenInNewOutlinedIcon fontSize="small" /> } label={"Open in new tab"} size="small" disabled={ !ready } onClick={ () => void openItem( asset, key ) } />
-                                            <ButtonIcon id={ `dl-${ row.id }-${ key }` } icon={ <DownloadOutlinedIcon fontSize="small" /> } label={"Download item"} size="small" disabled={ !ready } onClick={ () => void downloadItem( asset, item ) } />
-                                            { editableCaption &&
-                                                <ButtonIcon id={ `cap-${ row.id }-${ key }` } icon={ <SubtitlesOutlinedIcon fontSize="small" /> } label={"Edit captions"} size="small" onClick={ () => setCaptionItem( { asset, item } ) } /> }
-                                            <ButtonIcon id={ `ver-${ row.id }-${ key }` } icon={ <HistoryOutlinedIcon fontSize="small" /> } label={"Version history"} size="small" onClick={ () => setVersionsFor( { asset, item } ) } />
-                                        </Stack>
-                                    </React.Fragment>;
-                        } ) }
-                    </Box>
+                    <TableInput id={ `media-items-${ row.id }` }
+                                dense
+                                columns={ itemColumns }
+                                data={ itemRows }
+                                actions={ itemActionDefs }
+                                onAction={ ( action : string, itemRow : TableInput.Row ) : void => onItemAction( asset, action, itemRow ) } />
                 </Box>;
     }
 
@@ -348,6 +387,24 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // dispatch an expanded item-row action (View/Info/Open/Download/Edit transcript/Burn/Version history)
+    function onItemAction( asset : Media.Asset, action : string, row : TableInput.Row ) : void
+    {
+        const item : Media.Item | undefined = asset.items?.find( ( entry ) => entry.id === row.id );
+        if( !item ) return;
+        switch( action )
+        {
+            case ItemAction.VIEW:     setPreviewItem( { asset, item } ); break;
+            case ItemAction.INFO:     setInfoItem( { asset, item } ); break;
+            case ItemAction.OPEN:     void openItem( asset, Media.itemKey( item.usage, item.profile ) ); break;
+            case ItemAction.DOWNLOAD: void downloadItem( asset, item ); break;
+            case ItemAction.CAPTION:  setCaptionItem( { asset, item } ); break;
+            case ItemAction.BURN:     setBurnItem( { asset, item } ); break;
+            case ItemAction.VERSIONS: setVersionsFor( { asset, item } ); break;
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // the alert-prompt action: on YES run the mutation (snack + reload on success); any action dismisses
     async function onConfirmAction( action : AlertPrompt.Action ) : Promise<void>
     {
@@ -379,11 +436,20 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // captions saved → report to the editor (true closes it) + snack + reload
+    // transcript saved → report to the editor (true closes it) + snack + reload
     function onCaptionSaved( ok : boolean ) : boolean
     {
-        if( ok ) { setSnack( { message: "Captions saved.", severity: "success" } ); setCaptionItem( null ); void load(); }
-        else setSnack( { message: "Could not save the captions. Please try again.", severity: "error" } );
+        if( ok ) { setSnack( { message: "Transcript saved.", severity: "success" } ); setCaptionItem( null ); void load(); }
+        else setSnack( { message: "Could not save the transcript. Please try again.", severity: "error" } );
+        return ok;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // caption burn queued → report to the dialog (true closes it) + snack (the captioned variant appears async)
+    function onCaptionsBurned( ok : boolean ) : boolean
+    {
+        if( ok ) { setSnack( { message: "Burning captions into a new video variant — check back shortly.", severity: "success" } ); setBurnItem( null ); void load(); }
+        else setSnack( { message: "Could not start the caption burn. Please try again.", severity: "error" } );
         return ok;
     }
 
@@ -757,9 +823,14 @@ export function MediaLibrary( props : MediaLibrary.Props ) : JSX.Element
                     <ItemInfoDialog asset={ infoItem.asset } item={ infoItem.item } onClose={ () => setInfoItem( null ) } /> }
 
                 { captionItem &&
-                    <CaptionEditorDialog asset={ captionItem.asset } item={ captionItem.item }
-                                         onSaved={ onCaptionSaved }
-                                         onClose={ () => setCaptionItem( null ) } /> }
+                    <TranscriptEditorDialog asset={ captionItem.asset } item={ captionItem.item }
+                                            onSaved={ onCaptionSaved }
+                                            onClose={ () => setCaptionItem( null ) } /> }
+
+                { burnItem &&
+                    <BurnCaptionsDialog asset={ burnItem.asset } item={ burnItem.item }
+                                        onQueued={ onCaptionsBurned }
+                                        onClose={ () => setBurnItem( null ) } /> }
 
                 { versionsFor &&
                     <ItemVersionsDialog asset={ versionsFor.asset } item={ versionsFor.item }

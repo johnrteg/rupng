@@ -27,3 +27,13 @@ export function envVarName( kind : ResourceKind, key : ResourceKey ) : string
 {
     return [ kind, key ].join( "_" ).replace( /[^A-Za-z0-9]+/g, "_" ).toUpperCase();
 }
+
+/**
+ * Environment-variable name for a `uses: [{ kind: SERVICE, ... }]` reference's internal ALB URL —
+ * e.g. "marketplace" -> "MARKETPLACE_INTERNAL_URL". Scoped by the FOREIGN service name (not this
+ * service's own resource keys, unlike `envVarName`), since a service may `use` several siblings.
+ */
+export function internalUrlEnvVar( service : string ) : string
+{
+    return `${ service.replace( /[^A-Za-z0-9]+/g, "_" ).toUpperCase() }_INTERNAL_URL`;
+}

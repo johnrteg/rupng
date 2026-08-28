@@ -14,6 +14,7 @@ export class PostAssetExtractAudioImpl extends PostAssetExtractAudio
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: PostAssetExtractAudioImpl", { userId: auth.userId, accountId: auth.accountId, guid: this.query?.guid } );
         if( !auth.userId )    return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
         if( !this.query.guid ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "guid required" } };

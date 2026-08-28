@@ -13,6 +13,7 @@ export class PostVoiceCloneImpl extends PostVoiceClone
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: PostVoiceCloneImpl", { userId: auth.userId, accountId: auth.accountId } );
         if( !auth.userId )    return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
         const body : PostVoiceClone.Body | null = this.body;

@@ -16,6 +16,7 @@ export class PutSvgCanvasImpl extends PutSvgCanvas
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: PutSvgCanvasImpl", { userId: auth.userId, accountId: auth.accountId } );
         if( !auth.userId )    return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
 

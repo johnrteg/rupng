@@ -66,6 +66,7 @@ export namespace Media
         PLATFORM   = "platform",     // a platform-specific rendition (profile = instagram/tiktok/youtube/…)
         GENERATED  = "generated",    // an AI-generated derivative within the envelope (e.g. image → AI video)
         RENDER     = "render",       // a Studio-produced output (profile = lowres/highres/…)
+        CAPTIONED  = "captioned",    // a burned-in-caption VIDEO variant (profile identifies the transcript source + version)
         AVATAR     = "avatar",       // a square, cropped profile-photo rendition (profile = xl/lg/md/sm/xs)
     }
 
@@ -374,6 +375,7 @@ export namespace Media
             { usage: Usage.COMPRESSED, multi: true }, { usage: Usage.AUDIO, multi: false },
             { usage: Usage.TRANSCRIPT, multi: false }, { usage: Usage.POSTER, multi: false },
             { usage: Usage.PLATFORM, multi: true }, { usage: Usage.GENERATED, multi: true },
+            { usage: Usage.CAPTIONED, multi: true },
         ],
         [ Kind.AUDIO ]: [
             { usage: Usage.TRANSCRIPT, multi: false }, { usage: Usage.COMPRESSED, multi: true },

@@ -26,7 +26,7 @@ export const manifest : ResourceManifest =
                 launchType      : LaunchType.FARGATE,
                 containerPort   : Ports.FAKE_EMAIL.MAIN,
                 healthCheckPath : "/health",
-                environment     : { SERVICE_ROLE: "main" },
+                environment     : { SERVICE_ROLE: "main", LOG_LEVEL: "info" },
                 sizing          : { default: { cpu: 1, memory: 2 } },
                 autoscaling     : { default: { min: 1, max: 1, start: 1, targetCpuPercent: 80 } },
                 loadBalancer    : { public: false },

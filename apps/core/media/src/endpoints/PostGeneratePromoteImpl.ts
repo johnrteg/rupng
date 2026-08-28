@@ -14,6 +14,7 @@ export class PostGeneratePromoteImpl extends PostGeneratePromote
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: PostGeneratePromoteImpl", { userId: auth.userId, accountId: auth.accountId, batchId: this.query?.batchId } );
         if( !auth.userId )    return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
         if( !this.query.batchId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "batchId required" } };

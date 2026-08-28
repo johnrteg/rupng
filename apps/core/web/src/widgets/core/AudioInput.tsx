@@ -34,6 +34,17 @@ export function AudioInput( props : AudioInput.Props ) : JSX.Element
     ////////////////////////////////////////////////////////////////////////////////////////////
     // reset playback state whenever the source changes (a reused player must not keep the old position)
     React.useEffect( () : void => { setPlaying( false ); setCurrent( 0 ); setDuration( 0 ); }, [ props.value ] );
+    React.useEffect( seekRequested, [ props.seekNonce ] );
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // an external caller (e.g. a transcript line editor) asked to seek — `seekNonce` bumps on EVERY request
+    // (even to the same `seekTo`) so re-selecting the same line still seeks
+    function seekRequested() : void
+    {
+        if( props.seekNonce === undefined || props.seekTo === undefined ) return;
+        if( audioRef.current ) audioRef.current.currentTime = props.seekTo;
+        setCurrent( props.seekTo );
+    }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // format a seconds count as MM:SS (a NaN/negative duration shows 0:00)
@@ -63,10 +74,13 @@ export function AudioInput( props : AudioInput.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // <audio> playback progressed → track the current position for the slider + played time
+    // <audio> playback progressed → track the current position for the slider + played time, and report it to
+    // the parent (e.g. to highlight the active transcript line)
     function onTimeUpdate() : void
     {
-        if( audioRef.current ) setCurrent( audioRef.current.currentTime );
+        if( !audioRef.current ) return;
+        setCurrent( audioRef.current.currentTime );
+        if( props.onTimeUpdate ) props.onTimeUpdate( audioRef.current.currentTime );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -151,6 +165,9 @@ export namespace AudioInput
         width?     : number | string;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         sx?        : any;
+        onTimeUpdate? : ( time : number ) => void;   // native playback position, in seconds
+        seekTo?       : number;                      // seconds offset to seek to (paired with `seekNonce`)
+        seekNonce?    : number;                      // bump on every seek request, even to the same `seekTo`
     }
 }
 

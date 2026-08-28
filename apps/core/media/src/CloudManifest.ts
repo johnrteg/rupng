@@ -38,7 +38,7 @@ export const manifest : ResourceManifest =
                 launchType      : LaunchType.FARGATE,
                 containerPort   : Ports.MEDIA.MAIN,
                 healthCheckPath : "/health",
-                environment     : { SERVICE_ROLE: "main" },
+                environment     : { SERVICE_ROLE: "main", LOG_LEVEL: "trace" },
                 sizing          : { default: { cpu: 1, memory: 2 }, production: { cpu: 2, memory: 4 } },
                 autoscaling     : { default: { min: 1, max: 2, start: 1, targetCpuPercent: 60 },
                                     production: { min: 2, max: 6, start: 2, targetCpuPercent: 60 } },
@@ -51,7 +51,7 @@ export const manifest : ResourceManifest =
                 launchType      : LaunchType.FARGATE,
                 containerPort   : Ports.MEDIA.BROWSE,
                 healthCheckPath : "/health",
-                environment     : { SERVICE_ROLE: "browse" },
+                environment     : { SERVICE_ROLE: "browse", LOG_LEVEL: "info" },
                 sizing          : { default: { cpu: 1, memory: 2 }, production: { cpu: 2, memory: 4 } },
                 autoscaling     : { default: { min: 1, max: 2, start: 1, targetCpuPercent: 60 },
                                     production: { min: 2, max: 6, start: 2, targetCpuPercent: 60 } },
@@ -64,7 +64,7 @@ export const manifest : ResourceManifest =
                 launchType      : LaunchType.FARGATE,
                 containerPort   : Ports.MEDIA.STUDIO,
                 healthCheckPath : "/health",
-                environment     : { SERVICE_ROLE: "studio" },
+                environment     : { SERVICE_ROLE: "studio", LOG_LEVEL: "info" },
                 sizing          : { default: { cpu: 1, memory: 2 }, production: { cpu: 2, memory: 4 } },
                 autoscaling     : { default: { min: 1, max: 2, start: 1, targetCpuPercent: 60 },
                                     production: { min: 2, max: 4, start: 1, targetCpuPercent: 60 } },
@@ -187,6 +187,7 @@ export const manifest : ResourceManifest =
             { key: "media-transcribe", maxReceiveCount: 3, dlq: true, visibilityTimeoutSec: 600 },   // audio extract + speech-to-text
             { key: "media-archive",    maxReceiveCount: 3, dlq: true, visibilityTimeoutSec: 300 },   // zip original + variants for download
             { key: "media-video",      maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 900 },   // video compression (ffmpeg CRF ladder, media-10.10)
+            { key: "media-caption-burn", maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 900 },   // burn transcript captions onto a video (ffmpeg drawtext, media-2x)
             { key: "studio-render",    maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 900 },   // Studio video render — ffmpeg composite of the timeline → mp4 (media-21)
             { key: "studio-render-remotion", maxReceiveCount: 2, dlq: true, visibilityTimeoutSec: 1800 },   // Studio video render — Remotion/Chromium exact-fidelity render (media-21.18); longer timeout (heavier)
             // SVG editor export render (SVG_EDITOR_SPEC §10) — compile SvgDocument → SVG → PNG/PDF/JPEG via

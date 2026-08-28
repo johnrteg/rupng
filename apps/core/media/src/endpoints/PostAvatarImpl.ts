@@ -15,6 +15,7 @@ export class PostAvatarImpl extends PostAvatar
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: PostAvatarImpl", { userId: auth.userId, accountId: auth.accountId, guid: this.body?.guid } );
         if( !auth.userId )   return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
         const accountId : string | undefined = auth.accountId;
         if( !accountId )     return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
@@ -38,6 +39,7 @@ export class PostAvatarImpl extends PostAvatar
 
         // enqueue the (re)process — a media Job crops + resizes to the square avatar sizes (best-effort emit)
         const queued : Type.Result<void> = await this.service.sqs.send( "media-process", { accountId, guid } );
+        if( queued.ok ) this.service.log.trace( "message enqueued (SQS media-process)", { accountId, guid } );
         void this.service.assetUpdated( asset, auth.userId );
         return { status: NetworkUtils.Status.OK, data: { guid, queued: queued.ok } };
     }

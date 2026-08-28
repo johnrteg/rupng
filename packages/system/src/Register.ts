@@ -32,6 +32,7 @@ export namespace Register
         MEDIA        = "media",
         LINKS        = "links",
         COLLAB       = "collab",
+        REALTIME     = "realtime",   // Kafka -> browser WebSocket push bridge (see apps/core/realtime/SPECS.md)
         REPORT       = "report",
         MONITOR      = "monitor",
         AUDIT        = "audit",

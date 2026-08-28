@@ -18,6 +18,7 @@ export class PostAssetDensityImpl extends PostAssetDensity
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: PostAssetDensityImpl", { userId: auth.userId, accountId: auth.accountId, guid: this.query?.guid, density: this.body?.density } );
         if( !auth.userId )   return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
         const accountId : string | undefined = auth.accountId;
         if( !accountId )     return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
@@ -42,6 +43,7 @@ export class PostAssetDensityImpl extends PostAssetDensity
         // runs MediaProcessJob) — MediaPipeline.densify renders + merges the density item
         const queued : Type.Result<void> = await this.service.sqs.send( "media-process", { accountId, guid, density: densityKey } );
         if( !queued.ok ) { this.service.log.warn( "density enqueue failed — media-process queue send", { guid, densityKey, error: queued.error } ); return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "could not queue the density render" } }; }
+        this.service.log.trace( "message enqueued (SQS media-process)", { accountId, guid, density: densityKey } );
         void this.service.assetUpdated( asset, auth.userId );   // media.asset updated (density requested; best-effort)
 
         return { status: NetworkUtils.Status.ACCEPTED, data: { asset } };

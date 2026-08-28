@@ -15,6 +15,7 @@ export class GetSvgTemplatesImpl extends GetSvgTemplates
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: GetSvgTemplatesImpl", { accountId: auth.accountId, category: this.query?.category } );
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
 
         const category : SvgTemplate.Category | null = this.query?.category ?? null;

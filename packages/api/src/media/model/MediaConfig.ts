@@ -8,6 +8,7 @@
 //
 import { Media } from "./Media";
 import { Validation } from "../../model/Validation";
+import { LogLevel } from "../../model/LogLevel";
 
 export namespace MediaConfig
 {
@@ -122,6 +123,7 @@ export namespace MediaConfig
         videoTargets : Record<string, VideoTarget>;   // named compression targets (media-10.10)
         densities    : Record<string, DensityTarget>;  // named DPI targets for image density variants (media-4)
         render       : Render;                          // Studio video-render engine selection (media-21.18)
+        logLevel?    : LogLevel;                        // minimum log verbosity — applied live, no redeploy (Application.refreshLogLevel)
     }
 
     // ── Schema + validator (shared: service / web / Console) ────────────────────────────────────
@@ -209,6 +211,8 @@ export namespace MediaConfig
                 type: "object", additionalProperties: false, required: [ "engine" ],
                 properties: { engine: { type: "string", enum: Object.values( RenderEngine ) } },
             },
+            // minimum log verbosity — optional so older configs tolerate drift (withDefaults fills it)
+            logLevel: { type: "string", enum: Object.values( LogLevel ) },
         },
     };
 
@@ -246,6 +250,7 @@ export namespace MediaConfig
             "print": { label: "Print (300 dpi)", dpi: 300, upscale: true },
         },
         render: { engine: RenderEngine.FFMPEG },      // ffmpeg by default; switch to remotion for exact-fidelity Chromium renders (media-21.18)
+        logLevel: LogLevel.INFO,                      // verbose (trace) logging is opt-in per environment
     };
 }
 

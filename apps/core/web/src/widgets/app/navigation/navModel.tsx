@@ -84,7 +84,7 @@ export namespace navModel
                     [
                         { id: "tools.shortener", label: "URL Shortener", route: "/tools/url-shortener" },
                         { id: "tools.workflows", label: "Workflows",     route: "/tools/workflows" },
-                        { id: "tools.monitor",   label: "Monitor",       route: "/tools/monitor" },
+                        { id: "tools.monitor",   label: "Monitor",       route: "/tools/monitor", minRole: Access.AppRole.SUPPORT },
                     ] },
                 { id: "marketplace",   label: "Marketplace",   icon: <StorefrontOutlinedIcon />, children:
                     [

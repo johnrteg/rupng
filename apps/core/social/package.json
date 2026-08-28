@@ -1,0 +1,27 @@
+{
+    "name": "social",
+    "version": "1.0.0",
+    "private": true,
+    "main": "./bin/index.js",
+    "exports": {
+        ".": "./bin/index.js",
+        "./manifest": "./src/CloudManifest.ts"
+    },
+    "scripts": {
+        "build": "rup-bundle",
+        "dev": "tsx watch src/index.ts",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@repo/api": "*",
+        "@repo/common": "*",
+        "@repo/endpoint": "*",
+        "@repo/services": "*"
+    },
+    "devDependencies": {
+        "@repo/build": "*",
+        "@repo/tsconfig": "*",
+        "@types/node": "26.0.0",
+        "tsx": "4.22.4"
+    }
+}

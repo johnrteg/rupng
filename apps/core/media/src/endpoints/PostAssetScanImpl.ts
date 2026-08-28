@@ -19,6 +19,7 @@ export class PostAssetScanImpl extends PostAssetScan
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: PostAssetScanImpl", { userId: auth.userId, accountId: auth.accountId, guid: this.query?.guid } );
         if( !auth.userId )   return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
         const accountId : string | undefined = auth.accountId;
         if( !accountId )     return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
@@ -43,6 +44,7 @@ export class PostAssetScanImpl extends PostAssetScan
 
         const queued : Type.Result<void> = await this.service.sqs.send( "media-scan", { accountId, guid } );
         if( !queued.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "could not start the scan" } };
+        this.service.log.trace( "message enqueued (SQS media-scan)", { accountId, guid } );
         void this.service.assetUpdated( scanning, auth.userId );   // media.asset updated (best-effort)
 
         return { status: NetworkUtils.Status.ACCEPTED, data: { asset: scanning } };

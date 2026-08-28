@@ -5,7 +5,7 @@ import { Application, Service, Ports, Register, Dynamo, S3, Sqs, Kafka, Secrets,
 import { Ai, AiFactory } from "@repo/ai";
 import { RestfulEndpoint, Access } from "@repo/endpoint";
 import { Events } from "@repo/system";
-import { Media, MediaConfig, AiRouting, AiGen, StudioProject } from "@repo/api";
+import { Media, MediaConfig, AiRouting, AiGen, StudioProject, Captions } from "@repo/api";
 import { FileUtils, ObjectUtils, ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 
@@ -77,6 +77,7 @@ export class MediaService extends Service
             sinks:      [ Events.Sink.KAFKA ],
         } );
         if( !published.ok ) this.log.warn( "media.asset event publish failed", { guid: asset.guid, verb, error: published.error } );
+        else this.log.trace( "media.asset event published", { guid: asset.guid, verb } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
@@ -102,6 +103,7 @@ export class MediaService extends Service
             sinks:      [ Events.Sink.KAFKA ],
         } );
         if( !published.ok ) this.log.warn( "media.job stage event publish failed", { guid, job, stage, error: published.error } );
+        else this.log.trace( "media.job stage event published", { guid, job, stage } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
@@ -179,6 +181,7 @@ export class MediaService extends Service
         };
         const queued : Type.Result<void> = await this.sqs.send( "media-generate", job );
         if( !queued.ok ) { this.log.warn( "generate enqueue failed — media-generate queue send", { batchId, error: queued.error } ); return { status: 500 }; }
+        this.log.trace( "message enqueued (SQS media-generate)", { accountId, batchId } );
 
         const pending : Array<AiGen.Pending> = staged.map( ( candidate : MediaService.StagingCandidate ) : AiGen.Pending => ( { id: candidate.id, kind: candidate.kind } ) );
         return { status: 202, response: { batchId, candidates: pending, provider: client.provider, model: client.model } };
@@ -388,6 +391,7 @@ export class MediaService extends Service
         void this.emitJobStage( accountId, guid, "transcribe", Events.JobStage.QUEUED, { userId: auth.userId } );
         const queued : Type.Result<void> = await this.sqs.send( "media-transcribe", { accountId, guid, userId: auth.userId, op: "transcribe" } );
         if( !queued.ok ) { this.log.warn( "transcribe enqueue failed — media-transcribe queue send", { guid, error: queued.error } ); return { status: 500 }; }
+        this.log.trace( "message enqueued (SQS media-transcribe)", { accountId, guid } );
         this.log.info( "transcribe queued", { guid } );
         return { status: 202 };
     }
@@ -408,6 +412,7 @@ export class MediaService extends Service
         void this.emitJobStage( accountId, guid, "extract-audio", Events.JobStage.QUEUED, { userId: auth.userId } );
         const queued : Type.Result<void> = await this.sqs.send( "media-transcribe", { accountId, guid, userId: auth.userId, op: "extract" } );
         if( !queued.ok ) { this.log.warn( "extract-audio enqueue failed — media-transcribe queue send", { guid, error: queued.error } ); return { status: 500 }; }
+        this.log.trace( "message enqueued (SQS media-transcribe)", { accountId, guid } );
         this.log.info( "extract-audio queued", { guid } );
         return { status: 202 };
     }
@@ -511,6 +516,117 @@ export class MediaService extends Service
         void this.assetUpdated( updated, userId );
         this.log.info( "transcribe complete", { guid, segments: reply.segments.length, captions: reply.segments.length > 0 } );
         void this.emitJobStage( accountId, guid, "transcribe", Events.JobStage.COMPLETED, { userId } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** ENQUEUE a caption burn-in (media-2x): validate the asset is a VIDEO and the named item is a `.srt`/`.vtt`
+     *  TRANSCRIPT item, then enqueue a `media-caption-burn` job. The heavy work (ffmpeg drawtext overlay) runs
+     *  in the Job. `{ status }` for the impl; 409 when the asset/item can't be burned. */
+    public async enqueueBurnCaptions( auth : RestfulEndpoint.Authentication, guid : string, transcriptItem : string, style : StudioProject.TextStyle | undefined, position : "top" | "bottom" | undefined, fontPct : number | undefined ) : Promise<{ status : number }>
+    {
+        const accountId : string | undefined = auth.accountId;
+        if( !accountId ) return { status: 400 };
+        const got : Type.Result<Media.Asset | undefined> = await this.dynamo.get<Media.Asset>( "media", { accountId, guid } );
+        if( !got.ok ) { this.log.warn( "burn-captions enqueue failed — media read", { guid, error: got.error } ); return { status: 500 }; }
+        if( !got.data ) return { status: 404 };
+        if( got.data.kind !== Media.Kind.VIDEO ) return { status: 409 };   // only a video can have captions burned onto it
+
+        const item : Media.Item | undefined = got.data.items.find( ( candidate : Media.Item ) : boolean => Media.itemKey( candidate.usage, candidate.profile ) === transcriptItem );
+        if( !item || item.usage !== Media.Usage.TRANSCRIPT || ( item.extension !== "srt" && item.extension !== "vtt" ) ) return { status: 409 };   // not a caption item
+
+        void this.emitJobStage( accountId, guid, "burn-captions", Events.JobStage.QUEUED, { userId: auth.userId } );
+        const queued : Type.Result<void> = await this.sqs.send( "media-caption-burn", { accountId, guid, userId: auth.userId, transcriptItem, style, position, fontPct } );
+        if( !queued.ok ) { this.log.warn( "burn-captions enqueue failed — media-caption-burn queue send", { guid, error: queued.error } ); return { status: 500 }; }
+        this.log.trace( "message enqueued (SQS media-caption-burn)", { accountId, guid, transcriptItem } );
+        this.log.info( "burn-captions queued", { guid, transcriptItem } );
+        return { status: 202 };
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    /** WORKER (media-caption-burn): burn a transcript's timed lines onto its source VIDEO via the SAME ffmpeg
+     *  compositor Studio's render uses (`MediaAnalyzer.renderComposite`) — one full-duration video layer + one
+     *  `drawtext` layer per timed line. Segments are read FRESH off the caption item's CURRENT bytes at run
+     *  time (never stale — always whatever was last saved), and the saved result is stamped with the exact
+     *  transcript item + version burned. Saves a NEW `Usage.CAPTIONED` item on the SAME asset (never a new
+     *  asset). Emits `media.job` stage events. */
+    public async runBurnCaptions( accountId : string, guid : string, transcriptItem : string, style? : StudioProject.TextStyle, position? : "top" | "bottom", fontPct? : number, userId? : string ) : Promise<void>
+    {
+        this.log.info( "burn-captions started", { guid, transcriptItem } );
+        void this.emitJobStage( accountId, guid, "burn-captions", Events.JobStage.STARTED, { userId } );
+        // FAIL both surfaces the reason in the media log AND emits the Kafka stage
+        const fail = ( message : string ) : void =>
+        {
+            this.log.warn( "burn-captions failed", { guid, message } );
+            void this.emitJobStage( accountId, guid, "burn-captions", Events.JobStage.FAILED, { message, userId } );
+        };
+
+        // load the asset + resolve the source video and the transcript item being burned
+        const got : Type.Result<Media.Asset | undefined> = await this.dynamo.get<Media.Asset>( "media", { accountId, guid } );
+        if( !got.ok || !got.data ) { fail( "asset missing" ); return; }
+        const asset : Media.Asset = got.data;
+        const original : Media.Item | undefined = Media.originalItem( asset );
+        if( !original || original.kind !== Media.Kind.VIDEO ) { fail( "not a video" ); return; }
+        const captionItem : Media.Item | undefined = asset.items.find( ( candidate : Media.Item ) : boolean => Media.itemKey( candidate.usage, candidate.profile ) === transcriptItem );
+        if( !captionItem ) { fail( "transcript item not found" ); return; }
+
+        const durationSec : number | undefined = original.meta?.video?.durationSec;
+        if( !durationSec ) { fail( "source video duration unknown" ); return; }
+        const width  : number = original.meta?.video?.width  ?? 1920;
+        const height : number = original.meta?.video?.height ?? 1080;
+        const fps    : number = original.meta?.video?.frameRate ?? 30;
+
+        // read the transcript item's CURRENT text bytes → timed segments
+        void this.emitJobStage( accountId, guid, "burn-captions", Events.JobStage.RUNNING, { progress: 15, message: "reading transcript", userId } );
+        const captionObject : Type.Result<{ Body? : { transformToByteArray() : Promise<Uint8Array> } }> = await this.s3.get( "media", MediaPipeline.itemKey( asset, captionItem ) );
+        if( !captionObject.ok || !captionObject.data.Body ) { fail( "transcript bytes unavailable" ); return; }
+        const captionBytes : Uint8Array = await captionObject.data.Body.transformToByteArray();
+        const segments : Array<Media.TranscriptSegment> = Captions.parse( Buffer.from( captionBytes ).toString( "utf-8" ), captionItem.extension );
+        if( segments.length === 0 ) { fail( "transcript has no timed lines" ); return; }
+
+        // read the ORIGINAL video's bytes
+        void this.emitJobStage( accountId, guid, "burn-captions", Events.JobStage.RUNNING, { progress: 30, message: "reading source video", userId } );
+        const videoObject : Type.Result<{ Body? : { transformToByteArray() : Promise<Uint8Array> } }> = await this.s3.get( "media", MediaPipeline.itemKey( asset, original ) );
+        if( !videoObject.ok || !videoObject.data.Body ) { fail( "source video bytes unavailable" ); return; }
+        const videoBytes : Uint8Array = await videoObject.data.Body.transformToByteArray();
+
+        // one full-duration media layer (the untrimmed source video) + one drawtext layer per timed line,
+        // placed at the caption bar (top/bottom per the request, else the shared CAPTION_GEOMETRY default)
+        const yPct : number = position === "top" ? 0.08 : StudioProject.CAPTION_GEOMETRY.yPct;
+        const resolvedFontPct : number = fontPct ?? StudioProject.CAPTION_GEOMETRY.fontPct;
+        const media : Array<MediaAnalyzer.CompositeMediaLayer> =
+        [
+            { kind: "video", bytes: videoBytes, ext: original.extension, startSec: 0, durationSec, hasAudio: Boolean( original.meta?.video?.audioCodec ) },
+        ];
+        const texts : Array<MediaAnalyzer.CompositeTextLayer> = segments.map( ( segment : Media.TranscriptSegment ) : MediaAnalyzer.CompositeTextLayer =>
+            ( { text: segment.text, startSec: segment.start, durationSec: Math.max( 0.1, segment.end - segment.start ),
+                xPct: StudioProject.CAPTION_GEOMETRY.xPct, yPct, fontPct: resolvedFontPct, align: StudioProject.CAPTION_GEOMETRY.align,
+                style: style ?? StudioProject.CAPTION_STYLE } ) );
+
+        // composite via the SAME ffmpeg overlay graph Studio's render uses
+        void this.emitJobStage( accountId, guid, "burn-captions", Events.JobStage.RUNNING, { progress: 50, message: "rendering", userId } );
+        const encodeQuality : { crf : number; preset : string } = StudioProject.VIDEO_QUALITY[ StudioProject.VideoQuality.STANDARD ];
+        const out : Uint8Array | null = await MediaAnalyzer.renderComposite( width, height, fps, durationSec, media, texts, undefined, encodeQuality );
+        if( out === null ) { fail( "render produced no output" ); return; }
+
+        // save the burned mp4 as a NEW item on the SAME asset — `profile` ties it to the exact transcript item
+        // + version burned; `derivation.params` carries the full provenance (item id, key, version, style)
+        const now : string = new Date().toISOString();
+        const profile : string = `${ transcriptItem.replace( ".", "-" ) }-v${ captionItem.version }`;
+        const burnedItem : Media.Item = {
+            id: randomUUID(), usage: Media.Usage.CAPTIONED, profile, kind: Media.Kind.VIDEO, mime: "video/mp4", extension: "mp4",
+            size: out.length, version: 1, status: Media.Status.OK, createdAt: now, modifiedAt: now,
+            derivation: { job: "burn-captions", sourceItemId: original.id, producedAt: now,
+                          params: { transcriptItemId: captionItem.id, transcriptItem, transcriptVersion: captionItem.version, style, position } },
+        };
+        const put : Type.Result<void> = await this.s3.put( "media", MediaPipeline.itemKey( asset, burnedItem ), Buffer.from( out ), "video/mp4" );
+        burnedItem.status = put.ok ? Media.Status.OK : Media.Status.FAILED;
+        const updated : Media.Asset = { ...asset, items: Media.upsertItems( asset.items, burnedItem ), modifiedAt: now };
+        const wrote : Type.Result<void> = await this.dynamo.put( "media", { ...updated } );
+        if( !wrote.ok ) { fail( "could not save the captioned variant" ); return; }
+
+        void this.assetUpdated( updated, userId );
+        this.log.info( "burn-captions complete", { guid, profile } );
+        void this.emitJobStage( accountId, guid, "burn-captions", Events.JobStage.COMPLETED, { progress: 100, message: "saved to library", userId } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
@@ -665,6 +781,7 @@ export class MediaService extends Service
             void this.assetCreated( asset, auth.userId );
             const queued : Type.Result<void> = await this.sqs.send( "media-scan", { accountId, guid } );
             if( !queued.ok ) this.log.warn( "promote — media-scan send failed", { guid, error: queued.error } );
+            else this.log.trace( "message enqueued (SQS media-scan)", { accountId, guid } );
             created.push( { guid, name: assetName } );
         }
 
@@ -732,6 +849,7 @@ export class MediaService extends Service
             void this.emitJobStage( accountId, archiveId, "archive", Events.JobStage.QUEUED, { userId: auth.userId } );
             const queued : Type.Result<void> = await this.sqs.send( "media-archive", { accountId, archiveId, userId: auth.userId } );
             if( !queued.ok ) { this.log.warn( "archive enqueue failed — media-archive queue send", { guid, archiveId, error: queued.error } ); return { status: 500, reason: `media-archive queue send failed: ${ String( queued.error ) }` }; }
+            this.log.trace( "message enqueued (SQS media-archive)", { accountId, archiveId } );
 
             this.log.info( "archive queued", { guid, archiveId } );
             return { status: 202, archiveId };
@@ -926,7 +1044,8 @@ export class MediaService extends Service
         if( !config.videoTargets[ target ] ) return { status: 400 };
 
         void this.emitJobStage( accountId, guid, "compress", Events.JobStage.QUEUED, { message: target, userId: auth.userId } );
-        await this.sqs.send( "media-video", { accountId, guid, target, userId: auth.userId } );
+        const queued : Type.Result<void> = await this.sqs.send( "media-video", { accountId, guid, target, userId: auth.userId } );
+        if( queued.ok ) this.log.trace( "message enqueued (SQS media-video)", { accountId, guid, target } );
         return { status: 202 };
     }
 
@@ -1071,7 +1190,9 @@ export class MediaService extends Service
         // fast) or remotion (headless Chromium, exact preview==output). Switchable without a redeploy.
         const config : MediaConfig.Config = await this.mediaConfig();
         const queue : string = config.render.engine === MediaConfig.RenderEngine.REMOTION ? "studio-render-remotion" : "studio-render";
-        return this.sqs.send( queue, { accountId, projectId, userId } );
+        const queued : Type.Result<void> = await this.sqs.send( queue, { accountId, projectId, userId } );
+        if( queued.ok ) this.log.trace( `message enqueued (SQS ${ queue })`, { accountId, projectId } );
+        return queued;
     }
 
     /** Refresh every clip's (and the watermark's) `src` to a FRESH, long-lived signed GET url, keyed off its

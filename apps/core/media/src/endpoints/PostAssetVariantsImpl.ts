@@ -19,6 +19,7 @@ export class PostAssetVariantsImpl extends PostAssetVariants
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: PostAssetVariantsImpl", { userId: auth.userId, accountId: auth.accountId, guid: this.query?.guid, profile: this.body?.profile } );
         if( !auth.userId )   return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
         const accountId : string | undefined = auth.accountId;
         if( !accountId )     return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
@@ -50,6 +51,7 @@ export class PostAssetVariantsImpl extends PostAssetVariants
         {
             const queued : Type.Result<void> = await this.service.sqs.send( "media-process", { accountId, guid, profile: target } );
             if( !queued.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "could not queue variant generation" } };
+            this.service.log.trace( "message enqueued (SQS media-process)", { accountId, guid, profile: target } );
         }
         void this.service.assetUpdated( asset, auth.userId );   // media.asset updated (variants requested; best-effort)
 

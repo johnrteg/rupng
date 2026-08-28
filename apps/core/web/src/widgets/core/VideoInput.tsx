@@ -13,11 +13,28 @@ export function VideoInput( props: VideoInput.Props ) : JSX.Element
     const videoRef = React.useRef<HTMLVideoElement>(null);
 
     React.useEffect( valueChanged, [props.value] );
+    React.useEffect( seekRequested, [props.seekNonce] );
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     function valueChanged() : void
     {
         if( props.value !== url )setUrl( props.value );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // an external caller (e.g. a transcript line editor) asked to seek — `seekNonce` bumps on EVERY request
+    // (even to the same `seekTo`) so re-selecting the same line still seeks
+    function seekRequested() : void
+    {
+        if( props.seekNonce === undefined || props.seekTo === undefined ) return;
+        if( videoRef.current ) videoRef.current.currentTime = props.seekTo;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // report native playback position to the parent (e.g. to highlight the active transcript line)
+    function onNativeTimeUpdate() : void
+    {
+        if( props.onTimeUpdate && videoRef.current ) props.onTimeUpdate( videoRef.current.currentTime );
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -56,6 +73,7 @@ export function VideoInput( props: VideoInput.Props ) : JSX.Element
                 ...(props.sx || {})
             }}
             onClick={ onClick }
+            onTimeUpdate={ onNativeTimeUpdate }
         >
             <source src={ url } type={"video/mp4"} />
         </video>;  
@@ -74,6 +92,9 @@ export namespace VideoInput
         width?          : number | string;
         sx?             : any;
         onClick?        : () => void;
+        onTimeUpdate?   : ( time : number ) => void;   // native playback position, in seconds
+        seekTo?         : number;                      // seconds offset to seek to (paired with `seekNonce`)
+        seekNonce?      : number;                      // bump on every seek request, even to the same `seekTo`
     }
 }
 

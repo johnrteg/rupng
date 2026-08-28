@@ -81,6 +81,9 @@ export class AccountService
             // tell the server which account we're acting in (X-Account) so it resolves the role for THIS
             // account on every request (the JWT is identity-only).
             this.appmodel.server.setHeader( "X-Account", account.accountId );
+            // (re)open the realtime push socket scoped to the acting account — the realtime service filters
+            // every pushed event to this account, so switching accounts must reconnect, not just relabel
+            this.appmodel.ws.setAccountId( account.accountId );
             // cache the acting account's brand palette for app-wide color pickers (best-effort, async)
             void this.loadPalette();
         }

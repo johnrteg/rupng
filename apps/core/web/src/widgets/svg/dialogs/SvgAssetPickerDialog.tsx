@@ -27,7 +27,7 @@ export function SvgAssetPickerDialog( props : SvgAssetPickerDialog.Props ) : JSX
 {
     const appmodel : AppModel = AppModel.instance();
 
-    const [ tab, setTab ]   = React.useState<"library" | "browse" | "file">( "library" );
+    const [ tab, setTab ]   = React.useState<SvgAssetPickerDialog.Tab>( SvgAssetPickerDialog.Tab.LIBRARY );
     const [ busy, setBusy ] = React.useState<boolean>( false );   // importing / resolving
 
     const [ librarySelected, setLibrarySelected ] = React.useState<SvgAssetPickerDialog.LibraryTile | null>( null );
@@ -213,17 +213,17 @@ export function SvgAssetPickerDialog( props : SvgAssetPickerDialog.Props ) : JSX
     return <DialogWindow id="svg-asset-picker" title={"Choose SVG"} minWidth="md" yesLabel={"Use"} cancelLabel={"Cancel"}
                          ready={ librarySelected !== null || browseSelected !== null || fileSelected !== null } onYes={ onUse } onClose={ props.onClose }>
         <Box sx={{ p: 2 }}>
-            <Tabs value={ tab } onChange={ ( _event : React.SyntheticEvent, value : "library" | "browse" | "file" ) : void => setTab( value ) } sx={{ mb: 2 }}>
-                <Tab value="library" label="My Library" />
-                <Tab value="browse" label="Browse" />
-                <Tab value="file" label="Import file" />
+            <Tabs value={ tab } onChange={ ( _event : React.SyntheticEvent, value : SvgAssetPickerDialog.Tab ) : void => setTab( value ) } sx={{ mb: 2 }}>
+                <Tab value={ SvgAssetPickerDialog.Tab.LIBRARY } label="My Library" />
+                <Tab value={ SvgAssetPickerDialog.Tab.BROWSE } label="Browse" />
+                <Tab value={ SvgAssetPickerDialog.Tab.FILE } label="Import file" />
             </Tabs>
 
             { busy && <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}><CircularProgress size={ 16 } /><Typography variant="caption">{"Preparing…"}</Typography></Box> }
             { error !== "" && <Typography variant="body2" sx={{ color: "error.main" }}>{ error }</Typography> }
 
             {/* My Library */}
-            { tab === "library" && (
+            { tab === SvgAssetPickerDialog.Tab.LIBRARY && (
                 loadingLib
                     ? <CircularProgress size={ 20 } />
                     : assets.length === 0
@@ -234,7 +234,7 @@ export function SvgAssetPickerDialog( props : SvgAssetPickerDialog.Props ) : JSX
                           </Box> ) }
 
             {/* Browse */}
-            { tab === "browse" && <Stack spacing={ 2 }>
+            { tab === SvgAssetPickerDialog.Tab.BROWSE && <Stack spacing={ 2 }>
                 <Stack direction="row" spacing={ 1 } sx={{ alignItems: "flex-end" }}>
                     <Box sx={{ flexGrow: 1 }}><TextInput id="svg-browse-q" label={"Search icons & logos"} value={ query } onChange={ setQuery } fullWidth /></Box>
                     <Button variant="contained" disabled={ searching } onClick={ () : void => void runSearch() }>{ searching ? "Searching…" : "Search" }</Button>
@@ -248,7 +248,7 @@ export function SvgAssetPickerDialog( props : SvgAssetPickerDialog.Props ) : JSX
             </Stack> }
 
             {/* Import file */}
-            { tab === "file" && <Stack spacing={ 2 }>
+            { tab === SvgAssetPickerDialog.Tab.FILE && <Stack spacing={ 2 }>
                 <Button component="label" variant="outlined" startIcon={ <UploadFileOutlinedIcon /> } sx={{ alignSelf: "flex-start" }}>
                     {"Choose an SVG file"}
                     <input type="file" accept=".svg,image/svg+xml" hidden onChange={ ( event : React.ChangeEvent<HTMLInputElement> ) : void => void onFileChosen( event ) } />
@@ -265,6 +265,14 @@ export function SvgAssetPickerDialog( props : SvgAssetPickerDialog.Props ) : JSX
 
 export namespace SvgAssetPickerDialog
 {
+    /** The dialog's three source tabs. */
+    export enum Tab
+    {
+        LIBRARY = "library",
+        BROWSE  = "browse",
+        FILE    = "file",
+    }
+
     /** A picked SVG — the sanitized markup + a display name.
      *  `assetId` is a general reuse/dedupe key, set for any library-backed pick (My Library / Browse import) —
      *  it may be an svg-assets row id OR a Media.Asset guid, so it must NEVER be treated as a Media.Asset guid

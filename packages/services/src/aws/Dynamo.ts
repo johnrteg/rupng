@@ -2,7 +2,8 @@
 // DynamoDB facade — item CRUD + query over the ergonomic DocumentClient (plain JS objects,
 // no AttributeValue marshalling), keyed by cloud-manifest LOGICAL table keys.
 //
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient, DescribeTableCommand } from "@aws-sdk/client-dynamodb";
+import type { DescribeTableCommandOutput, TableDescription } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { QueryCommandInput, GetCommandOutput, QueryCommandOutput, UpdateCommandOutput } from "@aws-sdk/lib-dynamodb";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
@@ -28,6 +29,7 @@ import { ClientUtils } from "./ClientUtils";
 export class Dynamo
 {
     private _doc? : DynamoDBDocumentClient;
+    private _raw? : DynamoDBClient;
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     /** @param cloud the owning service's resolver — maps logical table keys to physical names. */
@@ -46,6 +48,23 @@ export class Dynamo
     ///////////////////////////////////////////////////////////////////////////////////////////
     /** Resolve a cloud-manifest logical table key (e.g. `"contacts"`) to its physical table name. */
     table( key : ResourceKey ) : string { return this.cloud.tableName( key ); }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Describe a table by its EXPLICIT physical name (not a logical key) — the escape hatch for
+     * inspecting a table this service doesn't own (e.g. `monitor` reading item count/size/status
+     * for a dashboard widget). Item count and table size are CloudWatch-derived and updated by
+     * AWS roughly every 6 hours — a coarse signal, fine for a health tile, not a live counter.
+     */
+    describeTable( tableName : string ) : Promise<Type.Result<TableDescription | undefined>>
+    {
+        return ResultUtils.from( async () : Promise<TableDescription | undefined> =>
+        {
+            this._raw ??= ClientUtils.createClient( DynamoDBClient );
+            const result : DescribeTableCommandOutput = await this._raw.send( new DescribeTableCommand( { TableName: tableName } ) );
+            return result.Table;
+        } );
+    }
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     /**

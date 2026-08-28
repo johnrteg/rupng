@@ -13,6 +13,7 @@ export class GetArchivesImpl extends GetArchives
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: GetArchivesImpl", { accountId: auth.accountId } );
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
         const archives : Array<Media.Archive> = await this.service.listArchives( auth.accountId );
         return { status: NetworkUtils.Status.OK, data: { archives } };

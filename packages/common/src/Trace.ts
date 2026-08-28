@@ -24,6 +24,19 @@ export class Trace
         Trace.contextProvider = provider;
     }
 
+    /** The currently-effective minimum level (for change detection before calling {@link setLevel}). */
+    public level() : Trace.Level
+    {
+        return this.minLevel;
+    }
+
+    /** Change the minimum level a running instance logs at — lets an operator raise/lower verbosity
+     *  (e.g. from a live AppConfig read, see `Application.refreshLogLevel`) without restarting the process. */
+    public setLevel( level : Trace.Level ) : void
+    {
+        this.minLevel = level;
+    }
+
     ///////////////////////////////////////////////////////////////////////
     constructor( name : string, id : string, minLevel : Trace.Level = Trace.Level.INFO )
     {

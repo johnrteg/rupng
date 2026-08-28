@@ -8,10 +8,14 @@ import Typography from "@mui/material/Typography";
 import Chip from "@mui/material/Chip";
 import Tooltip from "@mui/material/Tooltip";
 import CircularProgress from "@mui/material/CircularProgress";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import ToggleButton from "@mui/material/ToggleButton";
 import { alpha } from "@mui/material/styles";
 import SaveIcon from "@mui/icons-material/Save";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import DataObjectIcon from "@mui/icons-material/DataObject";
+import TuneIcon from "@mui/icons-material/Tune";
+import CodeIcon from "@mui/icons-material/Code";
 
 import { ConfigSchema, MediaConfig } from "@repo/api";
 
@@ -20,9 +24,39 @@ import { TargetKind } from "../../shared/types";
 import { api } from "../api";
 import { MONO } from "../theme";
 import { JsonEditor } from "./JsonEditor";
+import { MediaConfigForm } from "./mediaConfig/MediaConfigForm";
+import { EmailConfigForm } from "./emailConfig/EmailConfigForm";
+import { SocialConfigForm } from "./socialConfig/SocialConfigForm";
+import { MonitorConfigForm } from "./monitorConfig/MonitorConfigForm";
+import { AccountConfigForm } from "./accountConfig/AccountConfigForm";
+import { AuthConfigForm } from "./authConfig/AuthConfigForm";
+import { AppBootstrapForm } from "./appConfig/AppBootstrapForm";
+import { AppServiceConfigForm } from "./appServiceConfig/AppServiceConfigForm";
 
 // Indentation used everywhere this panel pretty-prints (load + the Format button) — keep them in sync.
 const JSON_INDENT : number = 2;
+
+/** Which surface edits the profile's content — the raw JSON text, or a service's smart form. */
+type EditorMode = "json" | "smart";
+
+/** Shared props every smart (form-based) config editor takes — the SAME `content` string the JSON editor
+ *  edits, so ConfigPanel can swap which one renders without splitting the source of truth. */
+interface SmartEditorProps { content : string; onChange : ( content : string ) => void; readOnly : boolean; }
+
+/** service name → profile key → its smart editor component. Most services have exactly one profile
+ *  (`"settings"`); `app` has two (`"web"` and `"settings"`), each with its OWN smart editor. Add an entry
+ *  here when a new service/profile gets one — see CLAUDE.md's "Models & closed sets" note on keeping a
+ *  Config model's smart editor (AND its ConfigSchema.ts registration) in sync. */
+const SMART_EDITORS : Record<string, Record<string, React.ComponentType<SmartEditorProps>>> =
+{
+    media:   { settings: MediaConfigForm },
+    email:   { settings: EmailConfigForm },
+    social:  { settings: SocialConfigForm },
+    monitor: { settings: MonitorConfigForm },
+    account: { settings: AccountConfigForm },
+    auth:    { settings: AuthConfigForm },
+    app:     { web: AppBootstrapForm, settings: AppServiceConfigForm },
+};
 
 /** Pretty-print JSON content; non-JSON (or unparseable) content is returned unchanged. */
 function prettyJson( raw : string, contentType : string ) : string
@@ -62,6 +96,7 @@ export function ConfigPanel( { service } : { service : string } )
     const [ msg, setMsg ]           = useState<{ kind : "ok" | "err"; text : string } | null>( null );
 
     const [ targetInfo, setTargetInfo ] = useState<TargetInfo | null>( null );
+    const [ editorMode, setEditorMode ] = useState<EditorMode>( "json" );
 
     // current target (localstack vs real aws) → read-only flag + chip
     useEffect( () => { void api.targetGet().then( setTargetInfo ); }, [] );
@@ -79,8 +114,10 @@ export function ConfigPanel( { service } : { service : string } )
             if ( !active ) return;
             setTree( configTree );
             setLoadingTree( false );
-            // default selections: prefer the "settings" profile, then "default" env
-            const firstProfile : string = ( configTree.profiles.find( ( profile ) => profile.name === "settings" ) ?? configTree.profiles[ 0 ] )?.id ?? "";
+            // default selections: prefer this service's registered editable profile (usually "settings",
+            // but e.g. "web" for app — see ConfigSchema.profileFor), then "default" env
+            const preferredProfile : string = ConfigSchema.profileFor( service );
+            const firstProfile : string = ( configTree.profiles.find( ( profile ) => profile.name === preferredProfile ) ?? configTree.profiles[ 0 ] )?.id ?? "";
             const firstEnv : string = ( configTree.environments.find( ( environment ) => environment.name === "default" ) ?? configTree.environments[ 0 ] )?.id ?? "";
             setProfileId( firstProfile );
             setEnvId( firstEnv );
@@ -126,12 +163,13 @@ export function ConfigPanel( { service } : { service : string } )
     const profiles : ServiceConfigTree[ "profiles" ] = tree?.profiles ?? [];
     const environments : ServiceConfigTree[ "environments" ] = tree?.environments ?? [];
 
-    // The schema only applies to the service's `settings` profile (the typed config). Other profiles
-    // (feature flags, etc.) are edited as plain JSON. Comes from @repo/api so it's the SAME contract the
-    // service validates against.
+    // The schema applies to WHICHEVER of a service's profiles is currently selected, if that (service,
+    // profile) pair is registered (most services register only "settings"; app registers BOTH "web" and
+    // "settings"). Other profiles (feature flags, etc.) are edited as plain JSON. Comes from @repo/api so
+    // it's the SAME contract the service validates against.
     const profileName : string = profiles.find( ( profile ) => profile.id === profileId )?.name ?? "";
     const schema : object | undefined = useMemo<object | undefined>(
-        () => ( profileName === "settings" ? ConfigSchema.forService( service ) : undefined ),
+        () => ConfigSchema.forService( service, profileName ),
         [ profileName, service ],
     );
 
@@ -140,7 +178,7 @@ export function ConfigPanel( { service } : { service : string } )
     const schemaIssues : Array<string> = useMemo<Array<string>>( () =>
     {
         if ( !schema || jsonError || content.trim() === "" ) return [];
-        const validator = ConfigSchema.validatorFor( service );
+        const validator = ConfigSchema.validatorFor( service, profileName );
         if ( !validator ) return [];
         try
         {
@@ -148,13 +186,23 @@ export function ConfigPanel( { service } : { service : string } )
             return validation.valid ? [] : validation.issues.map( ( issue ) => `${issue.path || "(root)"}: ${issue.message}` );
         }
         catch { return []; }
-    }, [ schema, service, content, jsonError ] );
+    }, [ schema, service, profileName, content, jsonError ] );
 
-    // ── Malware-scan engine picker (media `settings` only) ─────────────────────────────────────────
+    // ── Smart editor gate ────────────────────────────────────────────────────────────────────────────
+    // The toggle between the raw JSON editor and a field-by-field smart form is only offered when the
+    // CURRENTLY SELECTED (service, profile) pair has one registered in SMART_EDITORS.
+    const SmartEditor : React.ComponentType<SmartEditorProps> | undefined = SMART_EDITORS[ service ]?.[ profileName ];
+    const hasSmartEditor : boolean = !!SmartEditor && contentType.includes( "json" );
+
+    // fall back to the JSON editor whenever the smart editor no longer applies (switched service/profile)
+    useEffect( () => { if ( !hasSmartEditor ) setEditorMode( "json" ); }, [ hasSmartEditor ] );
+
+    // ── Malware-scan engine quick-picker (media `settings`, JSON mode only) ─────────────────────────
     // A typed dropdown over the settings profile's `scan.provider`, so an operator doesn't have to hand-edit
-    // the JSON to switch engines. It reads from + writes to the SAME JSON content (single source of truth) —
-    // shown only for the media service's `settings` profile.
-    const isScanConfig : boolean = service === "media" && profileName === "settings" && contentType.includes( "json" );
+    // the JSON to switch engines. It reads from + writes to the SAME JSON content (single source of truth).
+    // The smart editor's own Scan section supersedes this, so it's shown only in JSON mode.
+    const isMediaSettings : boolean = service === "media" && profileName === "settings" && contentType.includes( "json" );
+    const isScanConfig : boolean = isMediaSettings && editorMode === "json";
 
     // the current scan.provider parsed out of the editor content (empty when the JSON doesn't parse)
     const scanProvider : string = useMemo<string>( () =>
@@ -248,6 +296,16 @@ export function ConfigPanel( { service } : { service : string } )
 
                 <Box sx={{ flexGrow: 1 }} />
 
+                {hasSmartEditor && (
+                    <ToggleButtonGroup
+                        size="small" exclusive value={editorMode}
+                        onChange={( _event : React.MouseEvent<HTMLElement>, next : EditorMode | null ) => { if ( next ) setEditorMode( next ); }}
+                    >
+                        <ToggleButton value="smart"><TuneIcon fontSize="small" sx={{ mr: 0.5 }} />Smart</ToggleButton>
+                        <ToggleButton value="json"><CodeIcon fontSize="small" sx={{ mr: 0.5 }} />JSON</ToggleButton>
+                    </ToggleButtonGroup>
+                )}
+
                 <Tooltip title={readOnly ? "Real AWS account — editing disabled (switch target to LocalStack in Monitor)" : "Current AWS target"}>
                     <Chip size="small" variant="outlined" color={readOnly ? "warning" : "default"} label={targetChip()} sx={{ fontFamily: MONO }} />
                 </Tooltip>
@@ -305,12 +363,9 @@ export function ConfigPanel( { service } : { service : string } )
                         <CircularProgress size={18} />
                     </Box>
                 )}
-                <JsonEditor
-                    value={content}
-                    onChange={setContent}
-                    readOnly={readOnly}
-                    schema={schema}
-                />
+                {hasSmartEditor && editorMode === "smart" && SmartEditor
+                    ? <SmartEditor content={content} onChange={setContent} readOnly={readOnly} />
+                    : <JsonEditor value={content} onChange={setContent} readOnly={readOnly} schema={schema} />}
             </Box>
         </Box>
     );

@@ -19,9 +19,15 @@ import type { Register } from '@repo/system';
 export abstract class Daemon extends Application
 {
     private shuttingDown : boolean = false;
+    private logLevelTimer? : ReturnType<typeof setInterval>;
 
     // max time to wait for aboutToQuit() before forcing the process to exit
     private static readonly SHUTDOWN_TIMEOUT_MS : number = 10_000;
+
+    // how often a long-running process re-checks its `config/settings` profile's `logLevel` — a one-shot
+    // Job already gets a fresh read every invocation (Application.config()); a Daemon stays up, so it needs
+    // its own poll to pick up an operator's change WITHOUT waiting for a restart.
+    private static readonly LOG_LEVEL_REFRESH_MS : number = 30_000;
 
     ////////////////////////////////////////////////////////////////////////
     constructor( service : Register.Service, qualifier ? : string )
@@ -43,6 +49,16 @@ export abstract class Daemon extends Application
     {
         await super.init();
         this.registerSignals();
+        this.startLogLevelRefresh();
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // poll for a live `logLevel` change on an interval — `.unref()` so the timer never keeps the process alive
+    // on its own (shutdown still proceeds on SIGINT/SIGTERM with nothing else pending).
+    private startLogLevelRefresh() : void
+    {
+        this.logLevelTimer = setInterval( () => { void this.refreshLogLevel(); }, Daemon.LOG_LEVEL_REFRESH_MS );
+        this.logLevelTimer.unref();
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -127,6 +143,7 @@ export abstract class Daemon extends Application
     protected async aboutToQuit() : Promise<void>
     {
         await super.aboutToQuit();
+        if( this.logLevelTimer ) clearInterval( this.logLevelTimer );
     }
 }
 

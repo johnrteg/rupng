@@ -16,6 +16,7 @@ export class GetDensitiesImpl extends GetDensities
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: GetDensitiesImpl", { userId: auth.userId } );
         if( !auth.userId ) return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
 
         const config : MediaConfig.Config = await this.service.mediaConfig();

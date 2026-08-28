@@ -3,6 +3,7 @@
 export { Validation } from './model/Validation';
 export { Paging } from './model/Paging';   // platform-wide list paging envelope + helper
 export { ConfigSchema } from './model/ConfigSchema';
+export { LogLevel } from './model/LogLevel';   // dynamic (no-redeploy) log-level closed set for a `config/settings` profile
 
 // AI — platform-shared routing policy (modality → provider); keys are platform Secrets, not here
 export { AiRouting } from './ai/model/AiRouting';
@@ -17,6 +18,7 @@ export { default as GetBootstrap } from './app/GetBootstrap';
 export { default as GetOpenApi } from './app/GetOpenApi';
 export { default as GetArticle } from './app/GetArticle';
 export { PasswordPolicy } from './app/model/PasswordPolicy';
+export { AppServiceConfig } from './app/model/AppServiceConfig';
 
 // docs — the published-API OpenAPI 3.1 registry + generator (single source; in-app docs + readme.io sync)
 export { PublicApi } from './docs/PublicApi';
@@ -74,6 +76,7 @@ export { default as GetEmailLog } from './email/GetEmailLog';
 
 // media — model (shared: index record + variants) then endpoints
 export { Media } from './media/model/Media';
+export { Captions } from './media/model/Captions';         // shared .srt/.vtt parse + serialize (editor + caption burn-in)
 export { MediaConfig } from './media/model/MediaConfig';   // service runtime config (AppConfig settings)
 export { Browse } from './media/model/Browse';             // Browse marketplace normalized vocabulary
 export { BrowseConfig } from './media/model/BrowseConfig'; // Browse runtime policy (AppConfig settings)
@@ -132,6 +135,7 @@ export { default as GetGenerateBatch } from './media/GetGenerateBatch';
 export { default as PostGeneratePromote } from './media/PostGeneratePromote';
 export { default as DeleteGenerateBatch } from './media/DeleteGenerateBatch';
 export { default as PostAssetTranscribe } from './media/PostAssetTranscribe';
+export { default as PostAssetBurnCaptions } from './media/PostAssetBurnCaptions';
 export { default as PostAssetExtractAudio } from './media/PostAssetExtractAudio';
 export { default as PostAssetCompress } from './media/PostAssetCompress';
 export { default as PostVoiceClone } from './media/PostVoiceClone';
@@ -232,3 +236,64 @@ export { default as GetCampaign } from './campaign/GetCampaign';
 export { default as PostCampaign } from './campaign/PostCampaign';
 export { default as PatchCampaign } from './campaign/PatchCampaign';
 export { default as DeleteCampaign } from './campaign/DeleteCampaign';
+
+// marketplace — model (catalog / installation / credential vault) then S2S internal endpoints
+export { Marketplace } from './marketplace/model/Marketplace';
+export { default as PostInstallation } from './marketplace/PostInstallation';
+export { default as GetInstallationToken } from './marketplace/GetInstallationToken';
+export { default as DeleteInstallation } from './marketplace/DeleteInstallation';
+export { default as GetCatalog } from './marketplace/GetCatalog';
+export { default as GetCatalogItem } from './marketplace/GetCatalogItem';
+export { default as PostCatalog } from './marketplace/PostCatalog';
+export { default as PatchCatalog } from './marketplace/PatchCatalog';
+export { default as GetInstallations } from './marketplace/GetInstallations';
+export { default as GetInstallation } from './marketplace/GetInstallation';
+export { default as PostInstallationEnable } from './marketplace/PostInstallationEnable';
+export { default as PatchInstallation } from './marketplace/PatchInstallation';
+export { default as PostInstallationPause } from './marketplace/PostInstallationPause';
+export { default as PostInstallationResume } from './marketplace/PostInstallationResume';
+export { default as PostInstallationConnect } from './marketplace/PostInstallationConnect';
+export { default as PostInstallationReauth } from './marketplace/PostInstallationReauth';
+export { default as UninstallInstallation } from './marketplace/UninstallInstallation';
+export { default as GetInstallationHealth } from './marketplace/GetInstallationHealth';
+export { default as PostInstallationHealthCheck } from './marketplace/PostInstallationHealthCheck';
+export { default as PostInternalUsage } from './marketplace/PostInternalUsage';
+export { default as GetUsage } from './marketplace/GetUsage';
+export { default as GetInstallationUsage } from './marketplace/GetInstallationUsage';
+export { default as PostInternalAction } from './marketplace/PostInternalAction';
+
+// social — model (connected destinations, posts, service config) then endpoints
+export { SocialAccount } from './social/model/SocialAccount';
+export { SocialPost } from './social/model/SocialPost';
+export { SocialInbound } from './social/model/SocialInbound';
+export { SocialConfig } from './social/model/SocialConfig';
+export { default as GetConnections } from './social/GetConnections';
+export { default as PostConnection } from './social/PostConnection';
+export { default as DeleteConnection } from './social/DeleteConnection';
+export { default as GetPosts } from './social/GetPosts';
+export { default as PostPost } from './social/PostPost';
+export { default as GetPost } from './social/GetPost';
+export { default as DeletePost } from './social/DeletePost';
+export { default as GetPostRenditions } from './social/GetPostRenditions';
+export { default as PostPostPublish } from './social/PostPostPublish';
+export { default as GetSocialConfig } from './social/GetSocialConfig';
+export { default as PutSocialConfig } from './social/PutSocialConfig';
+export { default as GetInbox } from './social/GetInbox';
+export { default as PatchInboxItem } from './social/PatchInboxItem';
+export { default as PostInboxRefresh } from './social/PostInboxRefresh';
+export { default as PostPostSubmit } from './social/PostPostSubmit';
+export { default as PostPostApproval } from './social/PostPostApproval';
+export { default as GetPostComments } from './social/GetPostComments';
+export { default as PostPostComment } from './social/PostPostComment';
+export { default as PatchPostComment } from './social/PatchPostComment';
+export { default as GetPostAudit } from './social/GetPostAudit';
+export { default as PostSocialWebhook } from './social/PostSocialWebhook';
+export { default as PostSocialDataDeletion } from './social/PostSocialDataDeletion';
+
+// monitor — model (dashboard widget config, live widget status) then endpoints
+export { MonitorConfig } from './monitor/model/MonitorConfig';
+export { MonitorWidgetStatus } from './monitor/model/MonitorWidgetStatus';
+export { default as GetMonitorWidgets } from './monitor/GetMonitorWidgets';
+export { default as GetMonitorWidgetData } from './monitor/GetMonitorWidgetData';
+export { default as GetMonitorConfig } from './monitor/GetMonitorConfig';
+export { default as PutMonitorConfig } from './monitor/PutMonitorConfig';

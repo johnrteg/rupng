@@ -13,6 +13,7 @@ export class DeleteArchiveImpl extends DeleteArchive
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: DeleteArchiveImpl", { userId: auth.userId, accountId: auth.accountId, archiveId: this.query?.archiveId } );
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
         if( !this.query.archiveId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "archiveId required" } };
         const deleted : boolean = await this.service.deleteArchive( auth.accountId, this.query.archiveId );

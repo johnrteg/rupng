@@ -15,6 +15,7 @@ export class GetSvgRenderJobImpl extends GetSvgRenderJob
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: GetSvgRenderJobImpl", { accountId: auth.accountId, jobId: this.query?.jobId } );
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
         const jobId : string = this.query?.jobId ?? "";
         if( !jobId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "jobId required" } };

@@ -77,7 +77,7 @@ export const manifest : ResourceManifest =
                 launchType      : LaunchType.FARGATE,
                 containerPort   : Ports.APP.MAIN,             // same constant AppService.PORT[main] uses — can't drift
                 healthCheckPath : "/health",
-                environment     : { SERVICE_ROLE: "main" },
+                environment     : { SERVICE_ROLE: "main", LOG_LEVEL: "info" },
                 sizing          : { default: { cpu: 1, memory: 2 },
                                     production: { cpu: 4, memory: 5 } },
                 autoscaling     : { default: { min: 1, max: 2, start: 1, targetCpuPercent: 60 },
@@ -89,7 +89,7 @@ export const manifest : ResourceManifest =
                 launchType      : LaunchType.FARGATE,
                 containerPort   : Ports.APP.PUBLIC,           // same constant AppService.PORT[public] uses — can't drift
                 healthCheckPath : "/health",
-                environment     : { SERVICE_ROLE: "public" },
+                environment     : { SERVICE_ROLE: "public", LOG_LEVEL: "info" },
                 sizing          : { default: { cpu: 1, memory: 2 },
                                     production: { cpu: 4, memory: 5 } },
                 autoscaling     : { default: { min: 1, max: 2, start: 1, targetCpuPercent: 60 },

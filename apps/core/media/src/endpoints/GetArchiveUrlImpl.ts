@@ -13,6 +13,7 @@ export class GetArchiveUrlImpl extends GetArchiveUrl
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: GetArchiveUrlImpl", { accountId: auth.accountId, archiveId: this.query?.archiveId } );
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
         if( !this.query.archiveId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "archiveId required" } };
         const url : string | null = await this.service.archiveUrl( auth.accountId, this.query.archiveId );

@@ -30,7 +30,7 @@ export const manifest : ResourceManifest =
                 launchType      : LaunchType.FARGATE,
                 containerPort   : Ports.CAMPAIGN.MAIN,
                 healthCheckPath : "/health",
-                environment     : { SERVICE_ROLE: "main" },
+                environment     : { SERVICE_ROLE: "main", LOG_LEVEL: "info" },
                 sizing          : { default: { cpu: 1, memory: 2 }, production: { cpu: 2, memory: 4 } },
                 autoscaling     : { default: { min: 1, max: 2, start: 1, targetCpuPercent: 60 },
                                     production: { min: 2, max: 6, start: 2, targetCpuPercent: 60 } },

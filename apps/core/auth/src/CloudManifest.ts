@@ -35,7 +35,7 @@ export const manifest : ResourceManifest =
                 launchType      : LaunchType.FARGATE,
                 containerPort   : Ports.AUTH.READER,          // same constant AuthService.PORT[reader] uses — can't drift
                 healthCheckPath : "/health",
-                environment     : { SERVICE_ROLE: "reader" },
+                environment     : { SERVICE_ROLE: "reader", LOG_LEVEL: "info" },
                 sizing          : { default: { cpu: 1, memory: 2 },
                                     production: { cpu: 2, memory: 4 } },
                 autoscaling     : { default: { min: 1, max: 2, start: 1, targetCpuPercent: 60 },
@@ -47,7 +47,7 @@ export const manifest : ResourceManifest =
                 launchType      : LaunchType.FARGATE,
                 containerPort   : Ports.AUTH.WRITER,          // same constant AuthService.PORT[writer] uses — can't drift
                 healthCheckPath : "/health",
-                environment     : { SERVICE_ROLE: "writer" },
+                environment     : { SERVICE_ROLE: "writer", LOG_LEVEL: "info" },
                 sizing          : { default: { cpu: 1, memory: 2 },
                                     production: { cpu: 2, memory: 4 } },
                 autoscaling     : { default: { min: 1, max: 2, start: 1, targetCpuPercent: 60 },

@@ -16,6 +16,7 @@ export class PostUploadCompleteImpl extends PostUploadComplete
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: PostUploadCompleteImpl", { userId: auth.userId, accountId: auth.accountId, guid: this.query?.guid } );
         if( !auth.userId )   return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
         const accountId : string | undefined = auth.accountId;
         if( !accountId )     return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
@@ -34,6 +35,7 @@ export class PostUploadCompleteImpl extends PostUploadComplete
         if( !put.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "media write failed" } };
 
         await this.service.sqs.send( "media-scan", { accountId, guid } );   // → scan → process pipeline
+        this.service.log.trace( "message enqueued (SQS media-scan)", { accountId, guid } );
         void this.service.assetCreated( asset, auth.userId );               // media.asset created (best-effort)
 
         return { status: NetworkUtils.Status.OK, data: { asset } };

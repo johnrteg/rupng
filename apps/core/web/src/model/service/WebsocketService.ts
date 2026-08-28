@@ -166,6 +166,10 @@ export class WebSocketService
             return;
         }
 
+        // PHASE 1 — no per-type handling yet: every envelope is just logged, regardless of `action`. Once a
+        // view needs to react to a specific event, subscribe it to `message.action` on the pubsub bus below.
+        console.log( "WebSocketService: event", message );
+
         // publish the WHOLE envelope to subscribers (routed by `message.action` — `${object}.${verb}`) —
         // the bus carries the same body that arrived on the socket, so subscribers see the full envelope
         // (object/verb/eventId/actor/…), not just `data`. (Subscribe by action, or by object for all verbs.)

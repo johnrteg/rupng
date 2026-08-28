@@ -14,14 +14,14 @@ import ImageInput from '@widgets/core/ImageInput';
 import VideoInput from '@widgets/core/VideoInput';
 import AudioInput from '@widgets/core/AudioInput';
 import CampaignSelect from '@widgets/app/CampaignSelect';
-import CaptionEditorDialog from '@pages/media/dialogs/CaptionEditorDialog';
+import TranscriptEditorDialog from '@pages/media/dialogs/transcript/TranscriptEditorDialog';
 import Pusher from "@widgets/core/Pusher";
 
 //
 // StudioEditor — the Studio's RIGHT editing surface for the selected asset. This is the FOUNDATION (more to
 // come): it loads + previews the asset (image / video / audio) and lays out the per-kind tool bar. Editing
 // tools land incrementally; the one live tool today is caption editing for video/audio (reuses the existing
-// CaptionEditorDialog when the asset has a .srt/.vtt caption item). The parent owns which asset is open.
+// TranscriptEditorDialog when the asset has a .srt/.vtt caption item). The parent owns which asset is open.
 //
 export function StudioEditor( props : StudioEditor.Props ) : JSX.Element
 {
@@ -128,9 +128,9 @@ export function StudioEditor( props : StudioEditor.Props ) : JSX.Element
                 </Box>
 
                 { captionsOpen && captionItem &&
-                    <CaptionEditorDialog asset={ asset } item={ captionItem }
-                                         onSaved={ () : boolean => true }
-                                         onClose={ () : void => setCaptionsOpen( false ) } /> }
+                    <TranscriptEditorDialog asset={ asset } item={ captionItem }
+                                            onSaved={ () : boolean => true }
+                                            onClose={ () : void => setCaptionsOpen( false ) } /> }
 
             </Stack>;
 }

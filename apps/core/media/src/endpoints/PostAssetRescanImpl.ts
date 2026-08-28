@@ -18,6 +18,7 @@ export class PostAssetRescanImpl extends PostAssetRescan
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: PostAssetRescanImpl", { userId: auth.userId, accountId: auth.accountId, guid: this.query?.guid } );
         if( !auth.userId )   return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
         const accountId : string | undefined = auth.accountId;
         if( !accountId )     return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
@@ -42,6 +43,7 @@ export class PostAssetRescanImpl extends PostAssetRescan
             const put = await this.service.dynamo.put( "media", { ...advanced } );
             if( !put.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "media write failed" } };
             await this.service.sqs.send( "media-scan", { accountId, guid } );
+            this.service.log.trace( "message enqueued (SQS media-scan)", { accountId, guid } );
             void this.service.assetUpdated( advanced, auth.userId );   // media.asset updated (best-effort)
             return { status: NetworkUtils.Status.ACCEPTED, data: { asset: advanced } };
         }
@@ -51,6 +53,7 @@ export class PostAssetRescanImpl extends PostAssetRescan
         const put = await this.service.dynamo.put( "media", { ...reprocessing } );
         if( !put.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "media write failed" } };
         await this.service.sqs.send( "media-process", { accountId, guid } );
+        this.service.log.trace( "message enqueued (SQS media-process)", { accountId, guid } );
         void this.service.assetUpdated( reprocessing, auth.userId );   // media.asset updated (best-effort)
 
         return { status: NetworkUtils.Status.ACCEPTED, data: { asset: reprocessing } };

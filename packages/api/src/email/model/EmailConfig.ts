@@ -8,6 +8,7 @@
 //
 import { Email } from "./Email";
 import { Validation } from "../../model/Validation";
+import { LogLevel } from "../../model/LogLevel";
 
 export namespace EmailConfig
 {
@@ -42,6 +43,7 @@ export namespace EmailConfig
         providers             : Record<string, ProviderEntry>;  // configured provider registry (key = Email.Provider)
         marketplaceEnabled    : boolean;                        // allow account-installed marketplace providers
         webFonts?             : Array<{ name : string; href : string }>;  // the PLATFORM (app-level) web-font library
+        logLevel?             : LogLevel;                       // minimum log verbosity — applied live, no redeploy (Application.refreshLogLevel)
     }
 
     // ── Schema + validator (shared: service / web / Console) ────────────────────────────────────
@@ -72,6 +74,8 @@ export namespace EmailConfig
             webFonts:        { type: "array", items: {
                                type: "object", additionalProperties: false, required: [ "name", "href" ],
                                properties: { name: { type: "string" }, href: { type: "string" } } } },
+            // minimum log verbosity — optional so older configs tolerate drift (withDefaults fills it)
+            logLevel: { type: "string", enum: Object.values( LogLevel ) },
         },
     };
 
@@ -103,6 +107,7 @@ export namespace EmailConfig
         providers:       { [ Email.Provider.FAKE ]: { provider: Email.Provider.FAKE, enabled: true } },
         marketplaceEnabled: false,
         webFonts:        [],
+        logLevel:        LogLevel.INFO,   // verbose (trace) logging is opt-in per environment
     };
 }
 

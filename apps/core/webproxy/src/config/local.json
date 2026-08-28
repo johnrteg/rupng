@@ -17,8 +17,8 @@
             "prefixes": ["/api/auth"]
         },
         {
-            "name": "local",
-            "target": "http://localhost:9000",
+            "name": "realtime",
+            "target": "http://localhost:8310",
             "ws": "/account/ws",
             "prefixes": []
         }

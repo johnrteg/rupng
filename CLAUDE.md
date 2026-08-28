@@ -145,6 +145,36 @@ These are **guidance** — for hard enforcement of the type rules, see *Enforcem
   **Omit identity/required fields** (`id`, `createdAt`, keys, …) from `DEFAULT` — a row missing those is an
   anomaly to surface, not fabricate. Immutable/ledger models (invoices, payments, audit) generally get **no**
   `DEFAULT`. (`DEFAULT` is also what seeds AppConfig via `ensureSeeded`.)
+- **THE JSON EDITOR AND THE SMART EDITOR ARE TWO VIEWS OF ONE CONTRACT — A CHANGE TO A CONFIG MODEL IS NOT
+  DONE UNTIL BOTH ARE UPDATED, IN THE SAME CHANGE.** This applies to `MediaConfig`, `EmailConfig`,
+  `AccountConfig`, `AuthConfig`, `GetBootstrap` (the `app` service's PUBLIC `web` profile), and
+  `AppServiceConfig` (`app`'s INTERNAL `settings` profile) TODAY, and to every config model registered in
+  `ConfigSchema.ts` from now on. Each has a hand-built Console form editor — `MediaConfig` →
+  `tools/console/src/renderer/components/mediaConfig/`, `EmailConfig` → `.../emailConfig/`, `AccountConfig`
+  → `.../accountConfig/`, `AuthConfig` → `.../authConfig/`, `GetBootstrap` → `.../appConfig/`,
+  `AppServiceConfig` → `.../appServiceConfig/` — registered per (service, PROFILE) pair in `ConfigPanel.tsx`'s
+  `SMART_EDITORS` map and toggled against the raw JSON editor (which lints against the SAME model's
+  `SCHEMA`, registered the same way in `ConfigSchema.ts`). Most services have exactly one editable profile
+  (`"settings"`); `app` is the one exception with TWO — `"web"` (public bootstrap) and `"settings"` (ops,
+  e.g. `logLevel`) — each with its own model and its own smart editor, which is why both `ConfigSchema.ts`'s
+  registry and `SMART_EDITORS` are keyed by `service → profile → …`, not just `service`. **Three THINGS
+  update together whenever a config model's shape changes — treat a PR that touches only one as incomplete:**
+    1. The model itself (`Config` interface + `SCHEMA` + `DEFAULT`, in its `@repo/api` file).
+    2. `ConfigSchema.ts` (`packages/api/src/model/ConfigSchema.ts`) — register/update the schema + validator
+       under `REGISTRY[ service ][ profile ]` / `VALIDATORS[ service ][ profile ]` (default profile key is
+       `"settings"`; add a NEW profile key only if the model genuinely lives on a different AppConfig
+       profile, as `GetBootstrap` does on `"web"`).
+    3. The smart editor's section component(s), registered at `SMART_EDITORS[ service ][ profile ]` in
+       `ConfigPanel.tsx` — a select for a new enum, a range-checked numeric input for a new number, a
+       new/updated section for a new sub-object, a repeating-row editor for a new named collection.
+  Skipping #2 means the JSON editor stops linting the field at all (silently). Skipping #3 means the field
+  is invisible/unreachable in the smart editor, silently pushing operators back to hand-editing JSON —
+  defeating the entire point of having one. Neither failure mode throws or fails a build, so this is easy to
+  miss without deliberately checking both. Generic, non-model-specific pieces (the section card, a
+  range-clamped number field, the log-level picker) live in the shared
+  `tools/console/src/renderer/components/configEditor/` — reuse those rather than re-implementing per
+  service; a new service's smart editor gets its own sibling folder (e.g. `.../authConfig/`) for its
+  model-specific sections and registers itself in `SMART_EDITORS`.
 
 ## Web UI (apps/core/web)
 
@@ -231,6 +261,16 @@ These are **guidance** — for hard enforcement of the type rules, see *Enforcem
   its OWN tables (never a peer's). Correlation is automatic: `publishEvent` stamps the ambient
   `RequestContext.transactionId()` onto `envelope.source.transactionId` + a Kafka header. Example: auth's
   `auth-avatar` consumer reacts to `media.asset` (USER scope) to link a processed avatar to its user.
+- **Log level is dynamic — never redeploy just to change it.** `LOG_LEVEL` (CloudManifest `environment`) only
+  seeds the level at cold start. Every `Application` (so every Service/Consumer/Job, no per-service code)
+  ALSO polls its own `config/settings` AppConfig profile's optional `logLevel` field
+  (`Application.refreshLogLevel`, `packages/services/src/Application.ts`) and applies it to the shared
+  `Trace` instance via `Trace.setLevel`: once at boot (covers one-shot Jobs — each invocation is already
+  fresh) and on a `Daemon`-owned interval (`~30s`, covers long-running Service/Consumer processes picking up
+  a change without a restart). A Config model that formally declares `logLevel : LogLevel` (`@repo/api`'s
+  shared `LogLevel` enum — trace/info/warn/error) gets it schema-linted + Console-editable
+  (`MediaConfig`/`AuthConfig`/`AccountConfig` already do); one that hasn't still gets the live override for
+  free (the read is loose — one optional field, not the full typed Config).
 
 ## Auth & security
 

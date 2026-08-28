@@ -9,6 +9,7 @@
 // config, and are intentionally excluded here.
 //
 import { Validation } from "../../model/Validation";
+import { LogLevel } from "../../model/LogLevel";
 
 export namespace AccountConfig
 {
@@ -42,6 +43,7 @@ export namespace AccountConfig
         hierarchy  : Hierarchy;
         membership : Membership;
         retention  : Retention;
+        logLevel?  : LogLevel;   // minimum log verbosity — applied live, no redeploy (Application.refreshLogLevel)
     }
 
     // ── Schema + validator (shared: service / web / Console) ────────────────────────────────────
@@ -81,6 +83,8 @@ export namespace AccountConfig
                     erasureSlaDays:     { type: "integer", minimum: 1 },
                 },
             },
+            // minimum log verbosity — optional so older configs tolerate drift (withDefaults fills it)
+            logLevel: { type: "string", enum: Object.values( LogLevel ) },
         },
     };
 
@@ -106,6 +110,7 @@ export namespace AccountConfig
             usageRecordDays:    730,          // 2 years
             erasureSlaDays:     30,
         },
+        logLevel: LogLevel.INFO,   // verbose (trace) logging is opt-in per environment
     };
 }
 

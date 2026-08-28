@@ -16,6 +16,7 @@ export class PostSystemSvgAssetImpl extends PostSystemSvgAsset
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: PostSystemSvgAssetImpl", { userId: auth.userId } );
         if( !auth.userId ) return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
 
         const body : PostSystemSvgAsset.Body | null = this.body;

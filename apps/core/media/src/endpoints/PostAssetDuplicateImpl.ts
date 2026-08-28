@@ -21,6 +21,7 @@ export class PostAssetDuplicateImpl extends PostAssetDuplicate
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: PostAssetDuplicateImpl", { userId: auth.userId, accountId: auth.accountId, guid: this.query?.guid } );
         if( !auth.userId )   return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
         const accountId : string | undefined = auth.accountId;
         if( !accountId )     return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
@@ -86,7 +87,11 @@ export class PostAssetDuplicateImpl extends PostAssetDuplicate
         if( !put.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "could not create the copy" } };
 
         // re-derive only when we didn't copy the derived items (a large item set could move this copy to a Job later)
-        if( !includeDerived ) await this.service.sqs.send( "media-scan", { accountId, guid: newGuid } );   // → scan → process
+        if( !includeDerived )
+        {
+            const queued : Type.Result<void> = await this.service.sqs.send( "media-scan", { accountId, guid: newGuid } );   // → scan → process
+            if( queued.ok ) this.service.log.trace( "message enqueued (SQS media-scan)", { accountId, guid: newGuid } );
+        }
         void this.service.assetCreated( copy, auth.userId );                                                // media.asset created (best-effort)
 
         return { status: NetworkUtils.Status.CREATED, data: { asset: copy } };

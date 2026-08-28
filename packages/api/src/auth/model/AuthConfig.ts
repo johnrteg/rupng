@@ -10,6 +10,7 @@
 //
 import { MfaMethod } from "./AuthMethod";
 import { Validation } from "../../model/Validation";
+import { LogLevel } from "../../model/LogLevel";
 
 export namespace AuthConfig
 {
@@ -92,6 +93,7 @@ export namespace AuthConfig
         webauthn     : WebAuthn;
         abuse        : Abuse;
         sso          : Sso;
+        logLevel?    : LogLevel;   // minimum log verbosity — applied live, no redeploy (Application.refreshLogLevel)
     }
 
     // ── Schema + validator (shared: service / web / Console) ────────────────────────────────────
@@ -184,6 +186,8 @@ export namespace AuthConfig
                     scimEnabled:    { type: "boolean" },
                 },
             },
+            // minimum log verbosity — optional so older configs tolerate drift (withDefaults fills it)
+            logLevel: { type: "string", enum: Object.values( LogLevel ) },
         },
     };
 
@@ -239,6 +243,7 @@ export namespace AuthConfig
             ssoOnlyDefault: false,
             scimEnabled:    false,
         },
+        logLevel: LogLevel.INFO,   // verbose (trace) logging is opt-in per environment
     };
 }
 

@@ -15,6 +15,7 @@ export class GetSvgCanvasImpl extends GetSvgCanvas
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: GetSvgCanvasImpl", { accountId: auth.accountId, projectId: this.query?.projectId } );
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
         const projectId : string = this.query?.projectId ?? "";
         if( !projectId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "projectId required" } };

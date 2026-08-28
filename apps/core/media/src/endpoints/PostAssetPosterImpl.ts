@@ -17,6 +17,7 @@ export class PostAssetPosterImpl extends PostAssetPoster
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: PostAssetPosterImpl", { userId: auth.userId, accountId: auth.accountId, guid: this.query?.guid } );
         if( !auth.userId )   return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
         const accountId : string | undefined = auth.accountId;
         if( !accountId )     return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
@@ -35,6 +36,7 @@ export class PostAssetPosterImpl extends PostAssetPoster
             return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "video is not ready" } };
 
         await this.service.sqs.send( "media-process", { accountId, guid, posterAt: Math.max( 0, atSeconds ) } );
+        this.service.log.trace( "message enqueued (SQS media-process)", { accountId, guid } );
         void this.service.assetUpdated( asset, auth.userId );   // media.asset updated (best-effort)
 
         return { status: NetworkUtils.Status.ACCEPTED, data: { asset } };

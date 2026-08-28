@@ -13,6 +13,7 @@ export class GetBrowseProvidersImpl extends GetBrowseProviders
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: GetBrowseProvidersImpl", { userId: auth.userId } );
         if( !auth.userId ) return { status: NetworkUtils.Status.UNAUTHORIZED, data: { message: "sign in required" } };
         const providers : Array<Browse.ProviderInfo> = await this.service.listProviders();
         return { status: NetworkUtils.Status.OK, data: { providers } };

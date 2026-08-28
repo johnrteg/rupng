@@ -1,8 +1,8 @@
 //
 // SQS facade — send/receive/delete messages, keyed by cloud-manifest LOGICAL queue keys.
 //
-import { SQSClient, SendMessageCommand, ReceiveMessageCommand, DeleteMessageCommand } from "@aws-sdk/client-sqs";
-import type { Message, ReceiveMessageCommandOutput } from "@aws-sdk/client-sqs";
+import { SQSClient, SendMessageCommand, ReceiveMessageCommand, DeleteMessageCommand, GetQueueAttributesCommand } from "@aws-sdk/client-sqs";
+import type { Message, QueueAttributeName, ReceiveMessageCommandOutput, GetQueueAttributesCommandOutput } from "@aws-sdk/client-sqs";
 import type { CloudResolver, ResourceKey } from "@repo/cloud-manifest";
 import { ResultUtils } from "@repo/common";
 import type { Type } from "@repo/common";
@@ -115,6 +115,26 @@ export class Sqs
                 MessageSystemAttributeNames : [ "ApproximateReceiveCount" ],
             } ) );
             return result.Messages ?? [];
+        } );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Read queue attributes by its EXPLICIT URL rather than a logical key — the escape hatch for
+     * inspecting a queue this service doesn't own (e.g. `monitor` reading depth/age for a
+     * dashboard widget). Common names: `ApproximateNumberOfMessages`,
+     * `ApproximateNumberOfMessagesNotVisible` (age-of-oldest-message is a CloudWatch metric, not a
+     * queue attribute — not available here).
+     */
+    attributesByUrl( queueUrl : string, names : Array<QueueAttributeName> ) : Promise<Type.Result<Partial<Record<QueueAttributeName, string>>>>
+    {
+        return ResultUtils.from( async () : Promise<Partial<Record<QueueAttributeName, string>>> =>
+        {
+            const result : GetQueueAttributesCommandOutput = await this.client.send( new GetQueueAttributesCommand( {
+                QueueUrl: queueUrl,
+                AttributeNames: names,
+            } ) );
+            return ( result.Attributes ?? {} ) as Partial<Record<QueueAttributeName, string>>;
         } );
     }
 

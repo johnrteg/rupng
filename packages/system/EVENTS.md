@@ -50,6 +50,20 @@ Status: **live** = emitted today · **planned** = `Object` defined in `Events.ts
 > `updated` yet — the request-path CRUD above does. Wiring a "ready" `updated` from the process/analyze step
 > is a follow-up (needs the Kafka facade threaded into `MediaPipeline.Deps` + the Jobs).
 
+### social  🟢 live
+| action | verb | `data` model | emitted by | status |
+|---|---|---|---|---|
+| `social.account.created` | created | `Payloads.SocialAccount` (`@repo/system`) | connect a destination | live |
+| `social.account.deleted` | deleted | `Payloads.SocialAccount` | disconnect a destination | live |
+| `social.post.created` | created | `Payloads.SocialPost` (`@repo/system`) | create a post (draft/scheduled) | live |
+| `social.post.updated` | updated | `Payloads.SocialPost` | submit for review · approve/reject · cancel · publish outcome (PUBLISHED/FAILED) | live |
+
+> Note: `data` is the lightweight `Payloads.SocialAccount`/`Payloads.SocialPost` representation
+> (`packages/system/src/payloads/social.ts`), not the full `@repo/api` `SocialAccount.Entity`/`SocialPost.Entity` —
+> mirrors media's own `Payloads.MediaAsset` pattern. The publish-outcome `updated` (status →
+> PUBLISHED/FAILED) is emitted from `SocialPipeline.publishPost`, not the HTTP endpoint layer, since that
+> transition happens in the publish worker.
+
 ### account  🟢 live
 | action | verb | `data` model | emitted by | status |
 |---|---|---|---|---|

@@ -3,7 +3,7 @@ import { RequestContext, Sqs } from "@repo/services";
 import type { Type } from "@repo/common";
 import type { Message } from "@aws-sdk/client-sqs";
 import type { Browser } from "puppeteer";
-import { MediaConfig, SvgDocument, GetSvgRenderJob } from "@repo/api";
+import { MediaConfig, SvgDocument, GetSvgRenderJob, StudioProject } from "@repo/api";
 
 import MediaService from "./MediaService";
 import SvgService from "./SvgService";
@@ -36,6 +36,7 @@ import GetGenerateBatchImpl from "../endpoints/GetGenerateBatchImpl";
 import PostGeneratePromoteImpl from "../endpoints/PostGeneratePromoteImpl";
 import DeleteGenerateBatchImpl from "../endpoints/DeleteGenerateBatchImpl";
 import PostAssetTranscribeImpl from "../endpoints/PostAssetTranscribeImpl";
+import PostAssetBurnCaptionsImpl from "../endpoints/PostAssetBurnCaptionsImpl";
 import PostAssetExtractAudioImpl from "../endpoints/PostAssetExtractAudioImpl";
 import PostAssetCompressImpl from "../endpoints/PostAssetCompressImpl";
 import PostAssetArchiveImpl from "../endpoints/PostAssetArchiveImpl";
@@ -87,6 +88,7 @@ export class MediaMainService extends MediaService
         void this.startProcessConsumer();
         void this.startGenerateConsumer();
         void this.startTranscribeConsumer();
+        void this.startBurnCaptionsConsumer();
         void this.startArchiveConsumer();
         void this.startVideoConsumer();
         void this.startStudioRenderConsumer();
@@ -124,6 +126,7 @@ export class MediaMainService extends MediaService
         this.register( new PostGeneratePromoteImpl( this ) );
         this.register( new DeleteGenerateBatchImpl( this ) );
         this.register( new PostAssetTranscribeImpl( this ) );
+        this.register( new PostAssetBurnCaptionsImpl( this ) );
         this.register( new PostAssetExtractAudioImpl( this ) );
         this.register( new PostAssetCompressImpl( this ) );
         this.register( new PostAssetArchiveImpl( this ) );
@@ -172,6 +175,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
+                            this.log.trace( "message received (SQS media-scan)", { messageId: message.MessageId } );
                             const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string };
                             if( req.accountId && req.guid ) await MediaPipeline.scan( await this.pipelineDeps(), req.accountId, req.guid );
                             if( message.ReceiptHandle ) await this.sqs.delete( "media-scan", message.ReceiptHandle );
@@ -200,6 +204,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
+                            this.log.trace( "message received (SQS media-process)", { messageId: message.MessageId } );
                             const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string; profile? : string; rescan? : boolean; posterAt? : number; density? : string };
                             if( req.accountId && req.guid )
                             {
@@ -235,6 +240,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
+                            this.log.trace( "message received (SQS media-generate)", { messageId: message.MessageId } );
                             const job : any = JSON.parse( message.Body ?? "{}" ) as MediaService.GenerateJob;
                             if( job.accountId && Array.isArray( job.candidates ) && job.candidates.length ) await this.runGenerate( job );
                             if( message.ReceiptHandle ) await this.sqs.delete( "media-generate", message.ReceiptHandle );
@@ -264,6 +270,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
+                            this.log.trace( "message received (SQS media-transcribe)", { messageId: message.MessageId } );
                             const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string; userId? : string; op? : string };
                             // the queue carries both jobs (op discriminator): "extract" = audio-track only, else transcribe
                             if( req.accountId && req.guid && req.op === "extract" ) await this.runExtractAudio( req.accountId, req.guid, req.userId );
@@ -276,6 +283,39 @@ export class MediaMainService extends MediaService
             catch( error ) { this.log.warn( "media transcribe receive failed — backing off", { error: String( error ) } ); await this.delay( 5000 ); }
         }
         this.log.info( "media transcribe consumer stopped" );
+    }
+
+    /////////////////////////////////////////////////////////////////////
+    // SQS media-caption-burn poll loop (dev drain of the caption burn-in Job, media-2x) — ffmpeg drawtext
+    // overlay of a transcript's timed lines onto its source video, off the request path. MAIN drains locally.
+    private async startBurnCaptionsConsumer() : Promise<void>
+    {
+        this.log.info( "media caption-burn consumer started (SQS media-caption-burn)" );
+        while( !this.stopping )
+        {
+            try
+            {
+                const received : Type.Result<Array<Message>> = await this.sqs.receive( "media-caption-burn", 2, 10 );
+                this.log.info( "DEBUG burn-captions receive result", { ok: received.ok, count: received.ok ? received.data.length : 0, error: received.ok ? undefined : received.error } );
+                if( !received.ok ) { await this.delay( 5000 ); continue; }
+                for( const message of received.data )
+                    await RequestContext.run( { transactionId: Sqs.transactionId( message ) }, async () : Promise<void> =>
+                    {
+                        try
+                        {
+                            this.log.info( "DEBUG message received (SQS media-caption-burn)", { messageId: message.MessageId, body: message.Body } );
+                            const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string; userId? : string; transcriptItem? : string; style? : StudioProject.TextStyle; position? : "top" | "bottom"; fontPct? : number };
+                            this.log.info( "DEBUG parsed req", { req } );
+                            if( req.accountId && req.guid && req.transcriptItem ) await this.runBurnCaptions( req.accountId, req.guid, req.transcriptItem, req.style, req.position, req.fontPct, req.userId );
+                            else this.log.warn( "DEBUG burn-captions guard failed", { req } );
+                            if( message.ReceiptHandle ) await this.sqs.delete( "media-caption-burn", message.ReceiptHandle );
+                        }
+                        catch( err ) { this.log.warn( "media caption-burn failed (will redeliver)", { error: String( err ) } ); }
+                    } );
+            }
+            catch( error ) { this.log.warn( "media caption-burn receive failed — backing off", { error: String( error ) } ); await this.delay( 5000 ); }
+        }
+        this.log.info( "media caption-burn consumer stopped" );
     }
 
     /////////////////////////////////////////////////////////////////////
@@ -295,6 +335,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
+                            this.log.trace( "message received (SQS studio-render)", { messageId: message.MessageId } );
                             const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; projectId? : string; userId? : string };
                             if( req.accountId && req.projectId ) await this.runStudioRender( req.accountId, req.projectId, req.userId );
                             if( message.ReceiptHandle ) await this.sqs.delete( "studio-render", message.ReceiptHandle );
@@ -325,6 +366,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
+                            this.log.trace( "message received (SQS studio-render-remotion)", { messageId: message.MessageId } );
                             const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; projectId? : string; userId? : string };
                             if( req.accountId && req.projectId ) await this.runStudioRender( req.accountId, req.projectId, req.userId, MediaConfig.RenderEngine.REMOTION );
                             if( message.ReceiptHandle ) await this.sqs.delete( "studio-render-remotion", message.ReceiptHandle );
@@ -366,6 +408,7 @@ export class MediaMainService extends MediaService
                         let jobId : string | undefined;
                         try
                         {
+                            this.log.trace( "message received (SQS svg-render)", { messageId: message.MessageId } );
                             const req : any = JSON.parse( message.Body ?? "{}" ) as { jobId? : string; accountId? : string; projectId? : string; pageIds? : Array<string> | null; settings? : SvgDocument.ExportSettings };
                             jobId = req.jobId;
                             if( req.jobId && req.accountId && req.projectId && req.settings )
@@ -419,6 +462,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
+                            this.log.trace( "message received (SQS media-archive)", { messageId: message.MessageId } );
                             const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; archiveId? : string; userId? : string };
                             if( req.accountId && req.archiveId ) await this.runArchive( req.accountId, req.archiveId, req.userId );
                             if( message.ReceiptHandle ) await this.sqs.delete( "media-archive", message.ReceiptHandle );
@@ -448,6 +492,7 @@ export class MediaMainService extends MediaService
                     {
                         try
                         {
+                            this.log.trace( "message received (SQS media-video)", { messageId: message.MessageId } );
                             const req : any = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; guid? : string; target? : string; userId? : string };
                             if( req.accountId && req.guid && req.target ) await this.runCompress( req.accountId, req.guid, req.target, req.userId );
                             if( message.ReceiptHandle ) await this.sqs.delete( "media-video", message.ReceiptHandle );

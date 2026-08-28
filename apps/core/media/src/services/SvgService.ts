@@ -218,6 +218,7 @@ export class SvgService
         // enqueue the heavy work (validate → enqueue → return; the consumer renders + uploads + flips status)
         const queued : Type.Result<void> = await this.media.sqs.send( "svg-render", { jobId, accountId, projectId, pageIds, settings } );
         if( !queued.ok ) return ResultUtils.err( "could not queue the render job", queued.cause );
+        this.media.log.trace( "message enqueued (SQS svg-render)", { jobId, accountId, projectId } );
 
         return ResultUtils.ok( { jobId } );
     }

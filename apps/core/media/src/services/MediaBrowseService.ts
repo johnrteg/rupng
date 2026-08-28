@@ -228,7 +228,8 @@ export class MediaBrowseService extends MediaService
         if( !put.ok ) return { status: 500 };
         const wrote : Type.Result<void> = await this.dynamo.put( "media", { ...asset } );
         if( !wrote.ok ) return { status: 500 };
-        await this.sqs.send( "media-scan", { accountId, guid } );   // → scan → process (variants + probe + poster)
+        const queued : Type.Result<void> = await this.sqs.send( "media-scan", { accountId, guid } );   // → scan → process (variants + probe + poster)
+        if( queued.ok ) this.log.trace( "message enqueued (SQS media-scan)", { accountId, guid } );
         void this.assetCreated( asset, auth.userId );               // media.asset created (best-effort)
         return { status: 202, asset };
     }

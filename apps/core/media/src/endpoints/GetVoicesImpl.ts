@@ -13,6 +13,7 @@ export class GetVoicesImpl extends GetVoices
     ///////////////////////////////////////////////////////////////////////////////////////////
     public async execute( auth : RestfulEndpoint.Authentication ) : Promise<RestfulEndpoint.Response>
     {
+        this.service.log.trace( "execute: GetVoicesImpl", { accountId: auth.accountId } );
         if( !auth.accountId ) return { status: NetworkUtils.Status.BAD_REQUEST, data: { message: "no acting account (X-Account)" } };
         const voices : Array<Media.Voice> = await this.service.listVoices( auth.accountId );
         return { status: NetworkUtils.Status.OK, data: { voices } };
