@@ -17,8 +17,8 @@ import { Access } from '@repo/system';
 import
 {
     Report, REPORT_CATALOG, findReport, Paging,
-    GetReportSubmissions, GetReportSubmissionDownload, DeleteReportSubmission, PostReportSubmissions,
-    GetReportSchedules, PostReportSchedules, PatchReportSchedule, DeleteReportSchedule,
+    GetReportSubmissions, GetReportSubmissionDownload, DeleteReportSubmission, PostReportRuns,
+    GetReportSchedules, PatchReportSchedule, DeleteReportSchedule,
     PostReportSchedulePause, PostReportScheduleResume,
 } from '@repo/api';
 import { RestfulService } from '@repo/endpoint';
@@ -133,10 +133,11 @@ export function ReportsPage( props : ReportsPage.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // submit dialog's onSubmit — POSTs the ad-hoc run, snacks, reloads the Submissions tab, and switches to it
-    async function onSubmitReport( request : Report.SubmitRequest ) : Promise<boolean>
+    // submit dialog's onSubmit — POSTs the ad-hoc run (no `schedule`), snacks, reloads the Submissions tab,
+    // and switches to it
+    async function onSubmitReport( request : Report.CreateRun ) : Promise<boolean>
     {
-        const reply : RestfulService.Reply<PostReportSubmissions.Response> = await appmodel.server.fetch( new PostReportSubmissions( request ) );
+        const reply : RestfulService.Reply<PostReportRuns.Response> = await appmodel.server.fetch( new PostReportRuns( request ) );
         if( reply.ok && reply.data )
         {
             setSubmitOpen( false );
@@ -150,12 +151,25 @@ export function ReportsPage( props : ReportsPage.Props ) : JSX.Element
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // schedule dialog's onSave — PATCHes when editing an existing schedule, else POSTs a new one
-    async function onSaveSchedule( request : Report.CreateSchedule ) : Promise<boolean>
+    // schedule dialog's onSave — PATCHes (flat fields) when editing an existing schedule, else POSTs a new
+    // run with `schedule` supplied (creates the standing Schedule instead of a one-time Submission)
+    async function onSaveSchedule( request : ReportScheduleDialog.Request ) : Promise<boolean>
     {
-        const reply : RestfulService.Reply<PostReportSchedules.Response | PatchReportSchedule.Response> = scheduleTarget
-            ? await appmodel.server.fetch( new PatchReportSchedule( scheduleTarget.scheduleId, request ) )
-            : await appmodel.server.fetch( new PostReportSchedules( request ) );
+        const reply : RestfulService.Reply<PostReportRuns.Response | PatchReportSchedule.Response> = scheduleTarget
+            ? await appmodel.server.fetch( new PatchReportSchedule( scheduleTarget.scheduleId, {
+                  ical:         request.ical,
+                  timezone:     request.timezone,
+                  params:       request.params,
+                  format:       request.format,
+                  destinations: request.destinations,
+              } ) )
+            : await appmodel.server.fetch( new PostReportRuns( {
+                  reportId:     request.reportId,
+                  params:       request.params,
+                  format:       request.format,
+                  destinations: request.destinations,
+                  schedule:     { ical: request.ical, timezone: request.timezone },
+              } ) );
         if( reply.ok && reply.data )
         {
             setScheduleOpen( false );
@@ -289,6 +303,15 @@ export function ReportsPage( props : ReportsPage.Props ) : JSX.Element
         return <Typography variant="body2" component="code" sx={{ fontFamily: "monospace" }}>{ String( row.ical ) }</Typography>;
     }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // a comma-joined display of a destinations array's kinds — falls back to "Download" (the server default
+    // when the list is empty/omitted)
+    function destinationsLabel( destinations : Array<Report.Destination> ) : string
+    {
+        if( destinations.length === 0 ) return "Download";
+        return destinations.map( ( destination : Report.Destination ) : string => destination.kind ).join( ", " );
+    }
+
     // ── Submissions table config ───────────────────────────────────────────────────────────────
     const submissionActions : Array<TableInput.Action> =
     [
@@ -303,19 +326,21 @@ export function ReportsPage( props : ReportsPage.Props ) : JSX.Element
         { field: "format",      label: "Format",  type: TableInput.ColumnType.STRING },
         { field: "size",        label: "Size",    type: TableInput.ColumnType.BYTES },
         { field: "recordCount", label: "Records", type: TableInput.ColumnType.NUMBER },
+        { field: "destinations", label: "Destinations", type: TableInput.ColumnType.STRING },
         { field: "createdAt",   label: "Created", type: TableInput.ColumnType.DATETIME },
         { field: "actions",     label: "",        type: TableInput.ColumnType.ACTION },
     ];
 
     const submissionRows : Array<TableInput.Row> = submissions.map( ( submission : Report.Submission ) : TableInput.Row => ( {
-        id:          submission.submissionId,
-        report:      findReport( submission.reportId )?.name ?? submission.reportId,
-        status:      submission.status,
-        format:      submission.format,
-        size:        submission.size ?? 0,
-        recordCount: submission.recordCount ?? 0,
-        createdAt:   submission.createdAt,
-        actions:     submission.status === Report.SubmissionStatus.COMPLETE ? [ SubmissionAction.DOWNLOAD, SubmissionAction.DELETE ] : [ SubmissionAction.DELETE ],
+        id:           submission.submissionId,
+        report:       findReport( submission.reportId )?.name ?? submission.reportId,
+        status:       submission.status,
+        format:       submission.format,
+        size:         submission.size ?? 0,
+        recordCount:  submission.recordCount ?? 0,
+        destinations: destinationsLabel( submission.destinations ),
+        createdAt:    submission.createdAt,
+        actions:      submission.status === Report.SubmissionStatus.COMPLETE ? [ SubmissionAction.DOWNLOAD, SubmissionAction.DELETE ] : [ SubmissionAction.DELETE ],
     } ) );
 
     // ── Schedules table config ─────────────────────────────────────────────────────────────────
@@ -333,6 +358,7 @@ export function ReportsPage( props : ReportsPage.Props ) : JSX.Element
         { field: "ical",        label: "Recurs",   type: TableInput.ColumnType.CUSTOM, renderer: icalRenderer },
         { field: "timezone",    label: "Timezone", type: TableInput.ColumnType.STRING },
         { field: "status",      label: "Status",   type: TableInput.ColumnType.CUSTOM, renderer: scheduleStatusRenderer },
+        { field: "destinations", label: "Destinations", type: TableInput.ColumnType.STRING },
         { field: "nextFireAt",  label: "Next fire", type: TableInput.ColumnType.DATETIME },
         { field: "actions",     label: "",         type: TableInput.ColumnType.ACTION },
     ];
@@ -344,6 +370,7 @@ export function ReportsPage( props : ReportsPage.Props ) : JSX.Element
         timezone:     schedule.timezone,
         status:       schedule.status,
         pausedReason: schedule.pausedReason ?? "",
+        destinations: destinationsLabel( schedule.destinations ),
         nextFireAt:   schedule.nextFireAt ?? null,
         actions:      schedule.status === Report.ScheduleStatus.ACTIVE
             ? [ ScheduleAction.EDIT, ScheduleAction.PAUSE, ScheduleAction.DELETE ]

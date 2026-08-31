@@ -4,14 +4,14 @@
 
 Manage TCR registration and status
 Hook into carrier APIs where possible
-RDS DB to cache items
+DynamoDB to cache items
 Poll to get updates
 Centraolized managment of TCR process for accounts
 
 # State Machine:
 Registration is slow and asynchronous: brand vetting (minutes–days), campaign approval (days), number provisioning after. So the core is a per-registration state machine — draft → submitted → pending-vetting → approved/rejected → number-associated → active — with rejection/remediation paths, not just a happy path. Two consequences:
 
-* Your DB is a cache, not the source of truth. TCR/the provider owns approval status; you mirror it. So design for reconciliation, not just storage (the README's "cache items" is right — make explicit it's a projection you reconcile).
+* Your DB is a cache, not the source of truth. TCR/the provider owns approval status; you mirror it. So design for reconciliation, not just storage (the README's "cache items" is right — make explicit it's a projection you reconcile). This is a **DynamoDB** projection (per-account/per-entity items, accountId-scoped) — no cross-entity joins are required; the `report` service reads via an S2S client, never a direct table read, so a document store is sufficient (superseding an earlier RDS idea — RDS/`Database` exists as a platform primitive but has no production consumers yet; DynamoDB reuses the proven path every other service already takes).
 * Rejections need a human-in-the-loop workflow. Campaigns get rejected (weak use-case description, bad sample messages, opt-in flow problems). You must surface the rejection reason to the account and support edit + resubmit. That remediation loop is a first-class part of the state machine, easy to forget if you only model the approval path.
 
 # Webhooks
@@ -63,19 +63,19 @@ registration through its (slow, external, drift-prone) lifecycle. All are **audi
 **Convention (platform-wide).** Each service layers **framework base → domain base → concrete role**. A **domain
 Service base** (`RegistrationService extends Service`) and a **domain Job base** (`RegistrationJob extends Job`)
 hold the **shared domain code** — the **state-machine engine**, the **CSP/TCR provider factory** (Twilio /
-Bandwidth / direct-CSP — registration APIs **diverge more than sending**), the **RDS projection** repo, the
-**status-publish** (SNS / EventBridge), **KYC encryption**, and **audit** — so every concrete role inherits it.
+Bandwidth / direct-CSP — registration APIs **diverge more than sending**), the **DynamoDB projection** repo, the
+**status-publish** (Kafka events, inline on state change), **KYC encryption**, and **audit** — so every concrete role inherits it.
 Registration is a **projection + reconciliation** service: the **registry is the SoT**, our store mirrors it
 (webhooks-first + polling sweep).
 
 ```
 Application
 ├── Service (Fastify, long-running — ECS)
-│     └── RegistrationService        (domain base — state-machine engine · CSP/TCR provider factory · RDS projection · status-publish · KYC encryption · audit; not deployed alone)
+│     └── RegistrationService        (domain base — state-machine engine · CSP/TCR provider factory · DynamoDB projection · status-publish · KYC encryption · audit; not deployed alone)
 │           ├── RegistrationMainService    (the /registration/* API: brand/campaign CRUD + submit · the lifecycle ops (create · vetting status · refresh score · resubmit · reprovision · override · nudge · check&sync) · status reads · config/health)
 │           └── RegistrationWebhookService (CSP/TCR webhook intake — signature-verified, ACK-fast → enqueue; provider-facing, scales apart)
 └── Job (Lambda, event-driven)
-      └── RegistrationJob          (domain base — provider factory · state-machine · RDS · idempotency)
+      └── RegistrationJob          (domain base — provider factory · state-machine · DynamoDB · idempotency)
             ├── RegistrationSubmitJob   (SQS — submit / resubmit / reprovision brand+campaign+numbers to CSP/TCR; external call, idempotent, retry/DLQ → await callback)
             ├── RegistrationWebhookJob  (SQS from webhook intake — process CSP/TCR callbacks → update projection → publish status change)
             ├── RegistrationPollJob     (EventBridge — reconciliation sweep: in-flight only, back off, STOP on terminal; also serves on-demand check&sync)
@@ -86,7 +86,7 @@ Application
 
 | Class | Extends | Role |
 |---|---|---|
-| **`RegistrationService`** | `Service` | **Domain base** — state-machine engine · CSP/TCR provider factory · RDS projection · status-publish · KYC encryption · audit; **not deployed alone**. |
+| **`RegistrationService`** | `Service` | **Domain base** — state-machine engine · CSP/TCR provider factory · DynamoDB projection · status-publish · KYC encryption · audit; **not deployed alone**. |
 | **`RegistrationMainService`** | `RegistrationService` | The **`/registration/*` API** — brand / campaign **CRUD + submit**, the **lifecycle operations** (create · vetting status · refresh score · resubmit · reprovision · **override** · nudge · check & sync), status reads, config/health. |
 | **`RegistrationWebhookService`** | `RegistrationService` | **CSP / TCR webhook intake** — **signature-verified, ACK-fast → enqueue**; provider-facing, **scales apart** from the API. |
 
@@ -100,20 +100,20 @@ Application
 | **`RegistrationVettingJob`** | SQS / EventBridge | **Refresh brand vetting** → recompute the **trust score** → **re-publish trust-score → MPS** to dispatch | registration-7.2 / 11.3 |
 
 > **Shared modules (not deployables).** The **CSP/TCR provider factory** (Twilio / Bandwidth / direct-CSP — the
-> registration-API divergence behind one interface), the **state-machine engine**, the **RDS projection** repo,
+> registration-API divergence behind one interface), the **state-machine engine**, the **DynamoDB projection** repo,
 > and **status-publish** live on the bases and are reused across the API + workers. **The registry is the SoT** —
 > every job **reconciles**, never treats the projection as authoritative; an **override** (`registration-11.6`) is
 > the one human exception and is itself reconciled against the next sync. **Nudge** re-pokes via the submit/poll
-> path (no new engine). Registration uses **RDS** (not DynamoDB) — status-publish is **inline on state change**,
+> path (no new engine). Registration uses **DynamoDB** — status-publish (Kafka) is **inline on state change**,
 > not a Streams CDC job.
 
 # AWS Services and Other Dependencies
 
 **AWS services**
-* **RDS** — the registration **projection / cache** (relational fits the state-machine + status mirror; TCR/provider is the SoT).
+* **DynamoDB** — the registration **projection / cache** (accountId-scoped items fit the state-machine + status mirror; TCR/provider is the SoT).
 * **SQS** — CSP/TCR **webhook** intake + reconciliation jobs.
 * **EventBridge (Scheduler)** — self-scheduled **polling sweeps** (in-flight only, back off, stop on terminal).
-* **SNS / EventBridge** — **publish** campaign/number status + trust-score→MPS to texting / dispatch.
+* **Kafka (Events)** — **publish** campaign/number status + trust-score→MPS to texting / dispatch, inline on state change.
 * **Secrets Manager + KMS** — CSP API keys + **KYC / brand** data (EIN, business details) at rest.
 
 **Third-party libraries / services**
@@ -121,7 +121,7 @@ Application
 * **CSPs** — Twilio · Bandwidth (registration APIs **diverge more than sending** → a provider factory); or **direct-CSP with TCR** (gap #1).
 
 **Internal (`@repo/*`)**
-* `@repo/services` (Rds/Dynamo, Sqs, Sns, Secrets, Kms), `@repo/endpoint` (`Access`), `@repo/common` (`Type`).
+* `@repo/services` (Dynamo, Sqs, Kafka, Secrets, Kms), `@repo/endpoint` (`Access`), `@repo/common` (`Type`).
 * **Gates** [account](../account/specs/SPECS.md) onboarding (no A2P until approved); **publishes** status + trust-score/MPS to **[texting](../texting/SPECS.md)** (sending precondition) + **[dispatch](../../../packages/services/DISPATCH.md)** (throughput pacing).
 
 # Compliance & standards mapping
@@ -148,7 +148,7 @@ platform [AWS topology](../../../packages/services/src/aws/SPECS.md).
 | **Webhook verification** — CSP / TCR callbacks signature-verified | A08 | A.8.24 | CC7.1 | ➖ | Art 32 | ➖ | ➖ | ✅ |
 | **Tenant isolation** — per-account registrations / brands | A01 | A.8.3 | CC6.1 | ➖ | Art 32 | ➖ | ➖ | ✅ |
 | **Audit** — submissions / status changes / remediation (who / when / what) | A09 | A.8.15 | CC7.2 | ➖ | Art 30 | ➖ | ➖ | ✅ |
-| **Encryption** — KYC at rest (RDS / KMS) + in transit | A02 | A.8.24 | CC6.1 | ➖ | Art 32 | ➖ | ➖ | ✅ |
+| **Encryption** — KYC at rest (DynamoDB / KMS) + in transit | A02 | A.8.24 | CC6.1 | ➖ | Art 32 | ➖ | ➖ | ✅ |
 
 # Gaps & decisions
 
@@ -217,13 +217,13 @@ the source of truth (we project + reconcile).
 - **registration-8.1** **TCR / 10DLC first**; **TFN** verification, **short codes**, **international** registries fit later — same service *(gap #6)* — B
 
 ## registration-9.0 Privacy, security & audit — A
-- **registration-9.1** **KYC / brand data** encrypted (RDS / KMS) + tenant-isolated — A
+- **registration-9.1** **KYC / brand data** encrypted (DynamoDB / KMS) + tenant-isolated — A
 - **registration-9.2** **Webhook verification** (CSP / TCR signatures) — A
 - **registration-9.3** **Audit** — submissions / status changes / remediation — A
 
 ## registration-10.0 Data model & infra — A
-- **registration-10.1** **RDS** projection of the registration state machine + status mirror — A
-- **registration-10.2** **SQS** (webhooks / recon) · **EventBridge** (poll sweeps) · **SNS/EventBridge** (status publish) · **Secrets/KMS** (CSP keys + KYC) — A
+- **registration-10.1** **DynamoDB** projection of the registration state machine + status mirror — A
+- **registration-10.2** **SQS** (webhooks / recon) · **EventBridge** (poll sweeps) · **Kafka** (status publish) · **Secrets/KMS** (CSP keys + KYC) — A
 
 ## registration-11.0 Lifecycle operations (actions) — A
 - **registration-11.1** **Create campaign** — register a **new TCR campaign** (use-case · samples · opt-in) under an approved brand → submit → `pending-vetting` — A
@@ -236,10 +236,10 @@ the source of truth (we project + reconcile).
 - **registration-11.8** **Check & sync** — **on-demand force-reconcile** one registration with TCR/CSP now (the poll-sweep reconcile, on request) — B
 
 ## registration-12.0 Service & Job topology — B
-- **registration-12.1** **Domain bases** — `RegistrationService extends Service` + `RegistrationJob extends Job` hold the shared code (state-machine engine · CSP/TCR provider factory · RDS projection · status-publish · KYC encryption · audit); **concrete roles extend the domain base** — B
+- **registration-12.1** **Domain bases** — `RegistrationService extends Service` + `RegistrationJob extends Job` hold the shared code (state-machine engine · CSP/TCR provider factory · DynamoDB projection · status-publish · KYC encryption · audit); **concrete roles extend the domain base** — B
 - **registration-12.2** **`RegistrationMainService`** — the `/registration/*` API (brand/campaign CRUD + submit · the lifecycle operations `registration-11.x` · status reads) — A
 - **registration-12.3** **`RegistrationWebhookService`** — CSP/TCR webhook intake (signature-verified, ACK-fast → enqueue); **scales apart** — A
 - **registration-12.4** **Jobs extend `RegistrationJob`** — `RegistrationSubmitJob` / `RegistrationWebhookJob` / `RegistrationPollJob` / `RegistrationVettingJob` — A
-- **registration-12.5** **Registry is the SoT** — every job **reconciles**; status-publish is **inline on state change** (RDS, no Streams CDC job) — A
+- **registration-12.5** **Registry is the SoT** — every job **reconciles**; status-publish is **inline on state change** (DynamoDB, no Streams CDC job) — A
 
 # eof

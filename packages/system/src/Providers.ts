@@ -21,6 +21,9 @@ export namespace Providers
         TEXTING  = "texting",    // SMS/MMS providers (texting service)
         VOICE    = "voice",      // telephony/IVR providers (voice service)
         PAYMENTS = "payments",   // payment processors (billing)
+        // A2P registration/compliance credentials (registration service) — the TCR CSP account, the
+        // Campaign Verify political-vetting bridge, and each carrier (CNP) we provision numbers through.
+        REGISTRATION = "registration",
     }
 
     /** Where a provider's secret lives: `platform` (shared, every service can read) or a specific service's
@@ -92,6 +95,25 @@ export namespace Providers
         { id: "voice-twilio", label: "Twilio", category: Category.VOICE, scope: { service: "voice" }, secretKey: "voice-twilio",
           fields: [ { name: "accountSid", label: "Account SID", secret: false }, { name: "authToken", label: "Auth Token" } ],
           keyHint: "Account SID starts with AC", docsUrl: "https://console.twilio.com/" },
+
+        // Registration — TCR/10DLC A2P registration credentials (registration service). We register as a
+        // DIRECT CSP with TCR (SPECS.md gap #1, resolved), so the TCR credential is OURS, not a reseller's;
+        // the carrier entries are per-CNP provisioning credentials, one per `Registration.CarrierProvider`
+        // (the `fake` provider is deliberately absent — it has no credential to hold).
+        { id: "tcr", label: "The Campaign Registry (CSP)", category: Category.REGISTRATION, scope: { service: "registration" }, secretKey: "registration-tcr",
+          fields: [ { name: "apiKey", label: "API Key" }, { name: "apiSecret", label: "API Secret" }, { name: "baseUrl", label: "API Base URL", secret: false } ],
+          keyHint: "CSP portal API key + secret (HTTP Basic)", docsUrl: "https://csp-api.campaignregistry.com/" },
+        { id: "campaign-verify", label: "Campaign Verify", category: Category.REGISTRATION, scope: { service: "registration" }, secretKey: "registration-campaign-verify",
+          fields: [ { name: "apiKey", label: "API Key" }, { name: "baseUrl", label: "API Base URL", secret: false } ],
+          keyHint: "Political-brand vetting bridge — imported into TCR as a vetting token", docsUrl: "https://www.campaignverify.org/" },
+        { id: "bandwidth", label: "Bandwidth (CNP)", category: Category.REGISTRATION, scope: { service: "registration" }, secretKey: "registration-bandwidth",
+          fields: [ { name: "accountId", label: "Account ID", secret: false }, { name: "username", label: "Username", secret: false }, { name: "password", label: "Password" } ],
+          docsUrl: "https://dashboard.bandwidth.com/" },
+        { id: "registration-telnyx", label: "Telnyx (CNP)", category: Category.REGISTRATION, scope: { service: "registration" }, secretKey: "registration-telnyx",
+          keyHint: "API v2 key", docsUrl: "https://portal.telnyx.com/" },
+        { id: "vonage", label: "Vonage (CNP)", category: Category.REGISTRATION, scope: { service: "registration" }, secretKey: "registration-vonage",
+          fields: [ { name: "apiKey", label: "API Key", secret: false }, { name: "apiSecret", label: "API Secret" } ],
+          docsUrl: "https://dashboard.nexmo.com/" },
 
         // Payments — payment processors (platform-shared)
         { id: "stripe", label: "Stripe", category: Category.PAYMENTS, scope: "platform", secretKey: "payments-stripe",

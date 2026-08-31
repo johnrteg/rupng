@@ -905,6 +905,68 @@ so the load-bearing capabilities are about **agent throughput and contact concur
   **conversation reassignment** so an inbound reply routes to (or is handed to) the right agent. *(This makes
   `texting-7.6` — conversation assignment — load-bearing, not "later", for the staffed-team model.)*
 
+# Outsourcing & one-click sending
+
+*Folded from production — a distinct automation + delegation layer on top of the P2P agent workflow above,
+easy to miss because it looks like "just a bulk-send flag."* Two related capabilities let an account scale P2P
+sending **beyond its own staff**: **one-click** (automate the fan-out a human would otherwise do one contact at
+a time) and **outsourcing** (delegate the human sending itself to a contracted/vendor team).
+
+**One-click = an automation flag on a campaign/action, not a separate product.** Any P2P send unit can be
+marked **1-click**; once launched (an explicit human "Send"/"Schedule" action, not silent), a background job
+fans out a **templated, per-contact message** to every matching contact **without a human clicking send per
+contact** — the same `canSend()` + two-stage gating pipeline runs per message, just triggered by the job instead
+of a texter.
+* **Still human-gated at the boundaries** — launching requires the action to already be validated (not still
+  `draft`); **scheduling** requires an explicit future time with a minimum lead time; **short codes may only be
+  used via 1-click** (never manual per-contact texting — their throughput model assumes full automation).
+* **Idempotent launch** — a launch/schedule/cancel call is deduped by a **job idempotency key + short TTL** (the
+  request, not just the message), so a double-click or retried request coalesces into the same run instead of
+  double-firing the batch — the same `texting-1.6` idempotency primitive, applied one level up.
+* **Cancel takes effect mid-batch** — the fan-out job checks a cancellation flag **per contact**, so cancel
+  stops the batch within the current run, not just before the next one.
+* **Once live, it's locked — cancel-then-restart, not silent edit.** After launch, the campaign's **audience
+  (group/filter) and message text are frozen**; any attempt to change them is rejected (or silently reverted to
+  the launched values) rather than applied — a launched 1-click blast can't be redirected to a different list or
+  have its copy swapped mid-flight without an explicit cancel + relaunch. This is a compliance guard (10DLC
+  approves a *specific* message + use-case) as much as a correctness one.
+* **Resend continuity** — a resend/retry of a partially-completed batch must not reset progress counters or
+  double-count already-sent contacts; it should continue from where the run left off.
+
+**Outsourcing = delegating the human-sending role itself, scoped by team.** An account (or a campaign) can mark
+a project **outsourced** so the actual texting is done by a **contracted/vendor team**, not the account's own
+staff.
+* **Teams, not individual outsourced accounts, are the access-scoping unit** — a team carries which
+  campaigns/accounts it may touch, its notification channel, and its billing/rate terms; an outsourced worker's
+  access is a function of team membership, not a bespoke per-person grant. *(Cross-service: teams are part of
+  the [auth](../auth/specs/SPECS.md)/[account](../account/specs/SPECS.md) role model, `texting-21` note on Teams.)*
+* **Minimum-size + terms gating before submission** — outsourcing a project below a configurable minimum
+  contact count is blocked (too small to be worth a vendor's engagement) unless explicitly team-routed; the
+  client/account must accept the outsourcing terms before a project can go live under a team.
+* **Auto-routing by size** — small lists can route to an internal team, larger ones to external vendor teams, by
+  a configurable threshold — a cheap load-balancing rule, not a manual triage step.
+* **No per-message human approval — compliance is structural, not a review queue.** There is deliberately **no
+  "approve this outgoing text before it sends" step** for outsourced/one-click sends. Compliance risk is
+  mitigated **in the pipeline itself**: mandatory STOP-language validation, prohibited-content screening, and
+  the frozen-message guard above. A rewrite should keep this stance explicit (structural checks, not manual
+  gatekeeping) rather than assume a review queue exists.
+* **Ops monitoring, not per-agent micromanagement** — admin/CS visibility is at the **project** level: is a
+  project's send progress on pace for its declared window (a simple elapsed-time-vs-sent-percentage heuristic
+  is enough to flag "running slow"), has it gone stale (no activity past a configurable window → auto-archive),
+  and is a paused/held project properly surfaced for follow-up. This is **push-based** (an event/notification
+  when a project needs attention), not a dashboard operators must remember to poll.
+* **A live status feed, not a polling dashboard.** The legacy ops surface polled a report endpoint for this
+  visibility; **[realtime](../realtime/SPECS.md)** removes the need to poll — project-status changes (slow,
+  stale, paused, completed) push to the ops surface directly.
+
+> **A pragmatic legacy shortcut we deliberately do NOT repeat: using a chat tool (Slack) as the agent's actual
+> send/reply console.** It's a reasonable MVP hack — no bespoke UI needed to get "a human replies to a text" live
+> — but it conflates two different audiences (contracted texting agents vs. on-call engineers) behind one
+> notification surface, and makes the *chat tool* a load-bearing part of the send path. **Our stance:** the
+> **in-app inbox / P2P workflow (`texting-21`) is the one agent console**, for both staff and outsourced teams;
+> a chat/notification integration (Slack or otherwise) is a **[monitor](../monitor/SPECS.md)/[marketplace](../marketplace/SPECS.md)-style
+> notification target**, not a second place a message can originate from.
+
 # Surveys (delegated — not a second engine)
 
 Built-in surveys are an **interactive, stateful conversation state machine**: send question → await reply →
@@ -1166,7 +1228,10 @@ The platform's *defining* requirements span services — **captured here so a re
 **Adjacent → others**
 * **URL shortening + click attribution** → [links](../links/SPECS.md) (custom domains; per-contact / message).
 * **CSV/Excel import** (dedup / mapping / batched parallel / large lists) + **group / segment** ops → [contact](../contact/SPECS.md).
-* **Voice call-forwarding** on proxy numbers (numbers are voice-capable) → a voice surface *(adjacent; scope TBD)*.
+* **Voice call-forwarding** on proxy numbers (numbers are voice-capable) → a voice surface *(adjacent; scope
+  TBD)*. *(Legacy nugget worth keeping if built: a completed forwarded call was logged as an event **on the same
+  contact's conversation timeline** as their texts — one unified history per contact, not a separate call log —
+  so an agent opening a thread sees calls and texts interleaved.)*
 
 **⚠️ Real-time contact-lock coordination → [realtime](../realtime/SPECS.md) (WebSocket + presence)**
 * The **P2P contact checkout lock** (`texting-21.2`) is **coordinated live over realtime's WebSocket** — agents
@@ -1409,6 +1474,22 @@ residency is the platform [AWS topology](../../../packages/services/src/aws/SPEC
 21. ✅ **Analytics path — DECIDED: warehouse, not counters.** Rich cohort / funnel reporting rides the
     **[analytics](../analytics/SPECS.md)** lake (Kafka → S3), not incremented counters; texting keeps only
     operational counters + the feedback loop (`texting-19.6`).
+22. ✅ **One-click & outsourcing — DECIDED, first-class (`texting-23`).** One-click is an **automation flag**
+    (background fan-out through the normal pipeline, not a special send path), idempotent at the **launch**
+    level, cancellable mid-batch, and **frozen after launch** (no silent in-flight audience/message edit).
+    Outsourcing delegates sending to a **team** (the access-scoping unit), gated by minimum size + accepted
+    terms. **No per-message human approval** — compliance is structural (STOP-language + content screening +
+    frozen-message guard), matching the platform's general stance of gating at the pipeline, not via a review
+    queue. Ops visibility (project pace, stale-project archival) is **push-based via
+    [realtime](../realtime/SPECS.md)**, not a polling dashboard — and explicitly **not** built on a chat tool
+    (Slack) as the actual send/reply console, unlike the legacy shortcut (`texting-23.4`).
+23. ✅ **Contact-level unreachable circuit breaker — DECIDED, layered (`texting-5.13`).** Independent of
+    sending-number benching (`texting-5.7`), a **contact-level** skip rule (permanent / N-days / N-projects,
+    resolved campaign → account → platform default) stops re-texting chronically-failing numbers — a
+    cost/deliverability control, not a compliance one.
+24. ✅ **Unparsed webhook payloads — DECIDED: captured + alerted, not silently dropped (`texting-7.1.2`).** The
+    legacy system 204'd and discarded any provider callback it couldn't parse — a real operator blind spot we
+    close: an unrecognized payload is still ACKed fast (provider retry hygiene) but persisted + alerted.
 
 # Out of scope (deferred — later considerations)
 
@@ -1433,6 +1514,11 @@ live inbox push → [realtime](../realtime/SPECS.md); survey state → [survey](
 ## texting-1.0 Sending — A
 - **texting-1.1** **Single send** (SMS / MMS) — A
 - **texting-1.2** **Bulk send** from **[contact](../contact/SPECS.md)** segments — A
+  - **texting-1.2.1** **Pull-based fan-out, not push-all-at-once** — a bulk/1-click send does **not** dump every
+    message onto the queue up front; it enqueues **as fast as the send decision is actually made** (an agent's
+    next-contact pull, or an automation's bounded-concurrency worker loop), naturally rate-limiting queue growth
+    to how fast sends are really happening rather than flooding SQS with the whole segment instantly *(folded
+    from production; a genuine "don't overwhelm the queue" lesson)* — B
 - **texting-1.3** **Two-level queueing** — **(L1)** account **fair-share** ([dispatch](../../../packages/services/DISPATCH.md)) emits a **logical queue name** → resolves to a **physical queue** (config); **(L2)** a **worker** pulls + **throttles to the provider's config** via **Redis** counters — A
   - **texting-1.3.1** **L2 enforces both send-side ceilings** — **per-provider account send limit** + **per-number carrier MPS** (Redis token-bucket / sliding-window, per-provider + per-number); over budget → **leave on queue (backpressure), don't drop** — A
   - **texting-1.3.2** **Defense-in-depth limits (must clear ALL)** — one **token-bucket** with a **key-prefix hierarchy** (`provider` · `carrier` · `tcr` · `carrier-tcr` · `tf`/`sc` · per-line) **+** send-window **+** invalid-number suppression **+** carrier pause/discard **+** TPM/LTPM **+** daily/TCR caps **+** balance; **backpressure via control statuses** (`600` provider 429/5xx · `601` out-of-window · `602` carrier-paused) keeps the SQS message **invisible + retried** (pacing, not drop); only permanent failures + successes leave — A
@@ -1452,6 +1538,10 @@ live inbox push → [realtime](../realtime/SPECS.md); survey state → [survey](
 - **texting-2.4** **Tracked links** via [links](../links/SPECS.md) — **required** branded short domain (carriers block public shorteners) — A
 - **texting-2.5** **Segment counter** — compute SMS segments / encoding; surface length + cost warning (same counter billing uses) — B
 - **texting-2.6** **Content-compliance validation (pluggable stage)** — message validation is a **pluggable pipeline** (placeholder checks, review-word / SHAFT alerts, Campaign-Verify formatting rules); runs pre-send, extensible without core changes — B
+  - **texting-2.6.1** **Template-drift guard (10DLC-approved text can't silently change)** — for a campaign whose
+    approved message text must not be altered post-approval, the send pipeline **compares the outgoing text to
+    the approved template** (whitespace-normalized) and **blocks the send + flags it** if they don't match,
+    instead of sending an edited message under an already-vetted use-case — B
 
 ## texting-3.0 Provider abstraction (factory) & UDF — A
 - **texting-3.1** Provider **factory** — **Bandwidth · Bandwidth3 · BroadNet · Infobip · SignalWire · Sinch · Telnyx · Telnyx3 · Twilio · Vonage** + **`fake`** (`Bandwidth3` / `Telnyx3` = separate configs/accounts of the same vendor) — A
@@ -1498,6 +1588,13 @@ live inbox push → [realtime](../realtime/SPECS.md); survey state → [survey](
 - **texting-5.9** **Daily / TCR caps** — `brandDailyCap` + quota hooks (10DLC, via [registration](../registration/SPECS.md)) enforced at send — A
 - **texting-5.10** **Contact `suppression` attribute (typed)** — a **per-channel** `suppression { status, reason, source, at, scope }` (reason: `dnd`/`hard_block`/`unreachable`/`landline`/`deactivated`) → **skipped from live sends**; set by errcode classification (`texting-6.5`), `err_count` (`texting-6.4`), or STOP; **not** a string in a shared array — A
 - **texting-5.11** **Typed tags, NOT one bag** — separate typed attributes — `suppression` · `lifecycle` (enum) · `labels` (agent set) · message `outcome` · number `health` — each **one mission, one type, on the right entity**; **reject the production single `flags[]` array** — A
+- **texting-5.13** **Unreachable-contact circuit breaker (layered, tunable)** — independent of the sending-number
+  bench (`texting-5.7`, which protects the *number*), a **contact-level** breaker skips a contact from *future*
+  sends once its delivery `err_count` crosses a **configurable, layered** threshold — **campaign/action-level
+  rule → account-level rule → platform default**, first match wins — expressed as any combination of: skip
+  **permanently** past N total errors, skip for **N days** since the last error, or skip for the **next N
+  projects/sends**. This is a **deliverability/cost** control (stop paying to re-text a chronically-failing
+  number), distinct from and complementary to opt-out/suppression — B
 - **texting-5.12** **Scoped suppression (replaces "split DND")** — suppression is a **list of typed records** `{ channel, reason, scope{level,id}, source, at, keyword }`; `scope.level` ∈ `global`/`number`/`brand`/`campaign`; a send is blocked if a record is **`global`** or matches the send's `{number, brand, campaign}`; granularity = campaign **`optOutScope`** enum; stats roll up by `reason` (ignore scope); **no `dnd:<channel>` suffix strings** — A
 
 ## texting-6.0 DLR & status — A
@@ -1511,6 +1608,16 @@ live inbox push → [realtime](../realtime/SPECS.md); survey state → [survey](
 ## texting-7.0 Inbound & two-way (conversation / inbox) — A
 - **texting-7.1** **Inbound webhook pipeline** — `webhook/texting/<provider> → verify (signature) → react → enrich → emit` — A
   - **texting-7.1.1** **Inbound idempotency** — dedup by provider **message-id** (Redis counter, ~hourly TTL); a duplicate → **406**; **delete the key on processing error** so the provider's retry can still succeed — A
+  - **texting-7.1.2** **Unrecognized webhook payloads are captured, never silently dropped** — a payload that
+    doesn't match any known provider shape (a provider changed its format, a misconfigured integration, …) is
+    **still ACKed fast** (provider webhooks retry aggressively on non-200) but the **raw payload + provider +
+    reason is persisted and alerted** (via [monitor](../monitor/SPECS.md)), not just `204`'d and discarded. *(The
+    legacy system silently dropped anything it couldn't parse — a real blind spot we close: an operator must be
+    able to see "provider X sent something we don't understand" instead of it vanishing.)* — B
+  - **texting-7.1.3** **Bounded reconciliation window for correlation-less DLRs** — when a provider's status
+    callback carries no direct message/log reference (older/legacy-style provider payloads), falling back to a
+    phone-number lookup is **bounded to a short recent window** (e.g. ~1 hour) so a late-arriving report can
+    never mis-attach to a *newer* message to the same contact — B
 - **texting-7.2** **Conversation / thread model** — `contact ↔ number ↔ account` + **message history** (texting owns the store) *(gap #7)* — A
 - **texting-7.3** **Inbound routing** — key off **(from contact, to number)** resolved against the recorded `(contact → number used)` map (`texting-4.3.1`) → resolve context (campaign / rep / bot); supports **multiple numbers per contact** — A
   - **texting-7.3.1** **Replies are pinned + wait on outage** — an outbound reply goes on the contact's **stuck number** (`texting-4.3.3`); if that provider is down it **waits in queue (backpressure)**, never failover — A
@@ -1640,6 +1747,36 @@ live inbox push → [realtime](../realtime/SPECS.md); survey state → [survey](
 - **texting-22.2** **`TextingMainService`** — the `/texting/*` API (send-enqueue · conversation/inbox · autoresponder · numbers · opt-out admin · P2P agent workflow) — A
 - **texting-22.3** **`TextingWebhookService`** — provider **inbound + DLR** ingress (signature-verify + ACK-fast → enqueue); **scales apart** from the user API — A
 - **texting-22.4** **Jobs extend `TextingJob`** — `TextingSendWorker` / `TextingDlrJob` / `TextingInboundJob` / `TextingDripJob` / `TextingScheduleJob` — A
+
+## texting-23.0 Outsourcing & one-click sending — B
+- **texting-23.1** **One-click automation flag** — a campaign/action marked **1-click** fans out a **templated,
+  per-contact** send via a background job instead of per-contact manual texting, running the **full** normal
+  pipeline (`canSend()` + two-stage gating) per message; **short codes are 1-click-only** (never manual) — B
+  - **texting-23.1.1** **Idempotent launch/schedule/cancel** — the launch request itself (not just each message)
+    is deduped by a short-TTL job idempotency key, so a double-click/retry coalesces into one run — B
+  - **texting-23.1.2** **Mid-batch cancel** — cancellation is checked **per contact** during the fan-out so a
+    cancel takes effect within the running batch, not only before the next one — B
+  - **texting-23.1.3** **Frozen-after-launch** — audience (group/filter) and message text are **locked** once
+    live; changing them requires an explicit **cancel + relaunch**, never a silent in-flight edit (protects
+    10DLC-approved use-case + content) — B
+  - **texting-23.1.4** **Resend continuity** — restarting/retrying a partial batch resumes rather than
+    resets progress or double-counts already-sent contacts — B
+- **texting-23.2** **Outsourced / team-delegated sending** — a project can be delegated to a **team** (vendor or
+  internal) rather than the account's own staff; team membership is the access-scoping unit (which
+  accounts/campaigns a team may touch), not a per-person grant *(cross-service: teams ride
+  [auth](../auth/specs/SPECS.md)/[account](../account/specs/SPECS.md) roles)* — B
+  - **texting-23.2.1** **Minimum-size + terms gating** — outsourcing below a configurable contact-count floor is
+    blocked unless explicitly team-routed; going live requires accepted outsourcing terms — B
+  - **texting-23.2.2** **Size-based auto-routing** — small lists → internal team, large lists → vendor team, by
+    configurable threshold — C
+- **texting-23.3** **No per-message approval — compliance is structural** — outsourced/1-click sends are **not**
+  gated by a human review-per-message queue; compliance risk is mitigated by the pipeline itself (mandatory
+  STOP-language, content screening, the frozen-message guard `texting-23.1.3`) — B
+- **texting-23.4** **Push-based ops visibility, not a polling dashboard** — project pace (on-track / running
+  slow / stale) and stale/inactive auto-archival push to the ops surface via
+  **[realtime](../realtime/SPECS.md)**; **no chat tool (e.g. Slack) is a load-bearing send/reply console** — the
+  in-app P2P workflow (`texting-21`) is the one agent console for staff and outsourced teams alike; a chat
+  integration is a notification target only — B
 - **texting-22.5** **`TextingSendWorker` is provider-agnostic** — one factory worker dispatches by `message.provider`; **per-provider queues = HoL isolation, not a worker-per-provider** (`texting-3.0` / `20.0`) — A
 
 # Endpoints (first cut)
@@ -1686,6 +1823,15 @@ staff **`SUPPORT`<`APPLICATION`<`ROOT`** · **`⬆`** = step-up · **`Internal`*
 | PATCH | `/texting/conversations/{id}/messages/{messageId}` | **Tag** a message (and set read / thread status) | USER | texting-7.5.3 |
 | GET, PUT | `/texting/autoresponders` | **Account-level** keyword auto-replies (defaults) | USER | texting-7.7.2 |
 | GET, PUT | `/texting/campaigns/{campaignId}/autoresponders` | **Campaign-level** keyword auto-replies (override/extend) | USER | texting-7.7.2 |
+
+### One-click & outsourcing (texting-23)
+| Method | URI | Purpose | Access | Req |
+|---|---|---|---|---|
+| POST | `/texting/campaigns/{campaignId}/oneclick/launch` | Launch a **1-click** fan-out (idempotent) | ACCOUNT | texting-23.1/23.1.1 |
+| POST | `/texting/campaigns/{campaignId}/oneclick/schedule` | Schedule a 1-click launch for a future time | ACCOUNT | texting-23.1 |
+| POST | `/texting/campaigns/{campaignId}/oneclick/cancel` | Cancel a running/scheduled 1-click send (mid-batch) | ACCOUNT | texting-23.1.2 |
+| PUT | `/texting/campaigns/{campaignId}/team` | Assign / reassign the project to a **team** (outsourced/internal) | SUPPORT ⬆ | texting-23.2 |
+| GET | `/texting/teams/{teamId}/projects` | List a team's assigned projects + pace status | SENDER | texting-23.4 |
 
 ### P2P agent workflow — checkout & locking (texting-21)
 *Lock state is **live over the [realtime](../realtime/SPECS.md) WebSocket** (texting-21.2.1); these REST routes are the control plane. Redis = lock SoT + TTL.*

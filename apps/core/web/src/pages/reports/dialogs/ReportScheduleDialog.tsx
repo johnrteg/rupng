@@ -15,7 +15,8 @@ import TimeInput     from '@widgets/core/TimeInput';
 import TimezoneInput from '@widgets/core/TimezoneInput';
 
 import DateWindowInput  from '../widgets/DateWindowInput';
-import DestinationInput from '../widgets/DestinationInput';
+import DestinationListInput from '../widgets/DestinationListInput';
+import ContactsReportParamsInput from '../widgets/ContactsReportParamsInput';
 
 // the recurrence's cadence — the three the builder supports (report-4.x doesn't require anything finer).
 enum Frequency
@@ -42,7 +43,8 @@ const WEEKDAY_CHOICES : Array<SelectMultInput.Choice> =
 
 // the schedule's default window — rolling last 7 days (a Schedule can't carry a fixed window, report-3.3).
 const DEFAULT_WINDOW : Report.DateWindow = { kind: "relative", rolling: { amount: 7, unit: "day" } };
-const DEFAULT_DESTINATION : Report.Destination = { kind: Report.DestinationKind.DOWNLOAD, config: {} };
+// no destinations picked yet — the server defaults an empty/omitted list to a single DOWNLOAD destination.
+const DEFAULT_DESTINATIONS : Array<Report.Destination> = [];
 // 9:00 AM local — a sane default fire time when creating a new schedule.
 const DEFAULT_TIME : Date = ( () => { const time : Date = new Date(); time.setHours( 9, 0, 0, 0 ); return time; } )();
 
@@ -63,17 +65,30 @@ export function ReportScheduleDialog( props : ReportScheduleDialog.Props ) : JSX
     const [timezone,setTimezone]   = React.useState< string >( props.schedule?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone );
     const [window,setWindow]       = React.useState< Report.DateWindow >( seeded.window );
     const [format,setFormat]       = React.useState< Report.Format | "" >( props.schedule?.format ?? props.report?.formats[ 0 ] ?? "" );
-    const [destination,setDestination] = React.useState< Report.Destination >( props.schedule?.destination ?? DEFAULT_DESTINATION );
+    const [destinations,setDestinations] = React.useState< Array<Report.Destination> >( props.schedule?.destinations ?? DEFAULT_DESTINATIONS );
+    const [contactsParams,setContactsParams] = React.useState< ContactsReportParamsInput.Value >( seeded.contactsParams );
 
     const report : Report.Definition | null = props.report;
+    // whether the selected report declares the ContactsReport-specific extra params — checked against the
+    // report's own declarative schema rather than hardcoding its reportId
+    const showContactsParams : boolean = report !== null && ContactsReportParamsInput.appliesTo( report.paramsSchema );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // seed the builder's controls from an existing schedule's `ical` (edit mode) — best-effort; falls back
     // to the daily/9am default when the RRULE doesn't parse into one of the 3 supported cadences
     function seedFromSchedule( schedule? : Report.Schedule ) : ReportScheduleDialog.Seed
     {
-        const scheduleWindow : Report.DateWindow = ( ( schedule?.params as { window? : Report.DateWindow } | undefined )?.window ) ?? DEFAULT_WINDOW;
-        if( !schedule ) return { frequency: Frequency.DAILY, weekdays: [], time: DEFAULT_TIME, window: scheduleWindow };
+        const scheduleParams : { window? : Report.DateWindow } & ContactsReportParamsInput.Value = ( schedule?.params as { window? : Report.DateWindow } & ContactsReportParamsInput.Value | undefined ) ?? {};
+        const scheduleWindow : Report.DateWindow = scheduleParams.window ?? DEFAULT_WINDOW;
+        const contactsParams : ContactsReportParamsInput.Value =
+        {
+            status:        scheduleParams.status,
+            modifiedStart: scheduleParams.modifiedStart,
+            modifiedEnd:   scheduleParams.modifiedEnd,
+            segmentId:     scheduleParams.segmentId,
+            tags:          scheduleParams.tags,
+        };
+        if( !schedule ) return { frequency: Frequency.DAILY, weekdays: [], time: DEFAULT_TIME, window: scheduleWindow, contactsParams };
         try
         {
             const rule : RRule = RRule.fromString( schedule.ical );
@@ -82,11 +97,11 @@ export function ReportScheduleDialog( props : ReportScheduleDialog.Props ) : JSX
             const weekdaysFromRule : Array<string> = ( rule.options.byweekday ?? [] ).map( ( day : number ) : string => WEEKDAY_CODES[ day ] );
             const time : Date = new Date();
             time.setHours( rule.options.byhour?.[ 0 ] ?? 9, rule.options.byminute?.[ 0 ] ?? 0, 0, 0 );
-            return { frequency: frequencyFromRule, weekdays: weekdaysFromRule, time, window: scheduleWindow };
+            return { frequency: frequencyFromRule, weekdays: weekdaysFromRule, time, window: scheduleWindow, contactsParams };
         }
         catch
         {
-            return { frequency: Frequency.DAILY, weekdays: [], time: DEFAULT_TIME, window: scheduleWindow };
+            return { frequency: Frequency.DAILY, weekdays: [], time: DEFAULT_TIME, window: scheduleWindow, contactsParams };
         }
     }
 
@@ -123,13 +138,21 @@ export function ReportScheduleDialog( props : ReportScheduleDialog.Props ) : JSX
     {
         if( report === null || format === "" || timezone === "" ) return false;
         if( frequency === Frequency.WEEKLY && weekdays.length === 0 ) return false;
+        return destinations.every( isDestinationFilled );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // one destination row is complete enough to save (EMAIL needs `to`, WEBHOOK needs `url`)
+    function isDestinationFilled( destination : Report.Destination ) : boolean
+    {
         if( destination.kind === Report.DestinationKind.EMAIL )   return !!( destination.config as Type.JsonObject ).to;
         if( destination.kind === Report.DestinationKind.WEBHOOK ) return !!( destination.config as Type.JsonObject ).url;
         return true;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // hand the assembled request to the parent, which POSTs (create) or PATCHes (edit)
+    // hand the assembled request to the parent, which POSTs (create, via PostReportRuns+schedule) or
+    // PATCHes (edit, via PatchReportSchedule) depending on whether `props.schedule` was supplied
     function onYes() : Promise<boolean>
     {
         if( report === null || format === "" ) return Promise.resolve( false );
@@ -137,9 +160,9 @@ export function ReportScheduleDialog( props : ReportScheduleDialog.Props ) : JSX
             reportId: report.reportId,
             ical:     composeIcal(),
             timezone,
-            params:   { window },
+            params:   showContactsParams ? { window, ...contactsParams } : { window },
             format:   format as Report.Format,
-            destination,
+            destinations,
         } );
     }
 
@@ -176,7 +199,9 @@ export function ReportScheduleDialog( props : ReportScheduleDialog.Props ) : JSX
 
                     <SelectInput id="schedule-format" label={"Format"} value={ format } choices={ formatChoices } onChange={ ( value : string ) : void => setFormat( value as Report.Format ) } sx={{ width: 160 }} />
 
-                    <DestinationInput value={ destination } onChange={ setDestination } />
+                    { showContactsParams && <ContactsReportParamsInput value={ contactsParams } onChange={ setContactsParams } /> }
+
+                    <DestinationListInput value={ destinations } onChange={ setDestinations } />
                 </Stack>
             </DialogWindow>;
 }
@@ -185,10 +210,24 @@ export namespace ReportScheduleDialog
 {
     export interface Seed
     {
-        frequency : Frequency;
-        weekdays  : Array<string>;
-        time      : Date;
-        window    : Report.DateWindow;
+        frequency      : Frequency;
+        weekdays       : Array<string>;
+        time           : Date;
+        window         : Report.DateWindow;
+        contactsParams : ContactsReportParamsInput.Value;
+    }
+
+    // the assembled builder output — the parent (`ReportsPage.onSaveSchedule`) turns this into a
+    // `PostReportRuns` call (create, nesting `ical`/`timezone` under `schedule`) or a `PatchReportSchedule`
+    // call (edit, flat fields) depending on whether it's editing an existing schedule.
+    export interface Request
+    {
+        reportId     : Type.ID;
+        ical         : string;
+        timezone     : string;
+        params       : Type.Json;
+        format       : Report.Format;
+        destinations : Array<Report.Destination>;
     }
 
     export interface Props
@@ -197,7 +236,7 @@ export namespace ReportScheduleDialog
         onClose  : () => void;
         report   : Report.Definition | null;              // the report being scheduled
         schedule? : Report.Schedule;                      // present -> edit (PATCH); absent -> create (POST)
-        onSave   : ( request : Report.CreateSchedule ) => Promise<boolean>;   // parent POSTs or PATCHes + snacks
+        onSave   : ( request : Request ) => Promise<boolean>;   // parent POSTs or PATCHes + snacks
     }
 }
 

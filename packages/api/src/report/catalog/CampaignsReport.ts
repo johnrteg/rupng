@@ -9,8 +9,8 @@ import { REPORT_BASE_PARAMS_SCHEMA } from "./ReportBaseParams";
 
 export const CampaignsReport : Report.Definition =
 {
-    reportId:     "campaigns",
-    name:         "Campaigns",
+    reportId:     "campaign_lists",
+    name:         "Campaign Lists",
     minAccess:    Access.AccountRole.USER,
     generator:    "campaigns",
     paramsSchema:

@@ -23,8 +23,9 @@ export class ContactClient
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    /** All of an account's contacts (optionally filtered by status), walking every page. */
-    public async listContacts( accountId : Type.ID, status? : Contact.ContactStatus ) : Promise<Type.Result<Array<Contact.Entity>>>
+    /** All of an account's contacts (optionally filtered by status/modified-range/segment/tags), walking
+     *  every page. */
+    public async listContacts( accountId : Type.ID, filters? : ContactClient.Filters ) : Promise<Type.Result<Array<Contact.Entity>>>
     {
         const all : Array<Contact.Entity> = [];
         let start : string | undefined = undefined;
@@ -33,7 +34,11 @@ export class ContactClient
         for( ;; )
         {
             const reply : RestfulService.Reply<GetInternalContacts.Response> = await this.client.fetch(
-                new GetInternalContacts( { accountId, status, start, count: Paging.MAX_COUNT } ) );
+                new GetInternalContacts( {
+                    accountId, start, count: Paging.MAX_COUNT,
+                    status: filters?.status, modifiedStart: filters?.modifiedStart, modifiedEnd: filters?.modifiedEnd,
+                    segmentId: filters?.segmentId, tags: filters?.tags,
+                } ) );
             if( !reply.ok ) return ResultUtils.err( `contact internal list failed (${ reply.status })` );
 
             const page : GetInternalContacts.Response = reply.data as GetInternalContacts.Response;
@@ -42,6 +47,19 @@ export class ContactClient
             start = page.page.next;
         }
         return ResultUtils.ok( all );
+    }
+}
+
+export namespace ContactClient
+{
+    /** The optional matching params `listContacts` forwards through to `GetInternalContacts`'s query. */
+    export interface Filters
+    {
+        status?        : Contact.ContactStatus;
+        modifiedStart? : Type.ISODateTime;
+        modifiedEnd?   : Type.ISODateTime;
+        segmentId?     : string;
+        tags?          : Array<string>;
     }
 }
 

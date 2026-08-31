@@ -1,6 +1,6 @@
 //
 import { RestfulEndpoint, apiPath } from "@repo/endpoint";
-import { NetworkUtils } from "@repo/common";
+import { NetworkUtils, type Type } from "@repo/common";
 import { Contact } from "./model/Contact";
 import { Paging } from "../model/Paging";
 
@@ -32,10 +32,14 @@ export class GetInternalContacts extends RestfulEndpoint< GetInternalContacts.Qu
         return {
             type: "object", additionalProperties: false, required: [ "accountId" ],
             properties: {
-                accountId: { type: "string" },
-                status:    { type: "string", enum: Object.values( Contact.ContactStatus ) },
-                count:     { type: "number" },
-                start:     { type: "string" },
+                accountId:     { type: "string" },
+                status:        { type: "string", enum: Object.values( Contact.ContactStatus ) },
+                modifiedStart: { type: "string" },
+                modifiedEnd:   { type: "string" },
+                segmentId:     { type: "string" },
+                tags:          { type: "array", items: { type: "string" } },
+                count:         { type: "number" },
+                start:         { type: "string" },
             },
         };
     }
@@ -48,8 +52,12 @@ export namespace GetInternalContacts
 
     export interface Query extends Paging.Request
     {
-        accountId : string;
-        status?   : Contact.ContactStatus;
+        accountId      : string;
+        status?        : Contact.ContactStatus;
+        modifiedStart? : Type.ISODateTime;   // Contact.audit.modifiedAt >= this
+        modifiedEnd?   : Type.ISODateTime;   // Contact.audit.modifiedAt <= this
+        segmentId?     : string;             // Contact.segmentIds includes this
+        tags?          : Array<string>;      // Contact.tags[].value includes any of these
     }
 
     export interface Response extends Paging.Result<Contact.Entity> {}

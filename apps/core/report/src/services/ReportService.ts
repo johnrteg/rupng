@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 import type { ScanCommandOutput } from "@aws-sdk/lib-dynamodb";
 
-import { Application, Service, Register, Dynamo, S3, Sqs, Kafka, WorkQueue, Cache } from "@repo/services";
+import { Application, Service, Register, Dynamo, S3, Sqs, Kafka, WorkQueue, Cache, Ical } from "@repo/services";
 import { Events } from "@repo/system";
 import { Ports } from "@repo/cloud-manifest";
 import { Access } from "@repo/endpoint";
@@ -17,7 +17,7 @@ import { WriterFactory } from "../writers/WriterFactory";
 import { Writer } from "../writers/Writer";
 import { DestinationFactory } from "../destinations/DestinationFactory";
 import { Destination } from "../destinations/Destination";
-import { IcalUtils } from "../scheduling/IcalUtils";
+import { DateWindowUtils } from "../scheduling/DateWindowUtils";
 
 //
 // ReportService — the report domain's Service BASE (not deployed alone). Holds the shared domain wiring
@@ -117,10 +117,10 @@ export class ReportService extends Service
     ////////////////////////////////////////////////////////////////////////////////////////////
     // ── Submissions (report-2.0) ───────────────────────────────────────────────────────────────
 
-    /** Submit an ad-hoc run (report-2.1) — validates `params` against the report's declared schema, re-checks
-     *  its `minAccess` against the caller's resolved role, writes the Submission (status=SUBMITTED), and
-     *  hands it to the `WorkQueue` governor for paced release onto the report-generate queue. */
-    public async submit( accountId : Type.ID, submittedBy : Type.ID, request : Report.SubmitRequest, callerRole : Access.Role ) : Promise<Type.Result<Report.Submission>>
+    /** Look up the report + validate it ONCE — `minAccess`, declared `format`, and `params` against the
+     *  catalog's `paramsSchema` — shared by both the ad-hoc-submission and standing-schedule paths of
+     *  {@link createRun} so the check never drifts between them. */
+    private validateRunRequest( request : Report.CreateRun, callerRole : Access.Role ) : Type.Result<Report.Definition>
     {
         const definition : Report.Definition | undefined = findReport( request.reportId );
         if( definition === undefined ) return { ok: false, error: `unknown reportId "${ request.reportId }"` };
@@ -130,7 +130,36 @@ export class ReportService extends Service
         const validator : Validation.Validator<unknown> = Validation.compile( definition.paramsSchema as Validation.Schema );
         const validated : Validation.Result = validator( request.params );
         if( !validated.valid ) return { ok: false, error: `invalid params: ${ validated.issues.map( ( issue : Validation.Issue ) : string => issue.message ).join( "; " ) }` };
+        return { ok: true, data: definition };
+    }
 
+    /** Create a report run (`POST /report/runs`, report-2.1/4.1/4.2) — the ONE entry point for both an
+     *  ad-hoc submission and a standing recurring schedule. Validates the report + params + `minAccess`
+     *  ONCE (`validateRunRequest`), then branches on whether `request.schedule` was supplied: present →
+     *  create a standing `Schedule` (each of its fires spawns its own fresh `Submission`); absent → create
+     *  an ad-hoc `Submission` right away. Exactly one of the returned `{submission, schedule}` is set. */
+    public async createRun( accountId : Type.ID, actingUserId : Type.ID, request : Report.CreateRun, callerRole : Access.Role ) : Promise<Type.Result<{ submission? : Report.Submission; schedule? : Report.Schedule }>>
+    {
+        const validated : Type.Result<Report.Definition> = this.validateRunRequest( request, callerRole );
+        if( !validated.ok ) return { ok: false, error: validated.error };
+
+        if( request.schedule !== undefined )
+        {
+            const created : Type.Result<Report.Schedule> = await this.createScheduleInternal( accountId, actingUserId, request, validated.data );
+            if( !created.ok ) return { ok: false, error: created.error };
+            return { ok: true, data: { schedule: created.data } };
+        }
+
+        const submitted : Type.Result<Report.Submission> = await this.createSubmission( accountId, actingUserId, request, validated.data );
+        if( !submitted.ok ) return { ok: false, error: submitted.error };
+        return { ok: true, data: { submission: submitted.data } };
+    }
+
+    /** Submit an ad-hoc run (report-2.1) — writes the Submission (status=SUBMITTED) and hands it to the
+     *  `WorkQueue` governor for paced release onto the report-generate queue. Caller (`createRun`) has
+     *  already validated `params`/`format`/`minAccess` via `validateRunRequest`. */
+    private async createSubmission( accountId : Type.ID, submittedBy : Type.ID, request : Report.CreateRun, definition : Report.Definition ) : Promise<Type.Result<Report.Submission>>
+    {
         const submissionId : Type.ID = randomUUID();
         const now : Type.ISODateTime = new Date().toISOString();
         const submission : Report.Submission =
@@ -138,7 +167,7 @@ export class ReportService extends Service
             accountId, submissionId, reportId: request.reportId, specVersion: definition.specVersion,
             submittedBy, createdAt: now, status: Report.SubmissionStatus.SUBMITTED,
             params: request.params, format: request.format,
-            destination: request.destination ?? { kind: Report.DestinationKind.DOWNLOAD, config: {} },
+            destinations: request.destinations?.length ? request.destinations : [ { kind: Report.DestinationKind.DOWNLOAD, config: {} } ],
         };
 
         const wrote : Type.Result<void> = await this.putSubmission( submission );
@@ -262,27 +291,20 @@ export class ReportService extends Service
     ////////////////////////////////////////////////////////////////////////////////////////////
     // ── Schedules (report-4.0) ─────────────────────────────────────────────────────────────────
 
-    /** Create a recurring schedule (report-4.1/4.2) — validates the report + params (must carry a RELATIVE
-     *  window, report-3.3) + the `ical` recurrence, computes the initial `nextFireAt`, and writes the row
-     *  ACTIVE. */
-    public async createSchedule( accountId : Type.ID, createdBy : Type.ID, request : Report.CreateSchedule, callerRole : Access.Role ) : Promise<Type.Result<Report.Schedule>>
+    /** Create a recurring schedule (report-4.1/4.2) — validates the params carry a RELATIVE window
+     *  (report-3.3) + the `ical` recurrence, computes the initial `nextFireAt`, and writes the row ACTIVE.
+     *  Caller (`createRun`) has already validated `params`/`format`/`minAccess` via `validateRunRequest`
+     *  and confirmed `request.schedule` is present. */
+    private async createScheduleInternal( accountId : Type.ID, createdBy : Type.ID, request : Report.CreateRun, definition : Report.Definition ) : Promise<Type.Result<Report.Schedule>>
     {
-        const definition : Report.Definition | undefined = findReport( request.reportId );
-        if( definition === undefined ) return { ok: false, error: `unknown reportId "${ request.reportId }"` };
-        if( !Access.isAllowed( callerRole, definition.minAccess ) ) return { ok: false, error: `report "${ request.reportId }" requires at least ${ definition.minAccess }` };
-        if( !definition.formats.includes( request.format ) ) return { ok: false, error: `report "${ request.reportId }" does not support format "${ request.format }"` };
-
         const window : Report.DateWindow | undefined = ReportService.windowOf( request.params );
         if( window !== undefined && window.kind === "fixed" ) return { ok: false, error: "a schedule's window must be relative — a fixed window is blocked (report-3.3)" };
 
-        const validator : Validation.Validator<unknown> = Validation.compile( definition.paramsSchema as Validation.Schema );
-        const validated : Validation.Result = validator( request.params );
-        if( !validated.valid ) return { ok: false, error: `invalid params: ${ validated.issues.map( ( issue : Validation.Issue ) : string => issue.message ).join( "; " ) }` };
-
-        const validIcal : Type.Result<void> = IcalUtils.validate( request.ical );
+        const recurrence : Report.RunSchedule = request.schedule!;
+        const validIcal : Type.Result<void> = Ical.validate( recurrence.ical );
         if( !validIcal.ok ) return { ok: false, error: validIcal.error };
 
-        const nextFire : Type.Result<Date> = IcalUtils.nextOccurrence( request.ical, request.timezone, new Date() );
+        const nextFire : Type.Result<Date> = Ical.nextOccurrence( recurrence.ical, recurrence.timezone, new Date() );
         if( !nextFire.ok ) return { ok: false, error: nextFire.error };
 
         const scheduleId : Type.ID = randomUUID();
@@ -290,8 +312,8 @@ export class ReportService extends Service
         const schedule : Report.Schedule =
         {
             accountId, scheduleId, reportId: request.reportId, specVersion: definition.specVersion,
-            ical: request.ical, timezone: request.timezone, params: request.params, format: request.format,
-            destination: request.destination ?? { kind: Report.DestinationKind.DOWNLOAD, config: {} },
+            ical: recurrence.ical, timezone: recurrence.timezone, params: request.params, format: request.format,
+            destinations: request.destinations?.length ? request.destinations : [ { kind: Report.DestinationKind.DOWNLOAD, config: {} } ],
             createdBy, status: Report.ScheduleStatus.ACTIVE, createdAt: now, nextFireAt: nextFire.data.toISOString(),
         };
 
@@ -349,7 +371,7 @@ export class ReportService extends Service
         if( patch.format !== undefined && !definition.formats.includes( patch.format ) ) return { ok: false, error: `report "${ existing.reportId }" does not support format "${ patch.format }"` };
         if( patch.ical !== undefined )
         {
-            const validIcal : Type.Result<void> = IcalUtils.validate( patch.ical );
+            const validIcal : Type.Result<void> = Ical.validate( patch.ical );
             if( !validIcal.ok ) return { ok: false, error: validIcal.error };
         }
 
@@ -360,13 +382,13 @@ export class ReportService extends Service
             timezone:    patch.timezone ?? existing.timezone,
             params:      patch.params ?? existing.params,
             format:      patch.format ?? existing.format,
-            destination: patch.destination ?? existing.destination,
+            destinations: patch.destinations?.length ? patch.destinations : existing.destinations,
         };
 
         // recompute nextFireAt whenever the recurrence or its evaluating zone changed
         if( patch.ical !== undefined || patch.timezone !== undefined )
         {
-            const nextFire : Type.Result<Date> = IcalUtils.nextOccurrence( merged.ical, merged.timezone, new Date() );
+            const nextFire : Type.Result<Date> = Ical.nextOccurrence( merged.ical, merged.timezone, new Date() );
             if( !nextFire.ok ) return { ok: false, error: nextFire.error };
             merged.nextFireAt = nextFire.data.toISOString();
         }
@@ -414,7 +436,7 @@ export class ReportService extends Service
         if( found.data === undefined ) return { ok: true, data: undefined };
 
         const resumed : Report.Schedule = { ...found.data, status: Report.ScheduleStatus.ACTIVE, pausedBy: undefined, pausedReason: undefined, pausedAt: undefined };
-        const nextFire : Type.Result<Date> = IcalUtils.nextOccurrence( resumed.ical, resumed.timezone, new Date() );
+        const nextFire : Type.Result<Date> = Ical.nextOccurrence( resumed.ical, resumed.timezone, new Date() );
         if( nextFire.ok ) resumed.nextFireAt = nextFire.data.toISOString();
 
         const wrote : Type.Result<void> = await this.putSchedule( resumed );
@@ -526,7 +548,7 @@ export class ReportService extends Service
         let resolvedWindow : { start : string; end : string } | undefined = undefined;
         if( window !== undefined )
         {
-            const resolved : Type.Result<{ start : string; end : string }> = IcalUtils.resolveDateWindow( window, "UTC", new Date() );
+            const resolved : Type.Result<{ start : string; end : string }> = DateWindowUtils.resolveDateWindow( window, "UTC", new Date() );
             if( !resolved.ok ) { await this.failSubmission( submission, resolved.error, "BAD_WINDOW" ); return; }
             resolvedWindow = resolved.data;
             submission = { ...submission, window: resolvedWindow };
@@ -579,18 +601,22 @@ export class ReportService extends Service
         }
     }
 
-    // publish/deliver the completion notice to whatever destination the submission declared (default DOWNLOAD).
+    // publish/deliver the completion notice to EVERY destination the submission declared (default DOWNLOAD) —
+    // fan-out: each destination is delivered independently, and one failing must not stop the others.
     private async deliverCompletion( submission : Report.Submission ) : Promise<void>
     {
         if( submission.outputKey === undefined ) return;
         const presigned : Type.Result<string> = await this.s3.presignGet( "report", submission.outputKey, 900 );
         if( !presigned.ok ) { this.log.warn( "completion download-link presign failed", { submissionId: submission.submissionId, error: presigned.error } ); return; }
 
-        const handler : Destination | undefined =
-            this.destinations.get( submission.destination.kind ) ?? this.destinations.get( Report.DestinationKind.DOWNLOAD );
-        if( handler === undefined ) return;
-        const delivered : Type.Result<void> = await handler.deliver( { accountId: submission.accountId, submission, downloadUrl: presigned.data } );
-        if( !delivered.ok ) this.log.warn( "completion delivery failed", { submissionId: submission.submissionId, kind: submission.destination.kind, error: delivered.error } );
+        for( const destination of submission.destinations )
+        {
+            const handler : Destination | undefined =
+                this.destinations.get( destination.kind ) ?? this.destinations.get( Report.DestinationKind.DOWNLOAD );
+            if( handler === undefined ) continue;
+            const delivered : Type.Result<void> = await handler.deliver( { accountId: submission.accountId, submission, destination, downloadUrl: presigned.data } );
+            if( !delivered.ok ) this.log.warn( "completion delivery failed", { submissionId: submission.submissionId, kind: destination.kind, error: delivered.error } );
+        }
     }
 
     // the MIME type S3 stores alongside each format's artifact.
@@ -627,11 +653,11 @@ export namespace ReportService
     /** The partial fields {@link ReportService.patchSchedule} accepts. */
     export interface SchedulePatch
     {
-        ical?        : string;
-        params?      : Type.Json;
-        format?      : Report.Format;
-        timezone?    : string;
-        destination? : Report.Destination;
+        ical?         : string;
+        params?       : Type.Json;
+        format?       : Report.Format;
+        timezone?     : string;
+        destinations? : Array<Report.Destination>;
     }
 }
 

@@ -8,8 +8,15 @@ import type { Report } from "../model/Report";
 import { ContactsReport } from "./ContactsReport";
 import { AccountsReport } from "./AccountsReport";
 import { CampaignsReport } from "./CampaignsReport";
+import { RegistrationBrandPipelineReport } from "./RegistrationBrandPipelineReport";
+import { RegistrationCampaignsReport } from "./RegistrationCampaignsReport";
+import { RegistrationChargesReport } from "./RegistrationChargesReport";
+import { RegistrationOpsQueueReport } from "./RegistrationOpsQueueReport";
 
-export const REPORT_CATALOG : Array<Report.Definition> = [ ContactsReport, AccountsReport, CampaignsReport ];
+export const REPORT_CATALOG : Array<Report.Definition> = [
+    ContactsReport, AccountsReport, CampaignsReport,
+    RegistrationBrandPipelineReport, RegistrationCampaignsReport, RegistrationChargesReport, RegistrationOpsQueueReport,
+];
 
 /** Look up one catalog entry by its stable `reportId` (undefined if unknown). */
 export function findReport( reportId : Type.ID ) : Report.Definition | undefined

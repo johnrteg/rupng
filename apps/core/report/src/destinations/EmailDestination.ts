@@ -14,7 +14,7 @@ export class EmailDestination implements Destination
     ////////////////////////////////////////////////////////////////////////////////////////////
     public async deliver( ctx : Destination.DeliverContext ) : Promise<Type.Result<void>>
     {
-        const config : { to? : string } = ( ctx.submission.destination.config as { to? : string } ) ?? {};
+        const config : { to? : string } = ( ctx.destination.config as { to? : string } ) ?? {};
         if( !config.to ) return { ok: false, error: "email destination missing config.to" };
 
         const client : EmailClient = new EmailClient();

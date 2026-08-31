@@ -18,9 +18,12 @@ export class ContactsReportGenerator implements ReportGenerator
     ////////////////////////////////////////////////////////////////////////////////////////////
     public async generate( ctx : ReportGenerator.GenerateContext ) : Promise<Type.Result<ReportGenerator.GenerateResult>>
     {
-        const params : { status? : Contact.ContactStatus } = ctx.params as { status? : Contact.ContactStatus };
+        const params : ContactsReportGenerator.Params = ctx.params as ContactsReportGenerator.Params;
         const client : ContactClient = new ContactClient();
-        const found : Type.Result<Array<Contact.Entity>> = await client.listContacts( ctx.accountId, params.status );
+        const found : Type.Result<Array<Contact.Entity>> = await client.listContacts( ctx.accountId, {
+            status: params.status, modifiedStart: params.modifiedStart, modifiedEnd: params.modifiedEnd,
+            segmentId: params.segmentId, tags: params.tags,
+        } );
         if( !found.ok ) return { ok: false, error: found.error };
 
         const columns : Array<string> = [ "id", "ref", "firstName", "lastName", "email", "phone", "status", "createdAt" ];
@@ -36,6 +39,20 @@ export class ContactsReportGenerator implements ReportGenerator
         } );
 
         return { ok: true, data: { rows, columns } };
+    }
+}
+
+export namespace ContactsReportGenerator
+{
+    /** The narrowed shape of this report's `paramsSchema`-validated `params` (`ContactsReport`'s catalog
+     *  entry, `@repo/api`) — all filters beyond the shared base `window` are optional. */
+    export interface Params
+    {
+        status?        : Contact.ContactStatus;
+        modifiedStart? : Type.ISODateTime;
+        modifiedEnd?   : Type.ISODateTime;
+        segmentId?     : string;
+        tags?          : Array<string>;
     }
 }
 

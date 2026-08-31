@@ -361,13 +361,12 @@ export { default as PutMonitorConfig } from './monitor/PutMonitorConfig';
 export { ReportConfig } from './report/model/ReportConfig';
 export { Report } from './report/model/Report';
 export { REPORT_CATALOG, findReport } from './report/catalog/ReportCatalog';
-export { default as PostReportSubmissions } from './report/PostReportSubmissions';
+export { default as PostReportRuns } from './report/PostReportRuns';
 export { default as GetReportSubmissions } from './report/GetReportSubmissions';
 export { default as GetReportSubmission } from './report/GetReportSubmission';
 export { default as GetReportSubmissionDownload } from './report/GetReportSubmissionDownload';
 export { default as DeleteReportSubmission } from './report/DeleteReportSubmission';
 export { default as GetReportSchedules } from './report/GetReportSchedules';
-export { default as PostReportSchedules } from './report/PostReportSchedules';
 export { default as GetReportSchedule } from './report/GetReportSchedule';
 export { default as PatchReportSchedule } from './report/PatchReportSchedule';
 export { default as PostReportSchedulePause } from './report/PostReportSchedulePause';
@@ -377,3 +376,33 @@ export { default as GetReportSchedulesStale } from './report/GetReportSchedulesS
 export { default as PostReportInternalErase } from './report/PostReportInternalErase';
 export { default as GetReportConfig } from './report/GetReportConfig';
 export { default as PutReportConfig } from './report/PutReportConfig';
+
+// registration — TCR/10DLC A2P messaging registration (apps/core/registration). Registration is a DynamoDB
+// PROJECTION of TCR's state — TCR/the CSP is the source of truth, reconciled via webhooks + a poll sweep, never
+// treated as locally authoritative. Brand-per-account (an account has at most one brand); we act as a DIRECT
+// CSP with TCR (no reseller layer). Namespace is `Registration`, not `Tcr`, so toll-free/short-code/international
+// registries fit later without a new namespace. See apps/core/registration/SPECS.md.
+export { Registration } from './registration/model/Registration';
+export { RegistrationConfig } from './registration/model/RegistrationConfig';
+export { default as PostRegistrationBrand } from './registration/PostRegistrationBrand';
+export { default as GetRegistrationBrand } from './registration/GetRegistrationBrand';
+export { default as GetRegistrationBrands } from './registration/GetRegistrationBrands';
+export { default as PatchRegistrationBrand } from './registration/PatchRegistrationBrand';
+export { default as PostRegistrationCampaign } from './registration/PostRegistrationCampaign';
+export { default as GetRegistrationCampaign } from './registration/GetRegistrationCampaign';
+export { default as GetRegistrationCampaigns } from './registration/GetRegistrationCampaigns';
+export { default as PatchRegistrationCampaign } from './registration/PatchRegistrationCampaign';
+export { default as GetRegistrationVettingStatus } from './registration/GetRegistrationVettingStatus';
+export { default as PostRegistrationVettingRefresh } from './registration/PostRegistrationVettingRefresh';
+export { default as PostRegistrationResubmit } from './registration/PostRegistrationResubmit';
+export { default as PostRegistrationReprovision } from './registration/PostRegistrationReprovision';
+export { default as PostRegistrationOverride } from './registration/PostRegistrationOverride';
+export { default as PostRegistrationNudge } from './registration/PostRegistrationNudge';
+export { default as PostRegistrationCheckSync } from './registration/PostRegistrationCheckSync';
+export { default as GetRegistrationConfig } from './registration/GetRegistrationConfig';
+export { default as PutRegistrationConfig } from './registration/PutRegistrationConfig';
+export { default as PostRegistrationWebhookTcr } from './registration/PostRegistrationWebhookTcr';
+export { default as PostRegistrationWebhookCv } from './registration/PostRegistrationWebhookCv';
+export { default as GetInternalRegistrationBrands } from './registration/GetInternalRegistrationBrands';
+export { default as GetInternalRegistrationCampaigns } from './registration/GetInternalRegistrationCampaigns';
+export { default as GetInternalRegistrationCostEstimates } from './registration/GetInternalRegistrationCostEstimates';

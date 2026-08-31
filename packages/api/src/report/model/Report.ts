@@ -146,7 +146,7 @@ export namespace Report
         params       : Type.Json;           // the inputs for THIS submission (incl. the DateWindow, if any)
         window?      : { start : Type.ISODateTime; end : Type.ISODateTime };   // RESOLVED range this run covered
         format       : Format;              // the single format this run produces (one per run)
-        destination  : Destination;         // where the completed artifact should go (defaults to DOWNLOAD)
+        destinations : Array<Destination>;  // fan out to every listed destination on completion (defaults to [DOWNLOAD])
         outputKey?   : string;              // the S3 key produced — on complete
         size?        : number;              // total bytes — on complete
         recordCount? : number;              // rows/records — on complete (0 = empty, NOT a failure)
@@ -176,7 +176,7 @@ export namespace Report
         timezone      : string;              // IANA tz — evaluates the iCal AND resolves relative windows
         params        : Type.Json;           // includes a RELATIVE DateWindow for time-bounded reports
         format        : Format;              // the single output format (one per run)
-        destination   : Destination;         // where each fire's completed artifact should go
+        destinations  : Array<Destination>;  // fan out to every listed destination on each fire (defaults to [DOWNLOAD])
         createdBy     : Type.ID;
         status        : ScheduleStatus;
         pausedReason? : string;              // why (the error reason for AUTO_PAUSED; a user note for PAUSED)
@@ -208,26 +208,23 @@ export namespace Report
         tags?        : Array<string>;
     }
 
-    /** Submit an ad-hoc run (`POST /report/submissions`). `destination` defaults server-side to
-     *  `{ kind: DOWNLOAD, config: {} }` when omitted. */
-    export interface SubmitRequest
-    {
-        reportId    : Type.ID;
-        params      : Type.Json;
-        format      : Format;
-        destination? : Destination;
-    }
+    /** The recurrence half of a `CreateRun` — presence decides ad-hoc vs standing (see `CreateRun`). */
+    export interface RunSchedule { ical : string; timezone : string; }
 
-    /** Create a recurring schedule (`POST /report/schedules`) — `params` must carry a RELATIVE `DateWindow`
-     *  (fixed is blocked server-side). `destination` defaults the same way as `SubmitRequest`. */
-    export interface CreateSchedule
+    /** Create a report run (`POST /report/runs`) — ONE standard payload for both an ad-hoc run and a
+     *  recurring schedule: omit `schedule` for a one-time `Submission`; supply it (RFC-5545 `ical` + an
+     *  IANA `timezone`) to create a standing `Schedule` instead (each of its fires then spawns its own
+     *  fresh `Submission` — see `Schedule`'s doc comment for why the two stay separate ROWS even though
+     *  they share this one creation shape). A schedule's `params.window` must be RELATIVE (fixed is
+     *  blocked server-side — report-3.3). `destinations` defaults server-side to `[{ kind: DOWNLOAD,
+     *  config: {} }]` when omitted/empty. */
+    export interface CreateRun
     {
-        reportId    : Type.ID;
-        ical        : string;
-        timezone    : string;
-        params      : Type.Json;
-        format      : Format;
-        destination? : Destination;
+        reportId      : Type.ID;
+        params        : Type.Json;
+        format        : Format;
+        destinations? : Array<Destination>;
+        schedule?     : RunSchedule;
     }
 }
 

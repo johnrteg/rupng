@@ -33,6 +33,7 @@ import { manifest as socialManifest } from "social/manifest"; // apps/core/socia
 import { manifest as monitorManifest } from "monitor/manifest"; // apps/core/monitor/src/CloudManifest.ts (no owned tables — reads other services' resources live)
 import { manifest as collabManifest } from "collab/manifest"; // apps/core/collab/src/CloudManifest.ts (rooms/members/messages DDB + Redis) — chat v1 only, no Y.js/Hocuspocus yet
 import { manifest as reportManifest } from "report/manifest"; // apps/core/report/src/CloudManifest.ts (submissions/schedules DDB, generate SQS+Lambda, iCal sweep) — contacts/accounts/campaigns generators only
+import { manifest as registrationManifest } from "registration/manifest"; // apps/core/registration/src/CloudManifest.ts (brand/campaign/cost-estimate DDB, webhook+submit+vetting SQS, poll EventBridge) — TCR/10DLC, fake carrier only
 
 // Generate the API Gateway routes from the service's public RestfulEndpoint defs (same defs the web
 // client + server share), so the gateway can't drift from the contract — the endpoints carry their own
@@ -86,9 +87,15 @@ import {
     PostCollabDms, GetCollabRoomMembers, PostCollabRoomMembers, DeleteCollabRoomMember,
     GetCollabMessages, GetCollabConfig, PutCollabConfig,
     GetInternalContacts, GetInternalSubAccounts, GetInternalCampaigns, PostInternalSend,
-    PostReportSubmissions, GetReportSubmissions, GetReportSubmission, GetReportSubmissionDownload, DeleteReportSubmission,
-    GetReportSchedules, PostReportSchedules, GetReportSchedule, PatchReportSchedule, PostReportSchedulePause, PostReportScheduleResume, DeleteReportSchedule,
+    PostReportRuns, GetReportSubmissions, GetReportSubmission, GetReportSubmissionDownload, DeleteReportSubmission,
+    GetReportSchedules, GetReportSchedule, PatchReportSchedule, PostReportSchedulePause, PostReportScheduleResume, DeleteReportSchedule,
     GetReportSchedulesStale, PostReportInternalErase, GetReportConfig, PutReportConfig,
+    PostRegistrationBrand, GetRegistrationBrand, GetRegistrationBrands, PatchRegistrationBrand,
+    PostRegistrationCampaign, GetRegistrationCampaign, GetRegistrationCampaigns, PatchRegistrationCampaign,
+    GetRegistrationVettingStatus, PostRegistrationVettingRefresh, PostRegistrationResubmit, PostRegistrationReprovision,
+    PostRegistrationOverride, PostRegistrationNudge, PostRegistrationCheckSync,
+    GetRegistrationConfig, PutRegistrationConfig, PostRegistrationWebhookTcr, PostRegistrationWebhookCv,
+    GetInternalRegistrationBrands, GetInternalRegistrationCampaigns, GetInternalRegistrationCostEstimates,
 } from "@repo/api";
 if( appManifest.owns.api )
     appManifest.owns.api.endpoints = [ ...( appManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetBootstrap(), new GetOpenApi(), new GetArticle() ] ) ];
@@ -225,14 +232,29 @@ if( collabManifest.owns.api )
     ] ) ];
 if( reportManifest.owns.api )
     reportManifest.owns.api.endpoints = [ ...( reportManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
-        // ad-hoc submissions: submit + list + status + presigned download + delete
-        new PostReportSubmissions(), new GetReportSubmissions(), new GetReportSubmission(), new GetReportSubmissionDownload(), new DeleteReportSubmission(),
-        // recurring (iCal) schedules: CRUD + pause/resume
-        new GetReportSchedules(), new PostReportSchedules(), new GetReportSchedule(), new PatchReportSchedule(), new PostReportSchedulePause(), new PostReportScheduleResume(), new DeleteReportSchedule(),
+        // create a run (ad-hoc or recurring, per whether `schedule` is supplied) + list/status/download/delete
+        new PostReportRuns(), new GetReportSubmissions(), new GetReportSubmission(), new GetReportSubmissionDownload(), new DeleteReportSubmission(),
+        // recurring (iCal) schedules: list/get/edit/pause/resume/delete (creation is via PostReportRuns)
+        new GetReportSchedules(), new GetReportSchedule(), new PatchReportSchedule(), new PostReportSchedulePause(), new PostReportScheduleResume(), new DeleteReportSchedule(),
         // ops: stale-specVersion sweep (APPLICATION) + config
         new GetReportSchedulesStale(), new GetReportConfig(), new PutReportConfig(),
         // S2S: contact-forget fan-out purges any artifact carrying the forgotten subject's PII
         new PostReportInternalErase()
+    ] ) ];
+if( registrationManifest.owns.api )
+    registrationManifest.owns.api.endpoints = [ ...( registrationManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        // brand + campaign CRUD (registration-1.0/2.0)
+        new PostRegistrationBrand(), new GetRegistrationBrand(), new GetRegistrationBrands(), new PatchRegistrationBrand(),
+        new PostRegistrationCampaign(), new GetRegistrationCampaign(), new GetRegistrationCampaigns(), new PatchRegistrationCampaign(),
+        // lifecycle operations (registration-11.x): vetting read/refresh, resubmit, reprovision, override, nudge, check&sync
+        new GetRegistrationVettingStatus(), new PostRegistrationVettingRefresh(), new PostRegistrationResubmit(), new PostRegistrationReprovision(),
+        new PostRegistrationOverride(), new PostRegistrationNudge(), new PostRegistrationCheckSync(),
+        // operator config
+        new GetRegistrationConfig(), new PutRegistrationConfig(),
+        // provider webhook intake — served by the WEBHOOK role, routed by path (registration-12.3)
+        new PostRegistrationWebhookTcr(), new PostRegistrationWebhookCv(),
+        // S2S: the `report` service's brand/campaign/cost-estimate reads
+        new GetInternalRegistrationBrands(), new GetInternalRegistrationCampaigns(), new GetInternalRegistrationCostEstimates()
     ] ) ];
 
 // ── Resolve environment from CDK context: `cdk synth -c env=staging` (default dev) ──
@@ -289,6 +311,7 @@ const manifests : Array<ResourceManifest> = [
     monitorManifest,
     collabManifest,
     reportManifest,
+    registrationManifest,
 ];
 
 // Shared gateway registry: each ServiceStack publishes its API Gateway(s) here and a CDN (web) reads

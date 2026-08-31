@@ -3,6 +3,10 @@ import { ReportGenerator } from "./ReportGenerator";
 import { ContactsReportGenerator } from "./ContactsReportGenerator";
 import { AccountsReportGenerator } from "./AccountsReportGenerator";
 import { CampaignsReportGenerator } from "./CampaignsReportGenerator";
+import { RegistrationBrandPipelineReportGenerator } from "./RegistrationBrandPipelineReportGenerator";
+import { RegistrationCampaignsReportGenerator } from "./RegistrationCampaignsReportGenerator";
+import { RegistrationChargesReportGenerator } from "./RegistrationChargesReportGenerator";
+import { RegistrationOpsQueueReportGenerator } from "./RegistrationOpsQueueReportGenerator";
 
 //
 // GeneratorFactory — the registry of report generators (report-9.1), keyed by the catalog `Definition.
@@ -15,6 +19,10 @@ export class GeneratorFactory
         [ "contacts",  () => new ContactsReportGenerator() ],
         [ "accounts",  () => new AccountsReportGenerator() ],
         [ "campaigns", () => new CampaignsReportGenerator() ],
+        [ "registration_brand_pipeline", () => new RegistrationBrandPipelineReportGenerator() ],
+        [ "registration_campaigns", () => new RegistrationCampaignsReportGenerator() ],
+        [ "registration_cost_estimates", () => new RegistrationChargesReportGenerator() ],
+        [ "registration_ops_queue", () => new RegistrationOpsQueueReportGenerator() ],
     ] );
 
     ////////////////////////////////////////////////////////////////////////////////////////////

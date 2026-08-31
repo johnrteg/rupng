@@ -5,9 +5,9 @@ import { randomUUID } from "node:crypto";
 import { Report, findReport } from "@repo/api";
 import type { Type } from "@repo/common";
 import { Events } from "@repo/system";
+import { Ical } from "@repo/services";
 
 import ReportJob from "./ReportJob";
-import { IcalUtils } from "../scheduling/IcalUtils";
 
 //
 // ReportScheduleJob — fires due recurring schedules. Runs every minute (EventBridge `rate(1 minute)`),
@@ -50,7 +50,7 @@ export class ReportScheduleJob extends ReportJob<unknown, void>
         {
             accountId: schedule.accountId, submissionId, reportId: schedule.reportId, specVersion: schedule.specVersion,
             submittedBy: schedule.createdBy, createdAt: now, status: Report.SubmissionStatus.SUBMITTED,
-            params: schedule.params, format: schedule.format, destination: schedule.destination, scheduleId: schedule.scheduleId,
+            params: schedule.params, format: schedule.format, destinations: schedule.destinations, scheduleId: schedule.scheduleId,
         };
 
         const wrote : Type.Result<void> = await this.report.dynamo.put( "report_submissions", { ...submission } );
@@ -62,7 +62,7 @@ export class ReportScheduleJob extends ReportJob<unknown, void>
             idempotencyKey: submissionId, createdAt: now, meta: { submissionId },
         } );
 
-        const nextFire : Type.Result<Date> = IcalUtils.nextOccurrence( schedule.ical, schedule.timezone, new Date( now ) );
+        const nextFire : Type.Result<Date> = Ical.nextOccurrence( schedule.ical, schedule.timezone, new Date( now ) );
         const stamped : Report.Schedule = { ...schedule, lastFiredAt: now, nextFireAt: nextFire.ok ? nextFire.data.toISOString() : undefined };
         const restamped : Type.Result<void> = await this.report.dynamo.put( "report_schedules", { ...stamped } );
         if( !restamped.ok ) this.log.warn( "schedule fire: re-stamp failed", { scheduleId: schedule.scheduleId, error: restamped.error } );

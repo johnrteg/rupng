@@ -115,6 +115,29 @@ on shutdown. When notices land, emit `app.notice.created|updated|deleted` (add t
 > Note: voice is a scaffold + `fake`/Twilio-only build (see `apps/core/voice/SPECS.md`'s gaps list) — the full
 > IVR flow engine, AMD, and STIR/SHAKEN surface aren't built, so their reserved `Events.ts` topics stay planned.
 
+### registration  🟢 live
+| action | verb | `data` model | emitted by | status |
+|---|---|---|---|---|
+| `registration.brand.created` | created | `Registration.Brand` (`@repo/api`) | `RegistrationDomain.createBrand` | live |
+| `registration.brand.updated` | updated | `Registration.Brand` | `RegistrationDomain.transitionBrandStatus` / `patchBrand` / `processVetting` — vetting/identity transition (`DRAFT → … → APPROVED/FAILED/NEEDS_APPEAL`), staff override (registration-11.6), resubmit | live |
+| `registration.brand.deleted` | deleted | `Registration.Brand` | brand withdrawn/removed | planned |
+| `registration.campaign.created` | created | `Registration.Campaign` (`@repo/api`) | `RegistrationDomain.createCampaign` | live |
+| `registration.campaign.updated` | updated | `Registration.Campaign` | `RegistrationDomain.transitionCampaignStatus` / `patchCampaign` / `republishThroughput` — status transition (`DRAFT → … → ACTIVE/REJECTED/SUSPENDED/EXPIRED`), `mnoMetadata`/`mps` refresh, staff override, resubmit | live |
+| `registration.campaign.deleted` | deleted | `Registration.Campaign` | campaign withdrawn/removed | planned |
+| `registration.number.created` | created | `{ accountId, campaignId, brandId, phoneNumber, status, mps }` (no dedicated number model yet) | `RegistrationDomain.provisionNumbers` — number associated to an approved campaign | live |
+| `registration.number.updated` | updated | same | `RegistrationDomain.transitionCampaignStatus` on entry to `ACTIVE` — the campaign's already-associated numbers become sendable, so each is re-published with the new status + `mps` | live |
+| `registration.number.deleted` | deleted | same | number disassociated from a campaign | planned |
+
+> Note: `registration.campaign.updated` carrying `status: "active"` is the **`campaign-active`
+> sending-precondition** signal texting gates outbound sending on (`apps/core/registration/SPECS.md`
+> `registration-7.1`) — texting subscribes to this Object rather than looking up campaign status via a
+> cross-service DB read. The same `updated` event (on any `mnoMetadata`/`status` refresh, e.g. from
+> `RegistrationVettingJob`'s periodic re-vet) also carries the `mps` (`{ perMinute, perHour, perDay }`)
+> trust-score → throughput fields (`registration-7.2`) — this is the **published interface** dispatch paces
+> sends against, never a DB lookup into registration's own table. `registration.number.*` reserves the topic
+> for a future dedicated number-association entity/lifecycle; today number state lives embedded on
+> `Registration.Campaign.phoneNumbers` and has no separate emission site yet.
+
 ### everything else  ⚪ planned
 `Object` topics are **defined** in [`Events.ts`](./src/Events.ts) for contact, campaign, workflow, email,
 texting, print, links, collab, marketplace, media variants, etc., but no emission is wired yet. Add a

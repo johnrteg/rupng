@@ -27,10 +27,15 @@ export class GetInternalContactsImpl extends GetInternalContacts
         } );
         if( !found.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "contacts read failed" } };
 
-        // hydrate + filter: an explicit status filter wins; otherwise hide FORGOTTEN tombstones
+        // hydrate + filter: an explicit status filter wins; otherwise hide FORGOTTEN tombstones. On top of
+        // that, apply report's optional modifiedAt range / segment / tag filters (all AND'd together).
         const contacts : Array<Contact.Entity> = found.data
             .map( ( row : Contact.Entity ) : Contact.Entity => ObjectUtils.withDefaults( row, Contact.DEFAULT ) )
-            .filter( ( row : Contact.Entity ) : boolean => query?.status ? row.status === query.status : row.status !== Contact.ContactStatus.FORGOTTEN );
+            .filter( ( row : Contact.Entity ) : boolean => query?.status ? row.status === query.status : row.status !== Contact.ContactStatus.FORGOTTEN )
+            .filter( ( row : Contact.Entity ) : boolean => !query?.modifiedStart || row.audit.modifiedAt >= query.modifiedStart )
+            .filter( ( row : Contact.Entity ) : boolean => !query?.modifiedEnd || row.audit.modifiedAt <= query.modifiedEnd )
+            .filter( ( row : Contact.Entity ) : boolean => !query?.segmentId || ( row.segmentIds ?? [] ).includes( query.segmentId ) )
+            .filter( ( row : Contact.Entity ) : boolean => !query?.tags?.length || ( row.tags ?? [] ).some( ( tag : Contact.Tag ) : boolean => query.tags!.includes( tag.value ) ) );
 
         // page the filtered set (in-memory) into the standard { records, page } envelope
         const paged : Paging.Result<Contact.Entity> = Paging.paginate( contacts, query ?? { accountId } );

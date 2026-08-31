@@ -39,7 +39,9 @@ export namespace Ports
     // ── identity / account ───────────────────────────────────────────────────
     export namespace AUTH         { export const MAIN = 8110; export const READER = 8111; export const WRITER = 8112; }
     export namespace ACCOUNT      { export const MAIN = 8120; export const READ = 8121; }
-    export namespace REGISTRATION { export const MAIN = 8130; }
+    // MAIN = the /registration/* API (brand/campaign CRUD + the registration-11.x lifecycle ops);
+    // WEBHOOK = the provider-facing TCR / Campaign-Verify callback intake, which scales apart from the API.
+    export namespace REGISTRATION { export const MAIN = 8130; export const WEBHOOK = 8131; }
 
     // ── contacts / orchestration ─────────────────────────────────────────────
     export namespace CONTACT      { export const MAIN = 8140; }

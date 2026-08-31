@@ -4,7 +4,7 @@ import { NetworkUtils, Type } from "@repo/common";
 import { Report } from "./model/Report";
 
 //
-// Update a schedule's `ical` / `params` / `format` / `timezone` / `destination` (report-4.1). A partial
+// Update a schedule's `ical` / `params` / `format` / `timezone` / `destinations` (report-4.1). A partial
 // PATCH — only supplied fields change; `params` (when supplied) is re-validated against the report's
 // current `paramsSchema` and must still carry a RELATIVE date window.
 //
@@ -20,7 +20,7 @@ export class PatchReportSchedule extends RestfulEndpoint< PatchReportSchedule.Qu
     {
         operationId: "updateReportSchedule",
         summary:     "Update a report schedule",
-        description: "Partially updates a schedule's ical/params/format/timezone/destination.",
+        description: "Partially updates a schedule's ical/params/format/timezone/destinations.",
         tags:        [ "Report" ],
     };
 
@@ -37,7 +37,7 @@ export class PatchReportSchedule extends RestfulEndpoint< PatchReportSchedule.Qu
                 params:      { type: "object" },
                 format:      { type: "string", enum: [ "csv", "pdf", "xlsx", "json" ] },
                 timezone:    { type: "string" },
-                destination: { type: "object" },
+                destinations: { type: "array", items: { type: "object" } },
             },
         };
     }
@@ -49,11 +49,11 @@ export namespace PatchReportSchedule
     export interface Query { scheduleId : string; }
     export interface Body extends RestfulEndpoint.AuthRequest
     {
-        ical?        : string;
-        params?      : Type.Json;
-        format?      : Report.Format;
-        timezone?    : string;
-        destination? : Report.Destination;
+        ical?         : string;
+        params?       : Type.Json;
+        format?       : Report.Format;
+        timezone?     : string;
+        destinations? : Array<Report.Destination>;
     }
     export interface Response { schedule : Report.Schedule; }
     export enum Error

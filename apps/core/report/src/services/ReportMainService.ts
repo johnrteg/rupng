@@ -5,13 +5,12 @@ import type { Message } from "@aws-sdk/client-sqs";
 
 import ReportService from "./ReportService";
 
-import PostReportSubmissionsImpl from "../endpoints/PostReportSubmissionsImpl";
+import PostReportRunsImpl from "../endpoints/PostReportRunsImpl";
 import GetReportSubmissionsImpl from "../endpoints/GetReportSubmissionsImpl";
 import GetReportSubmissionImpl from "../endpoints/GetReportSubmissionImpl";
 import GetReportSubmissionDownloadImpl from "../endpoints/GetReportSubmissionDownloadImpl";
 import DeleteReportSubmissionImpl from "../endpoints/DeleteReportSubmissionImpl";
 import GetReportSchedulesImpl from "../endpoints/GetReportSchedulesImpl";
-import PostReportSchedulesImpl from "../endpoints/PostReportSchedulesImpl";
 import GetReportScheduleImpl from "../endpoints/GetReportScheduleImpl";
 import PatchReportScheduleImpl from "../endpoints/PatchReportScheduleImpl";
 import PostReportSchedulePauseImpl from "../endpoints/PostReportSchedulePauseImpl";
@@ -47,13 +46,12 @@ export class ReportMainService extends ReportService
     protected override async registerEndpoints() : Promise<void>
     {
         await super.registerEndpoints();          // keeps /health + /version
-        this.register( new PostReportSubmissionsImpl( this ) );
+        this.register( new PostReportRunsImpl( this ) );
         this.register( new GetReportSubmissionsImpl( this ) );
         this.register( new GetReportSubmissionImpl( this ) );
         this.register( new GetReportSubmissionDownloadImpl( this ) );
         this.register( new DeleteReportSubmissionImpl( this ) );
         this.register( new GetReportSchedulesImpl( this ) );
-        this.register( new PostReportSchedulesImpl( this ) );
         this.register( new GetReportScheduleImpl( this ) );
         this.register( new PatchReportScheduleImpl( this ) );
         this.register( new PostReportSchedulePauseImpl( this ) );

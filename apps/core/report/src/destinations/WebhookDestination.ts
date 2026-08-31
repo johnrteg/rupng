@@ -17,7 +17,7 @@ export class WebhookDestination implements Destination
     ////////////////////////////////////////////////////////////////////////////////////////////
     public async deliver( ctx : Destination.DeliverContext ) : Promise<Type.Result<void>>
     {
-        const config : { url? : string; secret? : string } = ( ctx.submission.destination.config as { url? : string; secret? : string } ) ?? {};
+        const config : { url? : string; secret? : string } = ( ctx.destination.config as { url? : string; secret? : string } ) ?? {};
         if( !config.url ) return ResultUtils.err( "webhook destination missing config.url" );
 
         const payload : Record<string, unknown> =

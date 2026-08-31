@@ -22,6 +22,10 @@ export namespace Destination
     {
         accountId   : Type.ID;
         submission  : Report.Submission;
+        /** The ONE destination this call delivers to — `deliverCompletion` fans out over
+         *  `submission.destinations` and invokes a handler once per entry, so a handler only ever sees a
+         *  single resolved `Destination` here, never the full array. */
+        destination : Report.Destination;
         downloadUrl : string;
     }
 }

@@ -11,32 +11,45 @@ import DialogWindow from '@widgets/core/DialogWindow';
 import SelectInput  from '@widgets/core/SelectInput';
 
 import DateWindowInput  from '../widgets/DateWindowInput';
-import DestinationInput from '../widgets/DestinationInput';
+import DestinationListInput from '../widgets/DestinationListInput';
+import ContactsReportParamsInput from '../widgets/ContactsReportParamsInput';
 
 // the default window every submission starts from — last 30 days (report's most common ask); the user picks
 // a different preset/rolling/fixed window before submitting.
 const DEFAULT_WINDOW : Report.DateWindow = { kind: "relative", preset: Report.RelativePreset.LAST_30_DAYS };
-// the default destination — DOWNLOAD needs no config, matching the server's own default when omitted.
-const DEFAULT_DESTINATION : Report.Destination = { kind: Report.DestinationKind.DOWNLOAD, config: {} };
+// no destinations picked yet — the server defaults an empty/omitted list to a single DOWNLOAD destination.
+const DEFAULT_DESTINATIONS : Array<Report.Destination> = [];
 
 //
 // ReportSubmitDialog — run one report ad-hoc (report-2.1). The parent owns open/close + which `report` is
-// being run; this dialog only composes the request (window + format + destination) and hands it to
-// `onSubmit`, which does the actual POST (mirrors ContactEditDialog's onSave — the parent fetches + snacks).
+// being run; this dialog only composes the request (window + format + destinations[, extra params]) and
+// hands it to `onSubmit`, which does the actual POST (mirrors ContactEditDialog's onSave — the parent
+// fetches + snacks). No `schedule` field — this dialog is strictly the one-time path.
 //
 export function ReportSubmitDialog( props : ReportSubmitDialog.Props ) : JSX.Element | null
 {
-    const [window,setWindow]           = React.useState< Report.DateWindow >( DEFAULT_WINDOW );
-    const [format,setFormat]           = React.useState< Report.Format | "" >( props.report?.formats[ 0 ] ?? "" );
-    const [destination,setDestination] = React.useState< Report.Destination >( DEFAULT_DESTINATION );
+    const [window,setWindow]             = React.useState< Report.DateWindow >( DEFAULT_WINDOW );
+    const [format,setFormat]             = React.useState< Report.Format | "" >( props.report?.formats[ 0 ] ?? "" );
+    const [destinations,setDestinations] = React.useState< Array<Report.Destination> >( DEFAULT_DESTINATIONS );
+    const [contactsParams,setContactsParams] = React.useState< ContactsReportParamsInput.Value >( {} );
 
     const report : Report.Definition | null = props.report;
+    // whether the selected report declares the ContactsReport-specific extra params — checked against the
+    // report's own declarative schema rather than hardcoding its reportId
+    const showContactsParams : boolean = report !== null && ContactsReportParamsInput.appliesTo( report.paramsSchema );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // a format is chosen, and (when the destination isn't DOWNLOAD) its config field is filled in
+    // a format is chosen, and (for every destination that needs one) its config field is filled in
     function isReady() : boolean
     {
         if( report === null || format === "" ) return false;
+        return destinations.every( isDestinationFilled );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // one destination row is complete enough to submit (EMAIL needs `to`, WEBHOOK needs `url`)
+    function isDestinationFilled( destination : Report.Destination ) : boolean
+    {
         if( destination.kind === Report.DestinationKind.EMAIL )   return !!( destination.config as Type.JsonObject ).to;
         if( destination.kind === Report.DestinationKind.WEBHOOK ) return !!( destination.config as Type.JsonObject ).url;
         return true;
@@ -49,9 +62,9 @@ export function ReportSubmitDialog( props : ReportSubmitDialog.Props ) : JSX.Ele
         if( report === null || format === "" ) return Promise.resolve( false );
         return props.onSubmit( {
             reportId: report.reportId,
-            params:   { window },
+            params:   showContactsParams ? { window, ...contactsParams } : { window },
             format:   format as Report.Format,
-            destination,
+            destinations,
         } );
     }
 
@@ -76,7 +89,9 @@ export function ReportSubmitDialog( props : ReportSubmitDialog.Props ) : JSX.Ele
 
                     <SelectInput id="report-submit-format" label={"Format"} value={ format } choices={ formatChoices } onChange={ ( value : string ) : void => setFormat( value as Report.Format ) } sx={{ width: 160 }} />
 
-                    <DestinationInput value={ destination } onChange={ setDestination } />
+                    { showContactsParams && <ContactsReportParamsInput value={ contactsParams } onChange={ setContactsParams } /> }
+
+                    <DestinationListInput value={ destinations } onChange={ setDestinations } />
                 </Stack>
             </DialogWindow>;
 }
@@ -88,7 +103,7 @@ export namespace ReportSubmitDialog
         open     : boolean;
         onClose  : () => void;
         report   : Report.Definition | null;                                    // the report being run
-        onSubmit : ( request : Report.SubmitRequest ) => Promise<boolean>;      // parent does the POST + snack
+        onSubmit : ( request : Report.CreateRun ) => Promise<boolean>;          // parent does the POST + snack
     }
 }
 

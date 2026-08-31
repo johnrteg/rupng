@@ -17,6 +17,7 @@ import { SocialConfig } from "../social/model/SocialConfig";
 import { MonitorConfig } from "../monitor/model/MonitorConfig";
 import { VoiceConfig } from "../voice/model/VoiceConfig";
 import { ReportConfig } from "../report/model/ReportConfig";
+import { RegistrationConfig } from "../registration/model/RegistrationConfig";
 import { GetBootstrap } from "../app/GetBootstrap";
 import { AppServiceConfig } from "../app/model/AppServiceConfig";
 
@@ -32,6 +33,7 @@ export namespace ConfigSchema
         email:   { settings: EmailConfig.SCHEMA },
         voice:   { settings: VoiceConfig.SCHEMA },
         report:  { settings: ReportConfig.SCHEMA },
+        registration: { settings: RegistrationConfig.SCHEMA },
         social:  { settings: SocialConfig.SCHEMA },
         monitor: { settings: MonitorConfig.SCHEMA },
         app:     { web: GetBootstrap.SCHEMA, settings: AppServiceConfig.SCHEMA },
@@ -46,6 +48,7 @@ export namespace ConfigSchema
         email:   { settings: EmailConfig.validate as Validation.Validator<unknown> },
         voice:   { settings: VoiceConfig.validate as Validation.Validator<unknown> },
         report:  { settings: ReportConfig.validate as Validation.Validator<unknown> },
+        registration: { settings: RegistrationConfig.validate as Validation.Validator<unknown> },
         social:  { settings: SocialConfig.validate as Validation.Validator<unknown> },
         monitor: { settings: MonitorConfig.validate as Validation.Validator<unknown> },
         app:     { web: GetBootstrap.validate as Validation.Validator<unknown>, settings: AppServiceConfig.validate as Validation.Validator<unknown> },

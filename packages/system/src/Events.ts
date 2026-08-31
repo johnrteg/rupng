@@ -174,6 +174,8 @@ export namespace Events
 
         // registration / marketplace
         REGISTRATION_NUMBER        = "registration.number",
+        REGISTRATION_BRAND         = "registration.brand",
+        REGISTRATION_CAMPAIGN      = "registration.campaign",
         MARKETPLACE_INTEGRATION    = "marketplace.integration",
         MARKETPLACE_OAUTH_TOKEN    = "marketplace.oauth_token",
         MARKETPLACE_ZAPIER_ACTION  = "marketplace.zapier_action",
@@ -446,7 +448,11 @@ export namespace Events
         [ Object.SURVEY_SURVEY ]:       { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.PURGED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.COMPLIANCE } },
 
         // registration / marketplace
-        [ Object.REGISTRATION_NUMBER ]:       { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING } },
+        // UPDATED is emitted when a campaign goes ACTIVE — its already-associated numbers become sendable, so
+        // texting's per-number gate needs a re-publish carrying the new status/mps, not just the original CREATED
+        [ Object.REGISTRATION_NUMBER ]:       { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING } },
+        [ Object.REGISTRATION_BRAND ]:        { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING } },
+        [ Object.REGISTRATION_CAMPAIGN ]:     { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING } },
         [ Object.MARKETPLACE_INTEGRATION ]:   { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.INTEGRATION }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.INTEGRATION } },
         [ Object.MARKETPLACE_OAUTH_TOKEN ]:   { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.INTEGRATION }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.INTEGRATION } },
         [ Object.MARKETPLACE_ZAPIER_ACTION ]: { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.INTEGRATION } },

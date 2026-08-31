@@ -43,6 +43,7 @@
         "@repo/endpoint": "*",
         "@repo/system": "*",
         "fastify": "5.8.5",
+        "rrule": "^2.8.1",
         "ioredis": "5.11.1",
         "kafkajs": "2.2.4",
         "pg": "8.22.0"

@@ -34,6 +34,7 @@ import { AuthConfigForm } from "./authConfig/AuthConfigForm";
 import { AppBootstrapForm } from "./appConfig/AppBootstrapForm";
 import { AppServiceConfigForm } from "./appServiceConfig/AppServiceConfigForm";
 import { ReportConfigForm } from "./reportConfig/ReportConfigForm";
+import { RegistrationConfigForm } from "./registrationConfig/RegistrationConfigForm";
 
 // Indentation used everywhere this panel pretty-prints (load + the Format button) — keep them in sync.
 const JSON_INDENT : number = 2;
@@ -60,6 +61,7 @@ const SMART_EDITORS : Record<string, Record<string, React.ComponentType<SmartEdi
     auth:    { settings: AuthConfigForm },
     app:     { web: AppBootstrapForm, settings: AppServiceConfigForm },
     report:  { settings: ReportConfigForm },
+    registration: { settings: RegistrationConfigForm },
 };
 
 /** Pretty-print JSON content; non-JSON (or unparseable) content is returned unchanged. */

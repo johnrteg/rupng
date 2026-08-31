@@ -8,8 +8,8 @@ import { REPORT_BASE_PARAMS_SCHEMA } from "./ReportBaseParams";
 
 export const AccountsReport : Report.Definition =
 {
-    reportId:     "accounts",
-    name:         "Accounts",
+    reportId:     "account_lists",
+    name:         "Account Lists",
     minAccess:    Access.AccountRole.ACCOUNT,
     generator:    "accounts",
     paramsSchema: { ...REPORT_BASE_PARAMS_SCHEMA },
