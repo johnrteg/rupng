@@ -214,6 +214,38 @@ const batch    = await this.workQueue.dispatch({ max: 250 }); // WFQ/DRR fair pi
 
 ---
 
+## Inbound provider webhooks — `Webhook`
+
+Every provider-facing service needs an inbound webhook endpoint (Twilio call-status, Meta Graph API, a future
+CSP/TCR callback, …). Rather than each service hand-rolling "verify → enqueue → ack" from scratch, `Webhook`
+(`src/Webhook.ts`) is a small composed helper — same pattern as `WorkQueue`/the AWS facades, not a base class:
+
+```ts
+private readonly webhook = new Webhook( this.cloud, { auth: Webhook.hmacSha256RawBody( secret ), log: this.log } );
+```
+
+- **Two modes, because both are real.** Most webhooks are pure notifications: `webhook.handle(request,
+  queueKey)` verifies the signature, enqueues to SQS, and returns a generic ack — real processing happens
+  downstream, off the queue, by whatever consumer the service already runs (a `Job` Lambda in production,
+  optionally also drained locally by MAIN for dev — the same `Service`/`Job` split every other queue uses;
+  `Webhook` stops at "verified + durably queued"). Some provider protocols are a **blocking request/response**
+  instead (Twilio's call-control webhook must return TwiML synchronously) — for those, call `webhook.verify()`
+  ALONE and process inline; there's no enqueue step to force.
+- **A real bug this fixed**: HMAC-over-raw-body schemes (Meta/Stripe/GitHub-style) need the TRUE request
+  bytes, not a re-serialized `JSON.stringify(body)` (key order/whitespace can differ from what was actually
+  signed — social's original Meta verification had exactly this bug). `Service.enableRawBodyCapture()` (opt-in
+  — call it from your own `addServerRegister()` override, replacing the base's `formbody`-only registration)
+  captures the raw bytes as `RestfulEndpoint.rawBody`, which `Webhook.hmacSha256RawBody` verifies against.
+- **Pluggable auth.** `Webhook.Auth` is a one-method interface (`verify(request): boolean | Promise<boolean>`)
+  — a provider whose scheme doesn't fit a built-in (Twilio's HMAC-SHA1-over-URL+params, wrapped from the
+  existing, already-correct `twilio` package) implements its own strategy object instead of the helper trying
+  to special-case every vendor.
+- **No payload validation built in, on purpose.** `@repo/api`'s `Validation.compile` lives a layer above
+  `@repo/services`; pulling it in here would invert that dependency for a "nice to have" cheap gate. Real
+  payload-shape validation belongs in the queue consumer, not inline before the ack.
+
+---
+
 ## The AWS access layer (`src/aws/`)
 
 Services do **not** call the AWS SDK ad hoc. AWS (and Kafka) are wrapped in **thin facades**

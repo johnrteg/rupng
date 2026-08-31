@@ -30,6 +30,8 @@ export interface AdapterOptions
     retryBaseDelayMs? : number;
     /** Sink for per-call usage records (e.g. forward to monitor). */
     onUsage?     : ( usage : Ai.Usage, meta? : Ai.RequestMeta ) => void;
+    /** Base URL of a self-hosted Piper HTTP server (`piper --http-server`) — keyless, no Secrets entry. */
+    piperUrl?    : string;
 }
 
 /**

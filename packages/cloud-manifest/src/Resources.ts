@@ -329,6 +329,11 @@ export interface LoadBalancerSpec
     domain?  : PerEnv<string>;
     // "LB limits per environment"
     limits?  : PerEnv<{ maxConnections? : number; idleTimeoutSec? : number; requestsPerSec? : number }>;
+    // Cookie-based ALB target-group stickiness — for a STATEFUL service (room/connection affinity, e.g. a
+    // WebSocket room server) where a client must keep hitting the SAME task. Only meaningful with `public:
+    // true` today (a `public: false` service is reached via the platform's own VpcLink/HttpApi routing, which
+    // doesn't need ALB-level stickiness). Omit for a normal stateless service.
+    stickySessions? : { durationSec? : number };   // default duration ~1 day when enabled with no override
 }
 
 // Task-count autoscaling for an ECS service. `start` is the INITIAL desired count at deploy; once

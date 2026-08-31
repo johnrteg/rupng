@@ -20,7 +20,7 @@ export function SendLogDetailDialog( props : SendLogDetailDialog.Props ) : JSX.E
     const appmodel : AppModel = AppModel.instance();
     const record : Email.SendLog = props.record;
 
-    // status cell color — mirrors MessagesSent's statusRenderer (success/error/warning/neutral)
+    // status cell color — mirrors SentEmailPanel's statusRenderer (success/error/warning/neutral)
     const statusColor : "success" | "warning" | "default" | "error" | "info" =
         record.status === Email.Status.DELIVERED || record.status === Email.Status.OPENED || record.status === Email.Status.CLICKED ? "success" :
         record.status === Email.Status.BOUNCED || record.status === Email.Status.COMPLAINED || record.status === Email.Status.FAILED ? "error" :

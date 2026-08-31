@@ -31,6 +31,7 @@ import PostItemTextImpl from "../endpoints/PostItemTextImpl";
 import GetDensitiesImpl from "../endpoints/GetDensitiesImpl";
 import PostAssetDensityImpl from "../endpoints/PostAssetDensityImpl";
 import GetVariantSpecsImpl from "../endpoints/GetVariantSpecsImpl";
+import PostInternalAssetImpl from "../endpoints/PostInternalAssetImpl";
 import PostAiGenerateImpl from "../endpoints/PostAiGenerateImpl";
 import GetGenerateBatchImpl from "../endpoints/GetGenerateBatchImpl";
 import PostGeneratePromoteImpl from "../endpoints/PostGeneratePromoteImpl";
@@ -156,6 +157,7 @@ export class MediaMainService extends MediaService
         this.register( new PostSvgAssetImpl( this ) );
         this.register( new PostSystemSvgAssetImpl( this ) );
         this.register( new DeleteSvgAssetImpl( this ) );
+        this.register( new PostInternalAssetImpl( this ) );
     }
 
     /////////////////////////////////////////////////////////////////////

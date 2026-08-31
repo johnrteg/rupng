@@ -232,6 +232,16 @@ These are **guidance** — for hard enforcement of the type rules, see *Enforcem
   exactly ONE React component. If a `.tsx` grows past a few hundred lines or holds more than one component,
   split it into a sub-directory before adding more. A single render helper that renders a distinct panel/row is
   a component → its own file, not an inline function.
+- **A service change is not done until its UI is checked.** Whenever a service gains/changes a capability that
+  an end user or operator would touch (a new send channel, a new endpoint, a new admin action, a new config
+  field), explicitly check whether **`apps/core/web`** (end-user features) and/or **`tools/console`** (ops/admin
+  surfaces) need a matching update — and make it in the SAME change, not a follow-up. This is the same
+  discipline as the Config-model "two views of one contract" rule below, generalized to ANY user-facing surface:
+  a backend capability with no way for a human to reach it is a half-finished feature, even if it typechecks and
+  the API works. Concretely: a new send-channel endpoint likely needs a `web` send panel + a log/list view; a new
+  ops action (suspend/resume, requeue, dispatch state) likely needs a Console page or an explicit, stated decision
+  to defer it (as with the `WorkQueue` Dispatch panel — deferred because Console had no authenticated-calling
+  path yet, not skipped silently). Don't leave a placeholder ("X isn't wired yet") stale after the real thing ships.
 
 ## Architecture & boundaries
 

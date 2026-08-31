@@ -128,7 +128,9 @@ quality**, and **breadth of capability**.
 | **AWS Bedrock** ⭐ | **the default** | Native AWS: **IAM auth (no API keys)**, VPC/PrivateLink, data **not** used for training. One API fronts **many** models — **Anthropic Claude**, Meta Llama, Mistral, Amazon Nova/Titan, Cohere (embeddings), **Stability** (images) — plus **Bedrock Guardrails** (PII/safety) and Knowledge Bases. Fits the existing facade + least-privilege IAM pattern exactly. |
 | **Anthropic (direct)** | best chat / newest Claude | Top-tier reasoning + the latest Claude features the moment they ship (sometimes ahead of Bedrock parity). Needs an API key (Secrets Manager / BYOK). |
 | **OpenAI (direct)** | breadth / specific features | GPT-4o/o-series, DALL·E images, strong embeddings, large ecosystem. Needs an API key. Common BYOK choice for accounts. |
-| **Extensible** | as needed | Google Gemini (Vertex), Cohere (rerank/embeddings), Stability (images), voice (ElevenLabs/Polly) — each a new adapter behind the same interface. |
+| **Extensible** | as needed | Google Gemini (Vertex), Cohere (rerank/embeddings), Stability (images), ElevenLabs (already built) — each a new adapter behind the same interface. |
+| **Piper** (self-hosted) | keyless / offline TTS | Open-source (rhasspy/piper), no API key — talks to a self-hosted `piper --http-server` (`PIPER_URL`, default `http://localhost:5000`). Text-to-speech only, one voice per server process. Good for cost-free/offline synthesis where cloud TTS isn't wanted. |
+| **Amazon Polly** | in-infra TTS | IAM-authed (no API key), same posture as Bedrock — no data leaves AWS, no key sprawl. Text-to-speech only; `model` doubles as the Polly synthesis engine (`"neural"` default). No native WAV output (falls back to MP3). |
 
 **Recommendation:** **default to Bedrock** (IAM, no key sprawl, Claude + image + guardrails in one
 place, matches "use AWS"), and ship **direct Anthropic + OpenAI** adapters behind the same interface

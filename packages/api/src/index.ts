@@ -74,6 +74,60 @@ export { default as PatchEmailBlast } from './email/PatchEmailBlast';
 export { default as DeleteEmailBlast } from './email/DeleteEmailBlast';
 export { default as GetEmailLog } from './email/GetEmailLog';
 
+// dispatch — the shared WIRE shape any `WorkQueue`-adopting service's admin endpoint serializes (see
+// packages/services/src/WorkQueue.ts + DISPATCH.md); no endpoint contracts of its own — each adopter (voice
+// today) defines its OWN endpoint returning this shape, so Console can render one generic panel across adopters.
+export type { Dispatch } from './dispatch/model/Dispatch';   // type-only namespace (no runtime value — all interfaces)
+
+// voice — send channel contracts + service config (apps/core/voice); scaffold + fake/twilio providers only —
+// see apps/core/voice/SPECS.md for the full (not-yet-built) IVR/AMD/STIR-SHAKEN surface
+export { Voice } from './voice/model/Voice';
+export { VoiceConfig } from './voice/model/VoiceConfig';
+export { default as PostVoiceCalls } from './voice/PostVoiceCalls';
+export { default as PostVoiceCallsBulk } from './voice/PostVoiceCallsBulk';
+export { default as PostVoiceCallsTest } from './voice/PostVoiceCallsTest';
+export { default as GetVoiceCallsLog } from './voice/GetVoiceCallsLog';
+export { default as GetVoiceCall } from './voice/GetVoiceCall';
+export { default as GetVoiceNumbers } from './voice/GetVoiceNumbers';
+export { default as GetVoiceConfig } from './voice/GetVoiceConfig';
+export { default as PutVoiceConfig } from './voice/PutVoiceConfig';
+export { default as GetVoiceProviders } from './voice/GetVoiceProviders';
+export { default as PutVoiceProvider } from './voice/PutVoiceProvider';
+export { default as PostVoiceWebhookControl } from './voice/PostVoiceWebhookControl';
+export { default as PostVoiceWebhookStatus } from './voice/PostVoiceWebhookStatus';
+export { default as GetVoiceFlows } from './voice/GetVoiceFlows';
+export { default as PostVoiceFlow } from './voice/PostVoiceFlow';
+export { default as GetVoiceFlow } from './voice/GetVoiceFlow';
+export { default as PatchVoiceFlow } from './voice/PatchVoiceFlow';
+export { default as DeleteVoiceFlow } from './voice/DeleteVoiceFlow';
+export { default as PostVoiceFlowPreview } from './voice/PostVoiceFlowPreview';
+export { default as GetVoiceCallRecording } from './voice/GetVoiceCallRecording';
+export { default as GetVoiceCallTranscript } from './voice/GetVoiceCallTranscript';
+export { default as PostVoiceInternalErase } from './voice/PostVoiceInternalErase';
+export { default as PostVoiceWebhookRecording } from './voice/PostVoiceWebhookRecording';
+export { default as GetVoiceDlq } from './voice/GetVoiceDlq';
+export { default as PostVoiceDlqRequeue } from './voice/PostVoiceDlqRequeue';
+export { default as GetVoiceDispatchState } from './voice/GetVoiceDispatchState';
+export { default as PostVoiceDispatchSuspend } from './voice/PostVoiceDispatchSuspend';
+export { default as PostVoiceDispatchResume } from './voice/PostVoiceDispatchResume';
+
+// collab — Slack-like rooms/DMs/chat/presence (apps/core/collab); v1 SCOPE IS CHAT ONLY — no Y.js/Hocuspocus
+// CRDT document co-editing or whiteboard yet (a deferred gap, see apps/core/collab/SPECS.md)
+export { Collab } from './collab/model/Collab';
+export { CollabConfig } from './collab/model/CollabConfig';
+export { default as PostCollabRooms } from './collab/PostCollabRooms';
+export { default as GetCollabRooms } from './collab/GetCollabRooms';
+export { default as GetCollabRoom } from './collab/GetCollabRoom';
+export { default as PatchCollabRoom } from './collab/PatchCollabRoom';
+export { default as DeleteCollabRoom } from './collab/DeleteCollabRoom';
+export { default as PostCollabDms } from './collab/PostCollabDms';
+export { default as GetCollabRoomMembers } from './collab/GetCollabRoomMembers';
+export { default as PostCollabRoomMembers } from './collab/PostCollabRoomMembers';
+export { default as DeleteCollabRoomMember } from './collab/DeleteCollabRoomMember';
+export { default as GetCollabMessages } from './collab/GetCollabMessages';
+export { default as GetCollabConfig } from './collab/GetCollabConfig';
+export { default as PutCollabConfig } from './collab/PutCollabConfig';
+
 // media — model (shared: index record + variants) then endpoints
 export { Media } from './media/model/Media';
 export { Captions } from './media/model/Captions';         // shared .srt/.vtt parse + serialize (editor + caption burn-in)
@@ -138,6 +192,7 @@ export { default as PostAssetTranscribe } from './media/PostAssetTranscribe';
 export { default as PostAssetBurnCaptions } from './media/PostAssetBurnCaptions';
 export { default as PostAssetExtractAudio } from './media/PostAssetExtractAudio';
 export { default as PostAssetCompress } from './media/PostAssetCompress';
+export { default as PostInternalAsset } from './media/PostInternalAsset';
 export { default as PostVoiceClone } from './media/PostVoiceClone';
 export { default as GetVoices } from './media/GetVoices';
 export { default as DeleteVoice } from './media/DeleteVoice';

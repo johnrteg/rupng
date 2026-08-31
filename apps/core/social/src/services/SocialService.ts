@@ -1,5 +1,5 @@
 //
-import { Application, Service, Ports, Register, Dynamo, Kafka, Sqs, Events } from "@repo/services";
+import { Application, Service, Ports, Register, Dynamo, Kafka, Sqs, Events, Webhook } from "@repo/services";
 import { ObjectUtils, type Type } from "@repo/common";
 import { PostInstallation, GetInstallationToken, DeleteInstallation, SocialConfig, SocialPost, SocialAccount } from "@repo/api";
 
@@ -55,6 +55,12 @@ export class SocialService extends Service
     /** S2S client to marketplace's internal installations API. Lazy + cached — shared shape with
      *  `SocialJob` (see `pipelineDeps`), the same way `MediaJob`/`MediaService` share `MediaPipeline`. */
     public get marketplace() : MarketplaceClient { return this._marketplace ??= new MarketplaceClient(); }
+
+    /** The `Webhook` helper (`packages/services/src/Webhook.ts`), for a given signature strategy — built
+     *  fresh per call (cheap; `Sqs`'s own client is lazy). `this.cloud` is `protected` (on `Application`), so
+     *  the endpoint impl — not a `Service` subclass — goes through this method rather than reaching it
+     *  directly. */
+    public webhook( auth : Webhook.Auth ) : Webhook { return new Webhook( this.cloud, { auth, log: this.log } ); }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     /** Create a marketplace installation for `integrationId` (the platform) and start its connect flow. */

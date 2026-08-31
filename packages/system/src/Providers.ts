@@ -19,6 +19,7 @@ export namespace Providers
         BROWSE   = "browse",     // stock-media / marketplace search providers (media service)
         EMAIL    = "email",      // transactional email providers (email service)
         TEXTING  = "texting",    // SMS/MMS providers (texting service)
+        VOICE    = "voice",      // telephony/IVR providers (voice service)
         PAYMENTS = "payments",   // payment processors (billing)
     }
 
@@ -85,6 +86,12 @@ export namespace Providers
           fields: [ { name: "accountSid", label: "Account SID", secret: false }, { name: "authToken", label: "Auth Token" } ],
           keyHint: "Account SID starts with AC", docsUrl: "https://console.twilio.com/" },
         { id: "telnyx", label: "Telnyx", category: Category.TEXTING, scope: { service: "texting" }, secretKey: "texting-telnyx", docsUrl: "https://portal.telnyx.com/" },
+
+        // Voice — telephony/IVR providers (voice service). A distinct id ("voice-twilio", not "twilio") so
+        // Providers.byId can't ambiguously resolve to texting's own Twilio entry above.
+        { id: "voice-twilio", label: "Twilio", category: Category.VOICE, scope: { service: "voice" }, secretKey: "voice-twilio",
+          fields: [ { name: "accountSid", label: "Account SID", secret: false }, { name: "authToken", label: "Auth Token" } ],
+          keyHint: "Account SID starts with AC", docsUrl: "https://console.twilio.com/" },
 
         // Payments — payment processors (platform-shared)
         { id: "stripe", label: "Stripe", category: Category.PAYMENTS, scope: "platform", secretKey: "payments-stripe",

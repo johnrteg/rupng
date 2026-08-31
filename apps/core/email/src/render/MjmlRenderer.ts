@@ -1,6 +1,7 @@
 //
 import mjml2html, { type MjmlResult } from "mjml";
 import { EmailTemplate } from "@repo/api";
+import { StringUtils } from "@repo/common";
 
 //
 // MjmlRenderer — compiles an EmailTemplate block tree (the editor's JSON source of truth) into MJML (the
@@ -61,30 +62,16 @@ export namespace MjmlRenderer
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     /** Substitute `{{ path }}` merge tags in a string with values from the merge data (dotted paths supported;
-     *  an unresolved tag renders empty). Used on the subject + the compiled HTML/text just before send. */
+     *  an unresolved tag renders empty). Used on the subject + the compiled HTML/text just before send. Thin
+     *  wrapper over the shared `@repo/common` implementation (`StringUtils.mergeTags`) so every channel that
+     *  uses `{{...}}` merge tags (email, voice IVR) behaves identically — not a per-service copy. */
     export function merge( input : string, data : Record<string, unknown> ) : string
     {
-        return input.replace( /\{\{\s*([\w.]+)\s*\}\}/g, ( _match : string, path : string ) : string =>
-        {
-            const value : unknown = resolvePath( data, path );
-            return value === undefined || value === null ? "" : String( value );
-        } );
+        return StringUtils.mergeTags( input, data );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // ── internals ────────────────────────────────────────────────────────────────────────────
-
-    // resolve a dotted path ("contact.firstName") against the merge data
-    function resolvePath( data : Record<string, unknown>, path : string ) : unknown
-    {
-        let current : unknown = data;
-        for( const segment of path.split( "." ) )
-        {
-            if( current === null || typeof current !== "object" ) return undefined;
-            current = ( current as Record<string, unknown> )[ segment ];
-        }
-        return current;
-    }
 
     // read a string block/settings prop with a fallback (props are loose `unknown`)
     function str( value : unknown, fallback : string = "" ) : string { return typeof value === "string" ? value : fallback; }

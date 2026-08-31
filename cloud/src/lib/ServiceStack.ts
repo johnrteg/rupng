@@ -88,6 +88,13 @@ export type GatewayRegistry = Map<string, ApiGatewayRef>;
  *  another's internal ALB (there is no VPC-internal service discovery/mesh in this platform yet). */
 export type AlbRegistry = Map<string, string>;
 
+/** Cross-stack registry of provisioned Cognito user pools' ids, keyed `${service}/${poolKey}` (e.g.
+ *  "auth/users"). A `uses: [{ kind: USER_POOL, ... }]` reference resolves the caller's `USERPOOL_<KEY>` env
+ *  var from this — lets a service reached WITHOUT an API Gateway in front (so it gets no JWT authorizer for
+ *  free) verify Cognito JWTs itself (e.g. via `aws-jwt-verify`'s `CognitoJwtVerifier`, which derives the
+ *  JWKS/issuer URL from the pool id alone — no separate region value needed). */
+export type UserPoolRegistry = Map<string, string>;
+
 export interface ServiceStackProps extends cdk.StackProps
 {
     manifest  : ResourceManifest;
@@ -102,6 +109,10 @@ export interface ServiceStackProps extends cdk.StackProps
     // internal ALB directly (bypassing the API Gateway, which only routes a service's OWN public
     // endpoints). Relies on the same producer-before-consumer ordering as `gateways`.
     albs? : AlbRegistry;
+    // Cross-stack: every ServiceStack that provisions a Cognito user pool publishes its id here; a sibling
+    // stack's `uses: [{ kind: USER_POOL, ... }]` reference reads it back (see UserPoolRegistry). Same
+    // producer-before-consumer ordering requirement as `gateways`/`albs` (e.g. auth → collab).
+    userPools? : UserPoolRegistry;
     // Platform-shared secrets (logical key → secret) from PlatformStack. Every service is granted read and
     // gets each ARN injected as `SECRET_<KEY>`, so its AiFactory can resolve the platform AI provider keys.
     platformSecrets? : Map<string, secretsmanager.ISecret>;
@@ -149,8 +160,9 @@ export class ServiceStack extends cdk.Stack
     private _albListener? : elbv2.IApplicationListener;
     private _alb?         : elbv2.IApplicationLoadBalancer;   // for Route 53 alias targets
     private readonly cdns : Map<string, cloudfront.IDistribution> = new Map();   // for Route 53 alias targets
-    private readonly gateways : GatewayRegistry;   // cross-stack: gateways this + sibling stacks expose
-    private readonly albs     : AlbRegistry;       // cross-stack: internal ALB DNS this + sibling stacks expose
+    private readonly gateways  : GatewayRegistry;    // cross-stack: gateways this + sibling stacks expose
+    private readonly albs      : AlbRegistry;        // cross-stack: internal ALB DNS this + sibling stacks expose
+    private readonly userPools : UserPoolRegistry;   // cross-stack: user pool ids this + sibling stacks expose
 
     // A provisioned user pool the API's JWT authorizer can reference directly.
     private _userPool?       : cognito.UserPool;
@@ -174,6 +186,7 @@ export class ServiceStack extends cdk.Stack
         this.aiServices = props.manifest.aiServices ?? [];
         this.gateways  = props.gateways ?? new Map();
         this.albs      = props.albs ?? new Map();
+        this.userPools = props.userPools ?? new Map();
 
         const owns = props.manifest.owns;
 
@@ -210,6 +223,11 @@ export class ServiceStack extends cdk.Stack
         // the SAME reason user pools must precede it below — env vars are frozen at task/function
         // creation, so anything landing in `this.envVars` after `makeJob`/`makeEcsService` is dropped.
         ( props.manifest.uses ?? [] ).filter( ref => ref.kind === ResourceKind.SERVICE ).forEach( ref => this.injectServiceUrl( ref ) );
+        // A `uses: [{ kind: USER_POOL, ... }]` reference resolves a sibling stack's provisioned pool id
+        // (published to `userPools` when ITS `makeUserPool` ran — requires that service to precede this one
+        // in cloud/src/app.ts's `manifests[]`, same as SERVICE refs) into `USERPOOL_<KEY>`, for a service with
+        // no API Gateway JWT authorizer in front to verify Cognito tokens itself.
+        ( props.manifest.uses ?? [] ).filter( ref => ref.kind === ResourceKind.USER_POOL ).forEach( ref => this.injectUserPoolId( ref ) );
 
         // 3. Jobs first (user-pool triggers reference them), THEN user pools — so USERPOOL_* lands in
         //    this.envVars BEFORE compute snapshots the env into the ECS task definition — THEN compute, API.
@@ -506,11 +524,18 @@ export class ServiceStack extends cdk.Stack
         let deadLetter : sqs.DeadLetterQueue | undefined;
         if( spec.dlq )
         {
+            const dlqKey : string = `${spec.key}-dlq`;
             const dlq : sqs.Queue = new sqs.Queue( this, `Queue-${spec.key}-dlq`, {
-                queueName : this.name( ResourceKind.QUEUE, `${spec.key}-dlq` ),
+                queueName : this.name( ResourceKind.QUEUE, dlqKey ),
                 fifo      : spec.fifo,
             } );
             deadLetter = { queue: dlq, maxReceiveCount: spec.maxReceiveCount ?? 5 };
+            // register the DLQ itself as a queue resource too (own key `<key>-dlq`) — otherwise its URL is
+            // never exposed to CloudResolver and the service's role never gets consume/send grants on it, so
+            // an admin "list/requeue DLQ" endpoint has no way to read it (Sqs.receive/send resolve queue keys
+            // through the same env-var-injected registry every OTHER queue uses).
+            this.queues.set( dlqKey, dlq );
+            this.envVars[ envVarName( ResourceKind.QUEUE, dlqKey ) ] = dlq.queueUrl;
         }
         const queue : sqs.Queue = new sqs.Queue( this, `Queue-${spec.key}`, {
             queueName         : this.name( ResourceKind.QUEUE, spec.key ),
@@ -899,13 +924,19 @@ export class ServiceStack extends cdk.Stack
         }
         else desired = this.per( spec.desiredCount, 1 );
 
+        // Public (`loadBalancer.public: true`) is the exception — a STATEFUL, connection-affinity service
+        // (e.g. a WebSocket room server) reached DIRECTLY by clients, never through the platform's API
+        // Gateway/VpcLink path. Every other service defaults to the internal-ALB-via-VpcLink shape below.
+        const isPublic : boolean = spec.loadBalancer?.public ?? false;
+
         const svc : ecsPatterns.ApplicationLoadBalancedFargateService = new ecsPatterns.ApplicationLoadBalancedFargateService( this, `Svc-${spec.key}`, {
             cluster              : this._ecsCluster,
             cpu                  : size.cpu,
             memoryLimitMiB       : size.memoryMiB,
             desiredCount         : desired,
-            // Sit behind the API Gateway: internal ALB reached via a VpcLink (see makeApi).
-            publicLoadBalancer   : false,
+            // Normally sits behind the API Gateway: internal ALB reached via a VpcLink (see makeApi). A
+            // `public: true` service gets a real internet-facing ALB instead (no VpcLink integration at all).
+            publicLoadBalancer   : isPublic,
             securityGroups       : [ this.computeSg() ],
             circuitBreaker       : { rollback: true },              // fail deployments fast
             minHealthyPercent    : 100,                             // no capacity dip during deploys
@@ -920,12 +951,33 @@ export class ServiceStack extends cdk.Stack
         } );
 
         if( spec.healthCheckPath ) svc.targetGroup.configureHealthCheck( { path: spec.healthCheckPath } );
-        this._albListener = svc.listener;
-        this._alb         = svc.loadBalancer;
 
-        // publish this ALB so a sibling stack's `uses: [{ kind: SERVICE }]` reference can reach it
-        // directly (cross-stack) — see the constructor's early `injectServiceUrl` pass.
-        this.albs.set( `${this.service}/${spec.key}`, svc.loadBalancer.loadBalancerDnsName );
+        if( isPublic )
+        {
+            // Cookie-based stickiness — a stateful service (e.g. a room-pinned WebSocket server) needs every
+            // request/connection from one client to keep landing on the SAME task, which round-robin alone
+            // can't guarantee.
+            if( spec.loadBalancer?.stickySessions )
+                svc.targetGroup.enableCookieStickiness( cdk.Duration.seconds( spec.loadBalancer.stickySessions.durationSec ?? 86400 ) );
+
+            // WebSocket connections are long-lived — the ALB's default 60s idle timeout would silently kill
+            // an open socket with no traffic; raise it from the manifest's (already-existing) per-env limit.
+            const idleTimeoutSec : number | undefined = forEnv( spec.loadBalancer?.limits, this.deployEnv )?.idleTimeoutSec;
+            if( idleTimeoutSec ) svc.loadBalancer.setAttribute( "idle_timeout.timeout_seconds", String( idleTimeoutSec ) );
+
+            // publish the PUBLIC dns too, so a sibling stack (e.g. web, for a wss:// client URL) can read it.
+            this.albs.set( `${this.service}/${spec.key}`, svc.loadBalancer.loadBalancerDnsName );
+        }
+        else
+        {
+            // the internal-ALB shape `makeApi` wires into a VpcLink — only ONE such listener per manifest today.
+            this._albListener = svc.listener;
+            this._alb         = svc.loadBalancer;
+
+            // publish this ALB so a sibling stack's `uses: [{ kind: SERVICE }]` reference can reach it
+            // directly (cross-stack) — see the constructor's early `injectServiceUrl` pass.
+            this.albs.set( `${this.service}/${spec.key}`, svc.loadBalancer.loadBalancerDnsName );
+        }
 
         // `auto` + initial count resolved above (with min<=start<=max validation). Attach the scaler.
         if( auto )
@@ -1055,6 +1107,19 @@ export class ServiceStack extends cdk.Stack
     }
 
     //////////////////////////////////////////////////////////////////////////////
+    private injectUserPoolId( ref : ResourceRef ) : void
+    {
+        const poolId : string | undefined = this.userPools.get( `${ref.service}/${ref.key}` );
+        if( !poolId )
+        {
+            cdk.Annotations.of( this ).addWarning( `uses: user pool ${ref.service}/${ref.key} has no registered pool — ` +
+                `is '${ref.service}' declared BEFORE '${this.service}' in cloud/src/app.ts's manifests[]?` );
+            return;
+        }
+        this.envVars[ envVarName( ResourceKind.USER_POOL, ref.key ) ] = poolId;
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
     /** Grant this service's compute least-privilege access to a resource owned by another service. */
     private grantUses( ref : ResourceRef ) : void
     {
@@ -1099,6 +1164,8 @@ export class ServiceStack extends cdk.Stack
             }
             case ResourceKind.SERVICE:
                 break;   // no IAM to grant (plain HTTP) — the env var was already injected pre-compute, see injectServiceUrl
+            case ResourceKind.USER_POOL:
+                break;   // no IAM to grant (JWKS is fetched over public HTTPS) — the env var was already injected, see injectUserPoolId
             default:
                 cdk.Annotations.of( this ).addInfo( `uses: ${ref.kind}:${ref.service}/${ref.key} grant not yet implemented` );
         }
@@ -1227,6 +1294,10 @@ export class ServiceStack extends cdk.Stack
 
         if( !this._userPool ) this._userPool = pool;
         this.envVars[ envVarName( ResourceKind.USER_POOL, spec.key ) ] = pool.userPoolId;
+
+        // publish this pool so a sibling stack's `uses: [{ kind: USER_POOL }]` reference can read it
+        // (cross-stack) — see the constructor's `injectUserPoolId` pass.
+        this.userPools.set( `${this.service}/${spec.key}`, pool.userPoolId );
     }
 
     /** Attach an owned Lambda (by logical key) as a Cognito user-pool trigger. */

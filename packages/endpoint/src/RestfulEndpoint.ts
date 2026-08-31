@@ -63,6 +63,12 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
     // 3. Runtime State Containers
     public query!: Q;
     public body!: B | null;
+    // TRUE raw request bytes, present only when the owning `Service` called `enableRawBodyCapture()` (see
+    // packages/services/src/Service.ts) — needed by webhook signature schemes that HMAC over raw bytes
+    // (`Webhook.hmacSha256RawBody`), since a re-serialized `body` isn't guaranteed to match what was signed.
+    // Typed `Uint8Array`, not Node's `Buffer` (which IS a `Uint8Array`) — this class is shared by the browser
+    // client (`marshalClient`), whose tsconfig has no Node types.
+    public rawBody? : Uint8Array;
 
     // Compiled AJV validators are cached per endpoint class (schemas are constant per
     // subclass), so we compile once instead of on every validate() call.
@@ -353,7 +359,7 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
     /**
     * SERVER SIDE: Unmarshals all HTTP incoming fragments back into unified class types
     */
-    public unmarshalServer( incoming: { headers: any; query: any; fullPath: string; body: any }): void
+    public unmarshalServer( incoming: { headers: any; query: any; fullPath: string; body: any; rawBody?: Uint8Array }): void
     {
         const mappings : Array<RestfulEndpoint.FieldMap> = this.getMappings();
         const parsedUriParams = RestfulEndpoint.parseUriParams( this.uri, incoming.fullPath );
@@ -387,6 +393,7 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
 
         this.query = extractedQuery;
         this.body = (incoming.body ?? null) as B | null;
+        this.rawBody = incoming.rawBody;
 
         // Run an immediate AJV validation pass after server hydration
         const validation = this.validate();
@@ -403,8 +410,9 @@ export abstract class RestfulEndpoint<Q extends object = any, B extends object |
     */
     public reset() : void
     {
-        this.query = undefined as any;
-        this.body  = null;
+        this.query   = undefined as any;
+        this.body    = null;
+        this.rawBody = undefined;
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -604,8 +612,12 @@ export namespace RestfulEndpoint
 
     export interface Response
     {
-        status : NetworkUtils.Status;
-        data?  : any | ErrorResponse;
+        status      : NetworkUtils.Status;
+        data?       : any | ErrorResponse;
+        // Override the reply's Content-Type (defaults to JSON in Service.processEndpoint) for an endpoint whose
+        // `data` is already a serialized non-JSON body — e.g. a synchronous provider call-control webhook that
+        // must reply with TwiML (`NetworkUtils.MimeType.XML`), not a JSON envelope.
+        contentType? : string;
     }
 
     // returned in header under Headers.STATS

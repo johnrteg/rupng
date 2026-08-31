@@ -2,12 +2,19 @@
 # Voice (automated calls — robocalls · IVR survey calls) — the voice `send` channel
 #
 
-> **Status: PLANNED — captured, not committed.** Whether voice gets built is a **product / marketing decision**.
-> This spec captures the shape now so it isn't lost: voice is **texting's cousin** — it **reuses** the channel
-> architecture (provider factory · L1/L2 queues · `canSend()` · number records · dispatch pacing · analytics)
-> almost wholesale, and adds a **stricter compliance surface** (STIR/SHAKEN · abandoned-call · in-call opt-out ·
-> AMD) + **IVR**. *(Design overview, not legal advice — consent / DNC / state-law specifics need counsel before
-> launch.)*
+> **Status: SCAFFOLD BUILT — engineering only, not launch-ready.** The full compliance/product decision (gap #1
+> below) is still open, but a working code scaffold now exists: `VoiceService`/`VoiceMainService`, the
+> `voice_calls`/`voice_suppression`/`voice_numbers` tables, the `voice-send`/`voice-status` SQS queues, the
+> `fake` + **Twilio** provider adapters (single-step TwiML IVR: say/play + "press 1" opt-out), and **TTS via
+> `@repo/ai`'s `AiRouting.Modality.TEXT_TO_SPEECH`** (the same provider-agnostic speech abstraction `media` uses
+> — synthesized once, cached content-hash-keyed in a `voice`-owned S3 bucket, played back as a recording).
+> **Not built yet** (tracked in *Gaps & open decisions* below): the full IVR flow CRUD/branching engine, AMD,
+> STIR/SHAKEN attestation + caller-ID reputation, abandoned-call rate pacing, recording/transcript capture +
+> PII TTL, DLQ requeue, and every provider besides Twilio. This spec captures the full target shape: voice is
+> **texting's cousin** — it **reuses** the channel architecture (provider factory · L1/L2 queues · `canSend()` ·
+> number records · dispatch pacing · analytics) almost wholesale, and adds a **stricter compliance surface**
+> (STIR/SHAKEN · abandoned-call · in-call opt-out · AMD) + **IVR**. *(Design overview, not legal advice — consent
+> / DNC / state-law specifics need counsel before launch.)*
 
 # Objective
 
@@ -359,11 +366,145 @@ staff **`SUPPORT`<`APPLICATION`<`ROOT`** · **`⬆`** = step-up · **`Internal`*
    * **Recording consent** — two-party-consent states for any recorded call legs; confirm disclosure.
    *Output:* a counsel-signed checklist attached to the build decision (gap #1) — **no launch without it.** This
    is a **design overview, not legal advice.**
-7. ✅ **Provider stack — DECIDED (default): 3rd-party-first behind the factory + AWS Polly / Transcribe for
-   TTS / STT.** Mirrors the SMS stance — reuse the existing vendors + `voiceCapable` number records, fastest to
+7. ✅ **Provider stack — DECIDED (default): 3rd-party-first behind the factory + TTS/STT via a routed AI
+   abstraction.** Mirrors the SMS stance — reuse the existing vendors + `voiceCapable` number records, fastest to
    ship, mature STIR/SHAKEN + AMD + answer-rate. **Amazon Connect** only if a **live-agent contact center** is
    added; **Chime SDK** only if raw-minute cost / full in-infra residency dominates (own the build). Swappable by
-   config — not a one-way door. See *Make vs buy*.
+   config — not a one-way door. See *Make vs buy*. **Implementation note:** TTS is NOT a bespoke Polly
+   integration — it's `@repo/ai`'s existing `AiRouting.Modality.TEXT_TO_SPEECH` (the same provider-agnostic
+   speech capability `media` already uses for voice cloning/narration; today routes to whichever provider
+   `AiRouting` is configured for: fish.audio (the default) / ElevenLabs / OpenAI / **Piper** / **Polly**.
+   **Piper** (open-source, self-hosted, keyless — `packages/ai/src/adapters/PiperAdapter.ts`, 2026-08-29) is a
+   selectable `TEXT_TO_SPEECH` provider for cost-free/offline synthesis; select it via a `config/ai` route
+   (`AiRouting.Provider.PIPER`), pointed at a `piper --http-server` process via `PIPER_URL`. **Polly** (Amazon
+   Polly, IAM-authed/keyless — `packages/ai/src/adapters/PollyAdapter.ts`, 2026-08-29, mirrors `BedrockAdapter`'s
+   keyless pattern) is now ALSO a selectable `TEXT_TO_SPEECH` provider — `AiRouting.Provider.POLLY`, `model`
+   doubles as the Polly synthesis ENGINE ("neural" default); no native WAV output (falls back to MP3).
+   STT (speech-to-text, for spoken IVR answers) is not wired at all yet — `@repo/ai` has a `SPEECH_TO_TEXT`
+   modality slot, but voice doesn't call it (see gap #8).
+8. ⚠️ **Next build queue (engineering, roughly priority order):**
+   * ✅ **Full IVR flow engine — BUILT (2026-08-29).** `/voice/flows` CRUD + `/voice/flows/:id/preview`
+     (merge + TTS synthesis, no call placed), a `Voice.IvrFlow`/`IvrStep`/`IvrGather` model (DTMF-only branch
+     graph — no speech/NLU gather yet, a narrower gap now), a `voice_flows` DDB table, and multi-step branching
+     in both adapters (`VoiceProvider.ivrInstructions` now takes a resolved `IvrRender` spec VoiceService builds
+     by walking the flow graph one step per call-control webhook hit; `collectedInput` isolates each provider's
+     own digit-field name). `Voice.SendRequest.flowId` + `mergeData` let a call run a saved flow instead of a
+     single message, with `{{ dotted.path }}` merge tags (promoted to the shared `StringUtils.mergeTags`, which
+     `MjmlRenderer.merge` now also delegates to — one merge-tag implementation for every channel, not a
+     per-service copy). Per-step TTS is resolved LAZILY (at call-control-webhook time, cached by content hash)
+     rather than eagerly at dial time, unlike the legacy single-message path — a deliberate difference since a
+     flow's later steps may never be reached. STILL A GAP: speech/NLU gather (DTMF-only today), and the
+     `/voice/flows` CRUD has no Console UI (out of scope — flows are account-authored content, like email
+     templates, not an AppConfig-backed Config model; a future composer UI is a `web` app concern, not Console).
+   * ✅ **AMD (answering-machine detection) — BUILT (2026-08-29).** `VoiceConfig.amdEnabled` (opt-in, default
+     false) toggles Twilio's SYNCHRONOUS `machineDetection: "DetectMessageEnd"` on `calls.create` — Twilio holds
+     the call until it knows human-vs-machine, then delivers `AnsweredBy` on the FIRST request to the existing
+     call-control webhook (no new webhook route). `VoiceProvider.answeredBy` normalizes each provider's signal
+     to `"human"`/`"machine"`/undefined; on `"machine"`, `VoiceService.ivrStep` marks the call `Voice.Status.
+     VOICEMAIL` and either plays the request's `SendRequest.voicemailMessage` (lazily TTS'd + cached, same path
+     as any other step) then hangs up, or hangs up SILENTLY if no voicemail message was given (`IvrRender.
+     message` is now optional for exactly this case). The IVR flow engine and the legacy single-message path
+     both go through this same AMD check before ever entering their own branching — `fake` doesn't need it
+     (its weighted-outcome table already simulates VOICEMAIL synchronously in `initiate`). Console: a new AMD
+     switch in `voiceConfig/GeneralSection.tsx`.
+   * **STIR/SHAKEN attestation + caller-ID reputation** — belongs in [registration](../registration/SPECS.md)
+     (gap #4); `voice_numbers` today is a bare, voice-owned stand-in with no attestation field.
+   * ✅ **`WorkQueue` governor — BUILT + ADOPTED (2026-08-29).** `packages/services/src/WorkQueue.ts` now
+     implements the full contract (DynamoDB durable job store + Redis fairness ZSET/token-bucket/per-minute
+     bins — dispatch gap #8's hybrid, prototyping the `gsi_status_account` GSI access pattern the gap
+     called for), and **voice composes it** (`VoiceService.workQueue`, queue `"voice"`, per-account rate
+     seeded from `VoiceConfig.limits.defaultRatePerMinute` — a field that existed since the Console form
+     was built but was never enforced until now). `dialOne`/`dialFlow` no longer call `adapter.initiate`
+     inline — they gate (quiet-hours/suppression), write the call-log row as `QUEUED`, and hand the job to
+     `workQueue.enqueue()` (job `meta` carries the built `VoiceCall` + `providerId` + flow/campaign context,
+     but deliberately NEVER a resolved `VoiceContext` credential — that's re-resolved fresh at dispatch time
+     so a Twilio auth token never lands at rest in the governor's job store). `VoiceMainService.
+     startDispatchLoop` is the coordinator: a self-scheduled `Consumer`-style loop (no separate `Consumer`
+     class stood up — the loop lives directly on `VoiceMainService`, since voice has no other reason for a
+     second execution shape yet) that calls `dispatchPending()` each round and sleeps until
+     `workQueue.nextWakeAt()` says something could change, per DISPATCH.md's "self-scheduled precise
+     wake-ups" rather than fixed-interval polling. `dispatchOne` resolves the adapter + a fresh
+     `providerContext`, dials, updates the call-log to whatever status the adapter returns, and always
+     calls `workQueue.complete()` — a settled dial ATTEMPT (success OR provider-reported failure) closes the
+     governed job; only an unresolvable provider/adapter is a governor-level `fail()` (a config problem, not
+     a call outcome). Required new voice CloudManifest resources: `wq_jobs` (+ its `gsi_status_account`
+     GSI), `wq_queue_config`, `wq_account_config`, `wq_account_queue_config` tables, and a `cache`
+     (ElastiCache Serverless) resource — voice is the FIRST service in the platform to declare a `caches`
+     resource at all (the `Cache`/Redis facade existed in `@repo/services` but had zero adopters before
+     this). ✅ **Single-flight / leader-election — BUILT (2026-08-29)**, closing DISPATCH.md gap #13 at the
+     COORDINATOR layer (per the doc's own layering — the governor library itself stays leader-election-free;
+     each adopting channel's coordinator handles it): `VoiceMainService.startDispatchLoop` wraps each round in
+     a Redis single-flight lock (`SET wq:voice:dispatch:lock <instance id> PX 10000 NX`) so only one MAIN
+     replica actually dispatches per window; a replica that loses the race just skips the round (harmless —
+     `dispatch()`'s conditional job-claim already made a double-dispatch a no-op, this just stops every
+     replica in the autoscaled fleet from redundantly racing the same round). Release checks the lock still
+     names this instance before clearing it (never clears a lock a DIFFERENT replica re-acquired after this
+     one's TTL lapsed); a crash mid-round self-heals via the TTL, never holds the lock forever. `wq_queue_
+     config`'s operator-tunable batch/low-water-mark/lease values are left at the governor's ctor-time
+     `Rules` defaults (batchSize 20, lowWaterMark 50, leaseSeconds 120) — no Console control for these yet
+     (they're WorkQueue's OWN admin surface, orthogonal to `VoiceConfig`).
+     ✅ **Operator visibility (API) — BUILT (2026-08-29).** `WorkQueue.snapshot()` (+ its `listActiveAccounts()`
+     helper) aggregates queue depth/defaults + every currently-active account's `accountState` into one
+     `WorkQueue.QueueSnapshot`. Voice serializes it over a NEW shared wire shape, `Dispatch.QueueSnapshot`
+     (`packages/api/src/dispatch/model/Dispatch.ts`) — deliberately NOT a voice-specific model, so any future
+     `WorkQueue` adopter (email/SMS) can expose the SAME shape from their own endpoint. Three new endpoints:
+     `GET /voice/dispatch/state` (`GetVoiceDispatchStateImpl` → `workQueue.snapshot()`), `POST /voice/dispatch/
+     suspend` + `POST /voice/dispatch/resume` (`{ accountId }` → `workQueue.suspend`/`resume`) — all
+     `Access.AppRole.APPLICATION`, `Audience.APP`. **Still open: no Console panel.** Building it exposed that
+     Console has **no existing pattern for calling a normal authorizer-protected endpoint** — the only
+     precedent (`tools/console/src/main/authActions.ts`) bypasses auth via a dev-only unauthenticated
+     `_control` route, not real ROOT/session auth. Solving that is a bigger, cross-cutting Console change
+     (affects any future admin panel, not just this one) — deliberately deferred; per user decision
+     (2026-08-29), operator visibility ships API-only for now (curl/API-tooling-reachable), not Console-UI-
+     reachable. Revisit once Console's real-auth-calling gap is solved, or a second `WorkQueue` adopter makes
+     the generic-panel shape worth building.
+   * ✅ **Recordings + transcripts — BUILT (2026-08-29).** `VoiceConfig.recordingEnabled` turns on Twilio
+     whole-call recording (`record: true` + `recordingStatusCallback` → a NEW async webhook,
+     `POST /voice/webhook/:provider/recording/:accountId/:callId`, mirroring the status webhook's shape); on
+     completion the `voice-recording` worker downloads the audio (`VoiceProvider.fetchRecording`, Basic-Auth'd
+     against the Twilio REST API) and stores it in the `voice` bucket's `recordings/` prefix (`CallLog.
+     recordingKey` — an S3 key, never a durable URL; `GetVoiceCallRecording` presigns fresh on every read).
+     `VoiceConfig.transcriptionEnabled` (requires recording) additionally transcribes the downloaded audio via
+     `@repo/ai`'s `AiRouting.Modality.SPEECH_TO_TEXT` (the SAME provider-agnostic pattern TTS uses — no
+     voice-specific STT client), storing the text on `CallLog.transcript` (`GetVoiceCallTranscript`). **PII TTL
+     is enforced at the S3-bucket-lifecycle level** (90-day expiry on `recordings/`), not a per-row DynamoDB TTL
+     — DynamoDB TTL deletes the WHOLE item, which would destroy the operational call-log row, not just its PII.
+     `POST /voice/internal/erase` (S2S forget hook) purges a destination's recordings/transcripts + obfuscates
+     `to` on those rows ahead of that TTL, for the `contact` forget fan-out to call once wired. `fake` never
+     records (no real media exists to capture). Console: `recordingEnabled`/`transcriptionEnabled` switches in
+     `voiceConfig/GeneralSection.tsx` (transcription disabled unless recording is on).
+   * ✅ **DLQ list + requeue — BUILT (2026-08-29).** `GET /voice/dlq` (optionally filtered to one queue) +
+     `POST /voice/dlq/requeue` (resend + delete, by the exact items a prior list call returned — never
+     re-received server-side, so receipt handles stay valid). **Found + fixed a platform-wide gap along the
+     way:** `cloud/src/lib/ServiceStack.ts`'s `makeQueue` created each `dlq: true` queue's dead-letter
+     companion but never registered it as its own resource (`this.queues.set`) or exposed its URL
+     (`envVars[...]`) — so `CloudResolver.queueUrl("<key>-dlq")` would've thrown for EVERY service with a DLQ,
+     not just voice, and the service's IAM role had no grant on it either. Fixed generically (register the
+     `<key>-dlq` queue under its own key, same as the source queue) — every service with `dlq: true` queues
+     benefits, not just voice.
+   * **More providers** — Telnyx / Vonage / Bandwidth / SignalWire / Sinch / Infobip / Plivo / AWS Connect —
+     each is "a new adapter, not a new worker" per the factory design (voice-3.1), same shape as
+     `TwilioVoiceAdapter`.
+   * ✅ **TTS registration in `media`'s asset library — BUILT (2026-08-29), scoped as an ADDITION not a
+     replacement.** Voice's own `tts/` S3 cache stays (it's fast, proven, and on the call's critical path —
+     nothing should make a `media` outage block a call). On a fresh synthesis (cache miss), voice now ALSO
+     best-effort registers the clip in `media`'s library via a NEW S2S endpoint, `POST /media/v1/internal/
+     assets` (`Audience.INTERNAL`, `MediaService.storeInternalAsset` — mirrors `promoteBatch`'s write shape:
+     `Media.Status.SCANNING` → `media`/`media-scan` → immediately presigned so the caller doesn't wait on the
+     async scan pipeline). **This required real cross-service plumbing, not just a voice change:** media had
+     NO S2S "store bytes as an asset" path before this (`promoteBatch` is in-process-only + user-authed;
+     `PostUpload`/`PostUploadComplete` are user-authed too) — so a new INTERNAL contract + `MediaService`
+     method were added. Voice reaches it via `apps/core/voice/src/clients/MediaClient.ts`, the SAME S2S
+     pattern `social`'s `MarketplaceClient` already uses (a CloudManifest `uses: [{ service: "media", kind:
+     ResourceKind.SERVICE, ... }]` entry → `MEDIA_INTERNAL_URL` env var → `RestfulService.fetch`). Registration
+     failure is logged + swallowed — never surfaces to the call. **Not done:** true dedup with `media`'s
+     voice-cloning feature (matching voice-cloned models/IDs) — out of scope, a deeper design question for
+     later; today's registration is "log the clip," not "reuse an existing one across services."
+9. ✅ **Console config editor — DONE.** `VoiceConfig` is registered in `ConfigSchema.ts` (JSON-editor linting)
+   and has a full smart-form editor at `tools/console/src/renderer/components/voiceConfig/` (General/Limits/
+   Quiet hours/Provider registry/Logging sections), registered in `ConfigPanel.tsx`'s `SMART_EDITORS` — the
+   two-views-of-one-contract rule (CLAUDE.md) is satisfied for every `VoiceConfig.Config` field that exists
+   today. Any NEW field added to the model needs a matching control added to that folder in the same change.
 
 # Requirements (traceable register)
 

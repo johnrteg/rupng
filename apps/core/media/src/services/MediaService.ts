@@ -791,6 +791,44 @@ export class MediaService extends Service
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////
+    /** S2S: store raw bytes as a new asset directly (no acting user, no staging batch) — the write shape mirrors
+     *  `promoteBatch`'s per-candidate logic (status SCANNING, enqueue `media-scan`), then immediately presigns
+     *  the just-written object so the caller can play it back before the async scan pipeline finishes (the
+     *  bytes are already in S3; only derived variants/metadata are still pending). Never throws — a storage
+     *  failure comes back as `ok:false`. */
+    public async storeInternalAsset( request : MediaService.InternalAssetRequest ) : Promise<Type.Result<{ asset : Media.Asset; url : string; expiresAt : string }>>
+    {
+        const guid : string = randomUUID();
+        const now : string = new Date().toISOString();
+        const item : Media.Item = {
+            id: randomUUID(), usage: Media.Usage.ORIGINAL, kind: request.kind, mime: request.mime, extension: request.extension,
+            size: request.bytes.length, version: 1, status: Media.Status.SCANNING, createdAt: now, modifiedAt: now,
+        };
+        const asset : Media.Asset = {
+            accountId: request.accountId, guid, name: request.name, kind: request.kind,
+            tier: Media.Tier.PROTECTED, accessRole: Access.AccountRole.USER, status: Media.Status.SCANNING,
+            scope: Media.Scope.ACCOUNT, campaignIds: [], tags: request.tags ?? [],
+            source: request.source, items: [ item ], createdAt: now, modifiedAt: now,
+        };
+
+        const key : S3.ObjectKey = MediaPipeline.itemKey( asset, item );
+        const put : Type.Result<void> = await this.s3.put( "media", key, Buffer.from( request.bytes ), item.mime );
+        if( !put.ok ) return { ok: false, error: put.error };
+        const wrote : Type.Result<void> = await this.dynamo.put( "media", { ...asset } );
+        if( !wrote.ok ) return { ok: false, error: wrote.error };
+
+        void this.assetCreated( asset );
+        const queued : Type.Result<void> = await this.sqs.send( "media-scan", { accountId: request.accountId, guid } );
+        if( !queued.ok ) this.log.warn( "storeInternalAsset — media-scan send failed", { guid, error: queued.error } );
+        else this.log.trace( "message enqueued (SQS media-scan)", { accountId: request.accountId, guid } );
+
+        const config : MediaConfig.Config = await this.mediaConfig();
+        const signed : Type.Result<string> = await this.s3.presignGet( "media", key, config.delivery.signedUrlTtlSec );
+        if( !signed.ok ) return { ok: false, error: signed.error };
+        return { ok: true, data: { asset, url: signed.data, expiresAt: new Date( Date.now() + config.delivery.signedUrlTtlSec * 1000 ).toISOString() } };
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////
     /** Discard a staging batch (media-18) — delete every candidate's staged bytes + the batch row. Idempotent. */
     public async discardBatch( accountId : string, batchId : string ) : Promise<{ status : number }>
     {
@@ -1496,6 +1534,20 @@ export namespace MediaService
 
     // how long a staging batch lives before the TTL sweeps it (matches the staging bucket's 7-day lifecycle)
     export const STAGING_TTL_SEC : number = 7 * 24 * 60 * 60;
+
+    /** A `storeInternalAsset` (S2S) request — raw bytes + enough metadata to write a library asset directly,
+     *  no staging batch / acting user involved. */
+    export interface InternalAssetRequest
+    {
+        accountId : string;
+        name      : string;
+        kind      : Media.Kind;
+        mime      : string;
+        extension : string;
+        bytes     : Uint8Array;
+        tags?     : Array<string>;
+        source?   : Media.Source;
+    }
 
     /** The `media-generate` SQS job body — one generation request over N STAGING candidates (media-18). The
      *  Job produces each candidate's bytes into the staging bucket + updates the staging batch row; nothing is

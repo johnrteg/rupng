@@ -2,6 +2,35 @@
 # Collaboration service
 #
 
+> **STATUS (2026-08-30): chat v1 is BUILT** — `apps/core/collab` is a working service, not spec-only. Built:
+> `CollabControlService` (stateless REST — room/DM CRUD, membership, message history, config) +
+> `CollabRoomServer` (the stateful WebSocket room server — chat + presence, JSON-only frames), backed by
+> DynamoDB (`collab_rooms`/`collab_members`/`collab_messages`, per-item message TTL) + Redis (room registry,
+> presence, cross-node pub/sub), plus a real public/sticky-session ALB in CDK (`ServiceStack.makeEcsService`'s
+> new `loadBalancer.public`/`stickySessions` branch — the platform's FIRST public-facing ALB). Web UI:
+> `ChatPanel`/`ChatRoomList`/`ChatThread` + `useActivityStatus` (idle/active detection) +
+> `CollabSocketService`.
+> ✅ **JWT signature verification — CLOSED (2026-08-30).** The room server's WS-connect boundary now verifies
+> Cognito JWTs for REAL via `aws-jwt-verify`'s `CognitoJwtVerifier` (signature against the pool's JWKS, cached
+> after first fetch, plus issuer + expiry) — it no longer just decodes the payload. The pool id reaches this
+> service as `USERPOOL_USERS`, via a NEW platform-wide CDK primitive: `cloud/src/lib/ServiceStack.ts`'s
+> `UserPoolRegistry` (mirrors the existing `AlbRegistry`/`GatewayRegistry` cross-stack pattern) + a `uses:
+> [{ kind: ResourceKind.USER_POOL }]` manifest reference — the first consumer of a mechanism any future
+> directly-reached service can reuse. Fails CLOSED (refuses the connection, logs a warning/error) if the pool
+> id is missing or verification fails for any reason — never falls back to trusting an unverified token.
+> **Remaining, smaller gaps**: `tokenUse`/`clientId` claims are NOT asserted (passed `null` — the web app's
+> session token's exact Cognito token type/client isn't threaded through yet; signature/issuer/expiry are
+> still fully checked regardless); the raw JWT still travels as a WS query param, which ALB access logs
+> capture in plaintext (a separate hardening item — short-lived single-use "connect tickets" minted via the
+> already-Gateway-protected REST API would close this; not yet built).
+> **NOT built** (see the Gaps list below for the authoritative, itemized version): Y.js/Hocuspocus CRDT
+> document co-editing + whiteboard (collab-2.0, collab-1.5) — this is CHAT ONLY; per-room KMS envelope
+> encryption (collab-8.7); the GDPR erasure job + `/collab/internal/erase` hook (collab-8.4/8.5/8.8); per-room
+> rate-limiting (collab-8.1); hashed audit events (collab-8.3); ownership transfer endpoint (collab-7.6 —
+> creator stays owner permanently in v1); graceful room hand-off / snapshot rehydrate (collab-5.4, moot
+> without a CRDT doc to lose); a lower-privilege "list my account's teammates" read for the New-DM picker (it
+> currently reuses `GetMembers`, which is ACCOUNT-admin-gated).
+
 # Objective
 
 The home for **bidirectional, low-latency, presence-aware "live sessions" (rooms)** — where several users

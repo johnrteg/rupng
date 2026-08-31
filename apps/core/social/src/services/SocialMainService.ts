@@ -51,6 +51,12 @@ export class SocialMainService extends SocialService
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // REPLACES the base's `formbody`-only registration (social has no form-urlencoded traffic — Meta's
+    // webhook is JSON) — captures true raw bytes for `PostSocialWebhookImpl`'s `Webhook.hmacSha256RawBody`
+    // check while still producing the same parsed `request.body` every other endpoint already expects.
+    protected override addServerRegister() : void { this.enableRawBodyCapture(); }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     /** Register the social endpoint impls (after the inherited /health + /version). */
     protected override async registerEndpoints() : Promise<void>
     {

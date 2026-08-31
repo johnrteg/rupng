@@ -35,7 +35,7 @@ export const CATALOG : Record<string, CatalogEntry> =
     marketplace  : { label: "Marketplace",  icon: "Storefront",       blurb: "Marketplace & integrations",              roles: { main: 8170 } },
     texting      : { label: "Texting",      icon: "Textsms",          blurb: "SMS/MMS channel",                         roles: { main: 8180 } },
     email        : { label: "Email",        icon: "Email",            blurb: "Email channel",                           roles: { main: 8190 } },
-    voice        : { label: "Voice",        icon: "Call",             blurb: "Voice channel (planned)",                 roles: { main: 8200 } },
+    voice        : { label: "Voice",        icon: "Call",             blurb: "Voice channel (scaffold + fake/Twilio)",  roles: { main: 8200 } },
     print        : { label: "Print",        icon: "Print",            blurb: "Print / direct mail channel",             roles: { main: 8210 } },
     social       : { label: "Social",       icon: "Share",            blurb: "Social channel",                          roles: { main: 8220 } },
     survey       : { label: "Survey",       icon: "Poll",             blurb: "Surveys & forms",                         roles: { main: 8230 } },
@@ -47,7 +47,7 @@ export const CATALOG : Record<string, CatalogEntry> =
     audit        : { label: "Audit",        icon: "Gavel",            blurb: "Audit log",                               roles: { main: 8290 } },
     search       : { label: "Search",       icon: "Search",           blurb: "Search / indexing",                       roles: { main: 8300 } },
     realtime     : { label: "Realtime",     icon: "Bolt",             blurb: "Realtime push / WebSocket",               roles: { main: 8310 } },
-    collab       : { label: "Collab",       icon: "Groups",           blurb: "Collaboration",                           roles: { main: 8320 } },
+    collab       : { label: "Collab",       icon: "Groups",           blurb: "Chat — rooms, DMs, presence (v1; no doc co-editing yet)", roles: { control: 8320, room: 8321 } },
     "fake-email" : { label: "Fake Email",   icon: "Science",          blurb: "DEV-ONLY simulated email provider (fake ESP)", roles: { main: 9100 } },
     web          : { label: "Web",          icon: "Language",         blurb: "React SPA (Vite dev server)",             roles: { main: 5173 }, frontend: true }
 };

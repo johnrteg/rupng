@@ -118,7 +118,8 @@ export class Service extends Daemon
                 scoped.unmarshalServer( { headers  : request.headers,
                                           query    : request.query,
                                           fullPath : request.url,
-                                          body     : request.body } );
+                                          body     : request.body,
+                                          rawBody  : ( request as FastifyRequest & { rawBody? : Buffer } ).rawBody } );
             }
             catch( err : any )
             {
@@ -191,7 +192,7 @@ export class Service extends Daemon
             //
             // reply to client
             //
-            reply.header( NetworkUtils.HeaderType.CONTENT, NetworkUtils.MimeType.JSON )
+            reply.header( NetworkUtils.HeaderType.CONTENT, response.contentType ?? NetworkUtils.MimeType.JSON )
                  .code( response.status )
                  .send( response.data );
             this.log.trace( "rest.completed", { method: endpt.method, uri: endpt.uri, status: response.status, durationMs: Date.now() - receivedAt } );
@@ -363,6 +364,37 @@ export class Service extends Daemon
     protected addServerRegister() : void
     {
         if( this.server )this.server.register( formbody );
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // A webhook-owning service (voice, social, …) calls this INSTEAD of the default `addServerRegister()` (not
+    // in addition — both claim the SAME content types, and Fastify throws if a content-type parser is
+    // registered twice). Captures the TRUE raw request bytes (as `request.rawBody`, read by `Webhook.
+    // hmacSha256RawBody`) for `application/json` and `application/x-www-form-urlencoded` — the two shapes
+    // provider webhooks actually send — while still producing the EXACT SAME parsed `request.body` shape the
+    // default JSON parser / `@fastify/formbody` would have, so every existing endpoint keeps working unchanged.
+    // Fixes a real bug: without true raw bytes, HMAC-over-raw-body verification (Meta/Stripe/GitHub-style) can
+    // only approximate by re-serializing the parsed body, which isn't guaranteed to match what was signed.
+    protected enableRawBodyCapture() : void
+    {
+        if( !this.server ) return;
+
+        const capture = ( _request : FastifyRequest, payload : Buffer, done : ( error : Error | null, body? : unknown ) => void ) : void =>
+        {
+            ( _request as FastifyRequest & { rawBody? : Buffer } ).rawBody = payload;
+            try
+            {
+                const text        : string = payload.toString( "utf8" );
+                const contentType : string = String( _request.headers[ "content-type" ] ?? "" );
+                const parsed      : unknown = contentType.includes( "application/json" )
+                    ? ( text.length > 0 ? JSON.parse( text ) : {} )
+                    : Object.fromEntries( new URLSearchParams( text ) );
+                done( null, parsed );
+            }
+            catch( error : unknown ) { done( error as Error ); }
+        };
+
+        this.server.addContentTypeParser( [ "application/json", "application/x-www-form-urlencoded" ], { parseAs: "buffer" }, capture );
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////

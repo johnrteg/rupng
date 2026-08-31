@@ -15,8 +15,10 @@ enum SendChannel { EMAIL = 0, TEXT = 1, VOICE = 2 }
 
 //
 // Messages : Send — an ad-hoc compose-and-send tool (no template/campaign involved), one tab per channel. Email
-// is the only wired channel today; Text/Voice are placeholders until those services ship (each tab's compose
-// form lives in its own panel component — SendEmailPanel/SendTextPanel/SendVoicePanel).
+// and Voice are wired; Text is a placeholder until that service ships (each tab's compose form lives in its own
+// panel component — SendEmailPanel/SendTextPanel/SendVoicePanel). Voice's panel places a TEST call (one
+// destination you control) — there's no bulk/segment voice send endpoint in `@repo/api` yet (that path is
+// S2S-only today via PostVoiceCallsBulk).
 //
 export function MessagesSend( _props : MessagesSend.Props ) : JSX.Element
 {

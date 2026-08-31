@@ -38,6 +38,8 @@
         "contact": "*",
         "campaign": "*",
         "email": "*",
+        "voice": "*",
+        "collab": "*",
         "marketplace": "*",
         "social": "*",
         "monitor": "*",

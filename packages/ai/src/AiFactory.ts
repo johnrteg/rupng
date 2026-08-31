@@ -12,6 +12,8 @@ import { ElevenLabsAdapter } from "./adapters/ElevenLabsAdapter";
 import { MagnificAdapter } from "./adapters/MagnificAdapter";
 import { GeminiAdapter } from "./adapters/GeminiAdapter";
 import { AwsTranscribeAdapter } from "./adapters/AwsTranscribeAdapter";
+import { PiperAdapter } from "./adapters/PiperAdapter";
+import { PollyAdapter } from "./adapters/PollyAdapter";
 import { KmsKeyProvider, SecretsKeyProvider } from "./KeyProvider";
 import type { KeyProvider } from "./KeyProvider";
 
@@ -30,6 +32,8 @@ export class AiFactory
         [ Ai.Provider.MAGNIFIC,   ( options ) => new MagnificAdapter( options ) ],
         [ Ai.Provider.GEMINI,     ( options ) => new GeminiAdapter( options ) ],
         [ Ai.Provider.AWS_TRANSCRIBE, ( options ) => new AwsTranscribeAdapter( options ) ],
+        [ Ai.Provider.PIPER,      ( options ) => new PiperAdapter( options ) ],
+        [ Ai.Provider.POLLY,      ( options ) => new PollyAdapter( options ) ],
     ] );
 
     /** Global defaults applied to every {@link AiFactory.create} call (set via {@link AiFactory.configure}). */
@@ -83,6 +87,7 @@ export class AiFactory
             maxAttempts      : opts.maxAttempts,
             videoBucket      : opts.videoBucket,        // Bedrock Nova Reel async output bucket
             transcribeBucket : opts.transcribeBucket,   // Amazon Transcribe audio staging bucket
+            piperUrl         : opts.piperUrl,           // self-hosted Piper HTTP server base URL
             onUsage          : opts.onUsage ?? AiFactory.config.onUsage,
         } );
     }

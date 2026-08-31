@@ -16,3 +16,5 @@ export { OpenAiAdapter } from "./adapters/OpenAiAdapter";
 export { FishAdapter } from "./adapters/FishAdapter";
 export { ElevenLabsAdapter } from "./adapters/ElevenLabsAdapter";
 export { MagnificAdapter } from "./adapters/MagnificAdapter";
+export { PiperAdapter } from "./adapters/PiperAdapter";
+export { PollyAdapter } from "./adapters/PollyAdapter";

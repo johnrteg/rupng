@@ -26,6 +26,7 @@ import { MONO } from "../theme";
 import { JsonEditor } from "./JsonEditor";
 import { MediaConfigForm } from "./mediaConfig/MediaConfigForm";
 import { EmailConfigForm } from "./emailConfig/EmailConfigForm";
+import { VoiceConfigForm } from "./voiceConfig/VoiceConfigForm";
 import { SocialConfigForm } from "./socialConfig/SocialConfigForm";
 import { MonitorConfigForm } from "./monitorConfig/MonitorConfigForm";
 import { AccountConfigForm } from "./accountConfig/AccountConfigForm";
@@ -51,6 +52,7 @@ const SMART_EDITORS : Record<string, Record<string, React.ComponentType<SmartEdi
 {
     media:   { settings: MediaConfigForm },
     email:   { settings: EmailConfigForm },
+    voice:   { settings: VoiceConfigForm },
     social:  { settings: SocialConfigForm },
     monitor: { settings: MonitorConfigForm },
     account: { settings: AccountConfigForm },

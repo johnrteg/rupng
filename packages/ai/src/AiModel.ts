@@ -126,6 +126,10 @@ export namespace Ai
         GEMINI     = "gemini",
         /** Amazon Transcribe — speech-to-text (IAM-authed; stages audio through S3, async job). */
         AWS_TRANSCRIBE = "aws-transcribe",
+        /** Piper — open-source, self-hosted neural text-to-speech (no api key; a local/sidecar HTTP server). */
+        PIPER = "piper",
+        /** Amazon Polly — IAM-authed neural/standard text-to-speech (no api key). */
+        POLLY = "polly",
     }
 
     /** A unit of capability a model/adapter may support. */

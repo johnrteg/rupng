@@ -68,7 +68,7 @@ export namespace Ports
 
     // ── realtime / collaboration ─────────────────────────────────────────────
     export namespace REALTIME     { export const MAIN = 8310; }
-    export namespace COLLAB       { export const MAIN = 8320; }
+    export namespace COLLAB       { export const MAIN = 8320; export const ROOM = 8321; }   // MAIN = stateless control plane; ROOM = stateful room server (public ALB)
 
     // ── fake providers (simulated external vendors — DEV ONLY) ─────────────────
     // A separate 9100+ grouping, deliberately FAR from the 8100–8320 platform blocks (and clear of the

@@ -1783,6 +1783,42 @@ export default class StringUtils
         }
     }
 
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /**
+     * Merge `{{ dotted.path }}` tags in `text` against `data`, resolving each path through nested objects
+     * (e.g. `{{ contact.firstName }}`). Unlike {@link formatTemplate} (flat `{key}`, unmatched left intact),
+     * a tag whose path is missing/undefined/null (or crosses a non-object) resolves to an EMPTY string, and
+     * whitespace inside the braces is tolerated (`{{ name }}` == `{{name}}`). This is the shared merge-tag
+     * convention used across channels (email subject/body, voice IVR prompts, …) so authored copy behaves
+     * identically wherever `{{...}}` merge tags are used.
+     *
+     * @example
+     * ```ts
+     * StringUtils.mergeTags( "Hi {{ contact.firstName }}!", { contact: { firstName: "Ada" } } ); // "Hi Ada!"
+     * StringUtils.mergeTags( "Hi {{ missing }}!", {} ); // "Hi !"
+     * ```
+     */
+    public static mergeTags( text : string, data : Record<string, unknown> ) : string
+    {
+        return text.replace( /\{\{\s*([\w.]+)\s*\}\}/g, ( _match : string, path : string ) : string =>
+        {
+            const value : unknown = StringUtils.resolveTagPath( data, path );
+            return value === undefined || value === null ? "" : String( value );
+        } );
+    }
+
+    // walk a dotted path ("a.b.c") through a plain-object tree; undefined on a missing key or a non-object hop
+    private static resolveTagPath( data : Record<string, unknown>, path : string ) : unknown
+    {
+        let current : unknown = data;
+        for( const segment of path.split( "." ) )
+        {
+            if( current === null || typeof current !== "object" ) return undefined;
+            current = ( current as Record<string, unknown> )[ segment ];
+        }
+        return current;
+    }
+
 }
 
 //

@@ -104,9 +104,20 @@ The app BFF **consumes** `account.account` + `auth.user` to warm its read models
 entity to publish yet (the notices entity isn't implemented). Nothing emitted. Kafka is disconnected cleanly
 on shutdown. When notices land, emit `app.notice.created|updated|deleted` (add the `Object` topic + ACCESS first).
 
+### voice  🟢 live
+| action | verb | `data` model | emitted by | status |
+|---|---|---|---|---|
+| `voice.call.created` | created | `Voice.CallLog` (`@repo/api`) | a call is dialed (or gated SUPPRESSED pre-dial) | live |
+| `voice.call.updated` | updated | `Voice.CallLog` | inbound status webhook normalizes the outcome (answered/no-answer/busy/voicemail/opted-out) | live |
+| `voice.suppression.*` | — | — | — | planned (a suppression list write happens inline today, no separate event) |
+| `voice.ivr_flow.*` | — | — | — | planned (no IVR flow CRUD entity yet — see `apps/core/voice/SPECS.md`) |
+
+> Note: voice is a scaffold + `fake`/Twilio-only build (see `apps/core/voice/SPECS.md`'s gaps list) — the full
+> IVR flow engine, AMD, and STIR/SHAKEN surface aren't built, so their reserved `Events.ts` topics stay planned.
+
 ### everything else  ⚪ planned
 `Object` topics are **defined** in [`Events.ts`](./src/Events.ts) for contact, campaign, workflow, email,
-voice, texting, print, links, collab, marketplace, media variants, etc., but no emission is wired yet. Add a
+texting, print, links, collab, marketplace, media variants, etc., but no emission is wired yet. Add a
 row here when a service starts emitting.
 
 ---

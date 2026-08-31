@@ -56,6 +56,8 @@ export namespace AiRouting
         MAGNIFIC   = "magnific",     // image generation / upscale
         GEMINI     = "gemini",       // Google Gemini — chat/vision, Imagen (image), Veo (video), Gemini TTS
         AWS_TRANSCRIBE = "aws-transcribe",   // Amazon Transcribe — speech-to-text (IAM; S3-staged async job)
+        PIPER      = "piper",        // Piper (open-source, self-hosted) — text-to-speech only, keyless
+        POLLY      = "polly",        // Amazon Polly — text-to-speech only, IAM-authed (keyless)
     }
 
     /** What an AI provider can do — the modalities it supports + a display label. Drives the AI Gen UI's
@@ -105,6 +107,8 @@ export namespace AiRouting
         { provider: Provider.GEMINI,     label: "Google Gemini", modalities: [ Modality.CHAT, Modality.IMAGE, Modality.VIDEO, Modality.TEXT_TO_SPEECH, Modality.SPEECH_TO_TEXT ],
           candidates: { [ Modality.IMAGE ]: { min: 1, max: 4, default: 1 } } },
         { provider: Provider.AWS_TRANSCRIBE, label: "Amazon Transcribe", modalities: [ Modality.SPEECH_TO_TEXT ] },
+        { provider: Provider.PIPER, label: "Piper (self-hosted)", modalities: [ Modality.TEXT_TO_SPEECH ] },
+        { provider: Provider.POLLY, label: "Amazon Polly", modalities: [ Modality.TEXT_TO_SPEECH ] },
     ];
 
     /** The providers that can serve a modality (for a UI provider picker / route validation). */
@@ -163,6 +167,9 @@ export namespace AiRouting
         },
         [ Provider.MAGNIFIC ]: {
             [ Modality.IMAGE ]: "mystic",
+        },
+        [ Provider.POLLY ]: {
+            [ Modality.TEXT_TO_SPEECH ]: "neural",   // Polly has no "model" — this doubles as the synthesis ENGINE
         },
     };
 

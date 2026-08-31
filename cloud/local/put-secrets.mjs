@@ -36,6 +36,10 @@ const unsplash = env.UNSPLASH_ACCESS_KEY
     ? JSON.stringify( { appId: env.UNSPLASH_APP_ID ?? "", accessKey: env.UNSPLASH_ACCESS_KEY, secretKey: env.UNSPLASH_SECRET_KEY ?? "" } )
     : undefined;
 
+const voiceTwilio = env.VOICE_TWILIO_AUTH_TOKEN
+    ? JSON.stringify( { accountSid: env.VOICE_TWILIO_ACCOUNT_SID ?? "", authToken: env.VOICE_TWILIO_AUTH_TOKEN } )
+    : undefined;
+
 const secrets = {
     "local-platform-secret-ai-openai":    env.OPENAI_API_KEY,
     "local-platform-secret-ai-fish":      env.FISH_AUDIO_KEY,
@@ -43,6 +47,7 @@ const secrets = {
     "local-media-secret-browse-pexels":   env.PEXELS_API_KEY,
     "local-media-secret-browse-unsplash": unsplash,
     "local-email-secret-email-mailgun":   env.MAILGUN_API_KEY,
+    "local-voice-secret-voice-twilio":    voiceTwilio,
     // ai-anthropic / ai-elevenlabs / magnific / other email-* providers: no key in .env.local yet — set later.
 };
 

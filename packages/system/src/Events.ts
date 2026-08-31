@@ -160,6 +160,7 @@ export namespace Events
         EMAIL_SUPPRESSION   = "email.suppression",
         EMAIL_DOMAIN        = "email.domain",
 
+        VOICE_CALL          = "voice.call",
         VOICE_SUPPRESSION   = "voice.suppression",
         VOICE_IVR_FLOW      = "voice.ivr_flow",
 
@@ -434,6 +435,7 @@ export namespace Events
         [ Object.EMAIL_TEMPLATE ]:      { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT } },
         [ Object.EMAIL_SUPPRESSION ]:   { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.MESSAGING } },
         [ Object.EMAIL_DOMAIN ]:        { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING } },
+        [ Object.VOICE_CALL ]:          { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.MESSAGING }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.USER, category: Category.MESSAGING } },
         [ Object.VOICE_SUPPRESSION ]:   { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.MESSAGING } },
         [ Object.VOICE_IVR_FLOW ]:      { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT } },
         [ Object.PRINT_MAILPIECE ]:     { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.MESSAGING } },
