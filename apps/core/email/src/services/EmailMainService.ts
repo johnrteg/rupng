@@ -8,6 +8,7 @@ import { Email } from "@repo/api";
 import EmailService from "./EmailService";
 
 import PostEmailSendImpl from "../endpoints/PostEmailSendImpl";
+import PostInternalSendImpl from "../endpoints/PostInternalSendImpl";
 import GetEmailTemplatesImpl from "../endpoints/GetEmailTemplatesImpl";
 import GetEmailTemplateImpl from "../endpoints/GetEmailTemplateImpl";
 import PostEmailTemplateImpl from "../endpoints/PostEmailTemplateImpl";
@@ -59,6 +60,7 @@ export class EmailMainService extends EmailService
     {
         await super.registerEndpoints();          // keeps /health + /version
         this.register( new PostEmailSendImpl( this ) );
+        this.register( new PostInternalSendImpl( this ) );
         this.register( new GetEmailTemplatesImpl( this ) );
         this.register( new GetEmailTemplateImpl( this ) );
         this.register( new PostEmailTemplateImpl( this ) );

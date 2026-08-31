@@ -32,6 +32,7 @@ import { manifest as marketplaceManifest } from "marketplace/manifest"; // apps/
 import { manifest as socialManifest } from "social/manifest"; // apps/core/social/src/CloudManifest.ts (connections DDB)
 import { manifest as monitorManifest } from "monitor/manifest"; // apps/core/monitor/src/CloudManifest.ts (no owned tables — reads other services' resources live)
 import { manifest as collabManifest } from "collab/manifest"; // apps/core/collab/src/CloudManifest.ts (rooms/members/messages DDB + Redis) — chat v1 only, no Y.js/Hocuspocus yet
+import { manifest as reportManifest } from "report/manifest"; // apps/core/report/src/CloudManifest.ts (submissions/schedules DDB, generate SQS+Lambda, iCal sweep) — contacts/accounts/campaigns generators only
 
 // Generate the API Gateway routes from the service's public RestfulEndpoint defs (same defs the web
 // client + server share), so the gateway can't drift from the contract — the endpoints carry their own
@@ -84,6 +85,10 @@ import {
     PostCollabRooms, GetCollabRooms, GetCollabRoom, PatchCollabRoom, DeleteCollabRoom,
     PostCollabDms, GetCollabRoomMembers, PostCollabRoomMembers, DeleteCollabRoomMember,
     GetCollabMessages, GetCollabConfig, PutCollabConfig,
+    GetInternalContacts, GetInternalSubAccounts, GetInternalCampaigns, PostInternalSend,
+    PostReportSubmissions, GetReportSubmissions, GetReportSubmission, GetReportSubmissionDownload, DeleteReportSubmission,
+    GetReportSchedules, PostReportSchedules, GetReportSchedule, PatchReportSchedule, PostReportSchedulePause, PostReportScheduleResume, DeleteReportSchedule,
+    GetReportSchedulesStale, PostReportInternalErase, GetReportConfig, PutReportConfig,
 } from "@repo/api";
 if( appManifest.owns.api )
     appManifest.owns.api.endpoints = [ ...( appManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetBootstrap(), new GetOpenApi(), new GetArticle() ] ) ];
@@ -109,7 +114,11 @@ if( authManifest.owns.api )
         new GetApiKeys(), new PostApiKey(), new DeleteApiKey()
     ] ) ];
 if( accountManifest.owns.api )
-    accountManifest.owns.api.endpoints = [ ...( accountManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetAccount() ] ) ];
+    accountManifest.owns.api.endpoints = [ ...( accountManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        new GetAccount(),
+        // S2S: report's accounts generator reads sub-accounts via this INTERNAL endpoint
+        new GetInternalSubAccounts()
+    ] ) ];
 if( mediaManifest.owns.api )
     mediaManifest.owns.api.endpoints = [ ...( mediaManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
         new PostUpload(), new PostUploadComplete(), new PostAssetReplace(), new GetAssets(), new GetAsset(), new GetAssetStatus(), new PatchAsset(), new PostAvatar(), new PostAssetVariants(), new PostAssetRescan(), new PostAssetScan(), new PostAssetDuplicate(), new PostAssetPoster(), new DeleteAsset(), new GetMediaUrl(), new GetItemVersions(), new PostItemRevert(), new PostItemText(), new GetDensities(), new PostAssetDensity(), new GetVariantSpecs(),
@@ -143,12 +152,16 @@ if( contactManifest.owns.api )
         // custom-field definitions (account schema)
         new GetContactFields(), new PostContactField(), new PatchContactField(), new DeleteContactField(),
         // import maps (reusable column→field maps: system catalog + account maps, copyable)
-        new GetImportMaps(), new GetImportMap(), new PostImportMap(), new PatchImportMap(), new DeleteImportMap(), new PostImportMapCopy()
+        new GetImportMaps(), new GetImportMap(), new PostImportMap(), new PatchImportMap(), new DeleteImportMap(), new PostImportMapCopy(),
+        // S2S: report's contacts generator reads via this INTERNAL list endpoint (no cross-service DB reads)
+        new GetInternalContacts()
     ] ) ];
 if( campaignManifest.owns.api )
     campaignManifest.owns.api.endpoints = [ ...( campaignManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
         // campaign CRUD + archive (initial cut)
-        new GetCampaigns(), new GetCampaign(), new PostCampaign(), new PatchCampaign(), new DeleteCampaign()
+        new GetCampaigns(), new GetCampaign(), new PostCampaign(), new PatchCampaign(), new DeleteCampaign(),
+        // S2S: report's campaigns generator reads via this INTERNAL list endpoint
+        new GetInternalCampaigns()
     ] ) ];
 if( emailManifest.owns.api )
     emailManifest.owns.api.endpoints = [ ...( emailManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
@@ -156,7 +169,9 @@ if( emailManifest.owns.api )
         new PostEmailSend(), new PostEmailBatch(), new GetEmailBlasts(), new PatchEmailBlast(), new DeleteEmailBlast(),
         new GetEmailTemplates(), new GetEmailTemplate(), new PostEmailTemplate(), new PatchEmailTemplate(), new DeleteEmailTemplate(),
         new PostEmailTemplatePublish(), new PostEmailTemplatePreview(), new GetEmailTemplateVersion(), new PostEmailTemplateRevert(), new PostEmailPreview(),
-        new GetEmailConfig(), new PutEmailConfig(), new GetEmailLog()
+        new GetEmailConfig(), new PutEmailConfig(), new GetEmailLog(),
+        // S2S: report's EmailDestination sends a completion notification via this INTERNAL endpoint
+        new PostInternalSend()
     ] ) ];
 if( voiceManifest.owns.api )
     voiceManifest.owns.api.endpoints = [ ...( voiceManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
@@ -207,6 +222,17 @@ if( collabManifest.owns.api )
         new PostCollabRooms(), new GetCollabRooms(), new GetCollabRoom(), new PatchCollabRoom(), new DeleteCollabRoom(),
         new PostCollabDms(), new GetCollabRoomMembers(), new PostCollabRoomMembers(), new DeleteCollabRoomMember(),
         new GetCollabMessages(), new GetCollabConfig(), new PutCollabConfig(),
+    ] ) ];
+if( reportManifest.owns.api )
+    reportManifest.owns.api.endpoints = [ ...( reportManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        // ad-hoc submissions: submit + list + status + presigned download + delete
+        new PostReportSubmissions(), new GetReportSubmissions(), new GetReportSubmission(), new GetReportSubmissionDownload(), new DeleteReportSubmission(),
+        // recurring (iCal) schedules: CRUD + pause/resume
+        new GetReportSchedules(), new PostReportSchedules(), new GetReportSchedule(), new PatchReportSchedule(), new PostReportSchedulePause(), new PostReportScheduleResume(), new DeleteReportSchedule(),
+        // ops: stale-specVersion sweep (APPLICATION) + config
+        new GetReportSchedulesStale(), new GetReportConfig(), new PutReportConfig(),
+        // S2S: contact-forget fan-out purges any artifact carrying the forgotten subject's PII
+        new PostReportInternalErase()
     ] ) ];
 
 // ── Resolve environment from CDK context: `cdk synth -c env=staging` (default dev) ──
@@ -262,6 +288,7 @@ const manifests : Array<ResourceManifest> = [
     socialManifest,
     monitorManifest,
     collabManifest,
+    reportManifest,
 ];
 
 // Shared gateway registry: each ServiceStack publishes its API Gateway(s) here and a CDN (web) reads

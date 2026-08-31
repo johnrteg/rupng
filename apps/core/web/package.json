@@ -53,6 +53,7 @@
     "react-dom": "19.2.7",
     "react-grid-layout": "2.2.3",
     "react-resizable": "4.0.2",
+    "rrule": "^2.8.1",
     "reconnecting-websocket": "4.4.0",
     "remotion": "^4.0.485",
     "tldraw": "^5.2.3"

@@ -2,6 +2,7 @@
 import CampaignService from "./CampaignService";
 
 import GetCampaignsImpl from "../endpoints/GetCampaignsImpl";
+import GetInternalCampaignsImpl from "../endpoints/GetInternalCampaignsImpl";
 import GetCampaignImpl from "../endpoints/GetCampaignImpl";
 import PostCampaignImpl from "../endpoints/PostCampaignImpl";
 import PatchCampaignImpl from "../endpoints/PatchCampaignImpl";
@@ -24,6 +25,7 @@ export class CampaignMainService extends CampaignService
     {
         await super.registerEndpoints();          // keeps /health + /version
         this.register( new GetCampaignsImpl( this ) );
+        this.register( new GetInternalCampaignsImpl( this ) );
         this.register( new GetCampaignImpl( this ) );
         this.register( new PostCampaignImpl( this ) );
         this.register( new PatchCampaignImpl( this ) );

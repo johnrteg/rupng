@@ -20,6 +20,7 @@ import { AccountUsers } from '@pages/account/AccountUsers';
 import { AccountSubAccounts } from '@pages/account/AccountSubAccounts';
 import { ContactsList } from '@pages/contacts/ContactsList';
 import { Segments } from '@pages/contacts/Segments';
+import { ReportsPage } from '@pages/reports/ReportsPage';
 import { Campaigns } from '@pages/campaigns/Campaigns';
 import { Schedule } from '@pages/schedule/Schedule';
 import { MediaLibrary } from '@pages/media/MediaLibrary';
@@ -123,6 +124,10 @@ export function AppRouter( props : AppRouter.Props ) : JSX.Element
         new_routes.push( { path: "/contacts/list", component: () => <ContactsList /> } );
         new_routes.push( { path: "/contacts/segments", component: () => <Segments /> } );
         new_routes.push( { path: "/schedule", component: () => <Schedule /> } );
+        // the 3 nav entries all land on ReportsPage, each defaulting to the tab matching its label
+        new_routes.push( { path: "/reports/submit",    component: () => <ReportsPage initialTab={ ReportsPage.Tab.CATALOG } /> } );
+        new_routes.push( { path: "/reports/scheduled", component: () => <ReportsPage initialTab={ ReportsPage.Tab.SCHEDULES } /> } );
+        new_routes.push( { path: "/reports/download",  component: () => <ReportsPage initialTab={ ReportsPage.Tab.SUBMISSIONS } /> } );
         new_routes.push( { path: "/media/library", component: () => <MediaLibrary /> } );
         new_routes.push( { path: "/media/browse", component: () => <MediaBrowse /> } );
         new_routes.push( { path: "/media/ai-gen", component: () => <MediaAiGen /> } );

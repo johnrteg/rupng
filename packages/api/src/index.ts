@@ -38,6 +38,7 @@ export { default as GetPayments } from './account/GetPayments';
 export { default as GetInvoices } from './account/GetInvoices';
 export { default as PutBillingSettings } from './account/PutBillingSettings';
 export { default as GetSubAccounts } from './account/GetSubAccounts';
+export { default as GetInternalSubAccounts } from './account/GetInternalSubAccounts';
 export { default as PostSubAccount } from './account/PostSubAccount';
 export { default as PostSubAccountStatus } from './account/PostSubAccountStatus';
 export { default as PostOwnerTransfer } from './account/PostOwnerTransfer';
@@ -56,6 +57,7 @@ export { EmailTemplate } from './email/model/EmailTemplate';
 export { EmailConfig } from './email/model/EmailConfig';
 export { Notification } from './email/model/Notification';   // shared per-type catalog (fallback + action metadata)
 export { default as PostEmailSend } from './email/PostEmailSend';
+export { default as PostInternalSend } from './email/PostInternalSend';
 export { default as GetEmailTemplates } from './email/GetEmailTemplates';
 export { default as PostEmailTemplate } from './email/PostEmailTemplate';
 export { default as GetEmailTemplate } from './email/GetEmailTemplate';
@@ -283,10 +285,12 @@ export { default as PostImportMap } from './contact/PostImportMap';
 export { default as PatchImportMap } from './contact/PatchImportMap';
 export { default as DeleteImportMap } from './contact/DeleteImportMap';
 export { default as PostImportMapCopy } from './contact/PostImportMapCopy';
+export { default as GetInternalContacts } from './contact/GetInternalContacts';
 
 // campaign — model (shared: campaign → channel → strategy → plan) then endpoints
 export { Campaign } from './campaign/model/Campaign';
 export { default as GetCampaigns } from './campaign/GetCampaigns';
+export { default as GetInternalCampaigns } from './campaign/GetInternalCampaigns';
 export { default as GetCampaign } from './campaign/GetCampaign';
 export { default as PostCampaign } from './campaign/PostCampaign';
 export { default as PatchCampaign } from './campaign/PatchCampaign';
@@ -352,3 +356,24 @@ export { default as GetMonitorWidgets } from './monitor/GetMonitorWidgets';
 export { default as GetMonitorWidgetData } from './monitor/GetMonitorWidgetData';
 export { default as GetMonitorConfig } from './monitor/GetMonitorConfig';
 export { default as PutMonitorConfig } from './monitor/PutMonitorConfig';
+
+// report — config (Console smart editor) + the wire model/catalog/endpoints (web reports dashboard)
+export { ReportConfig } from './report/model/ReportConfig';
+export { Report } from './report/model/Report';
+export { REPORT_CATALOG, findReport } from './report/catalog/ReportCatalog';
+export { default as PostReportSubmissions } from './report/PostReportSubmissions';
+export { default as GetReportSubmissions } from './report/GetReportSubmissions';
+export { default as GetReportSubmission } from './report/GetReportSubmission';
+export { default as GetReportSubmissionDownload } from './report/GetReportSubmissionDownload';
+export { default as DeleteReportSubmission } from './report/DeleteReportSubmission';
+export { default as GetReportSchedules } from './report/GetReportSchedules';
+export { default as PostReportSchedules } from './report/PostReportSchedules';
+export { default as GetReportSchedule } from './report/GetReportSchedule';
+export { default as PatchReportSchedule } from './report/PatchReportSchedule';
+export { default as PostReportSchedulePause } from './report/PostReportSchedulePause';
+export { default as PostReportScheduleResume } from './report/PostReportScheduleResume';
+export { default as DeleteReportSchedule } from './report/DeleteReportSchedule';
+export { default as GetReportSchedulesStale } from './report/GetReportSchedulesStale';
+export { default as PostReportInternalErase } from './report/PostReportInternalErase';
+export { default as GetReportConfig } from './report/GetReportConfig';
+export { default as PutReportConfig } from './report/PutReportConfig';

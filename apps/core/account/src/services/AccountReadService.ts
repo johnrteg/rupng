@@ -22,6 +22,7 @@ import GetInvoicesImpl from '../endpoints/GetInvoicesImpl';
 import PutBillingSettingsImpl from '../endpoints/PutBillingSettingsImpl';
 
 import GetSubAccountsImpl from '../endpoints/GetSubAccountsImpl';
+import GetInternalSubAccountsImpl from '../endpoints/GetInternalSubAccountsImpl';
 import PostSubAccountImpl from '../endpoints/PostSubAccountImpl';
 import PostSubAccountStatusImpl from '../endpoints/PostSubAccountStatusImpl';
 import PostOwnerTransferImpl from '../endpoints/PostOwnerTransferImpl';
@@ -66,6 +67,7 @@ export class AccountReadService extends AccountService
         this.register( new PutBillingSettingsImpl( this ) );
         // hierarchy (sub-accounts) + ownership transfer
         this.register( new GetSubAccountsImpl( this ) );
+        this.register( new GetInternalSubAccountsImpl( this ) );
         this.register( new PostSubAccountImpl( this ) );
         this.register( new PostSubAccountStatusImpl( this ) );
         this.register( new PostOwnerTransferImpl( this ) );

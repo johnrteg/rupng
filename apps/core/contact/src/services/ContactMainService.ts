@@ -7,6 +7,7 @@ import { Segment } from "@repo/api";
 import ContactService from "./ContactService";
 
 import GetContactsImpl from "../endpoints/GetContactsImpl";
+import GetInternalContactsImpl from "../endpoints/GetInternalContactsImpl";
 import GetContactImpl from "../endpoints/GetContactImpl";
 import PostContactImpl from "../endpoints/PostContactImpl";
 import PatchContactImpl from "../endpoints/PatchContactImpl";
@@ -123,6 +124,7 @@ export class ContactMainService extends ContactService
     {
         await super.registerEndpoints();          // keeps /health + /version
         this.register( new GetContactsImpl( this ) );
+        this.register( new GetInternalContactsImpl( this ) );
         this.register( new GetContactImpl( this ) );
         this.register( new PostContactImpl( this ) );
         this.register( new PatchContactImpl( this ) );
