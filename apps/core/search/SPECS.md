@@ -225,9 +225,9 @@ the SoT and **emit index docs**; analytics / report / monitor are separate plane
 ## search-7.0 Service & Job topology — B
 - **search-7.1** **Domain bases** — `SearchService extends Service` + `SearchJob extends Job` hold the shared code (OpenSearch client · **mandatory RBAC query-filter** · index-doc model + analyzers · Redis cache · Kafka/SQS); concrete roles extend the domain base — B
 - **search-7.2** **`SearchQueryService` extends `SearchService`** — the `GET /search` API (Redis-first → OpenSearch with the RBAC filter, re-authorized per request) — A
-- **search-7.3** **`SearchIndexerJob` extends `SearchJob`** (SQS ← Kafka `*.changed`/`*.deleted`) — upsert/delete docs + handle **GDPR forget** (drop/redact indexed PII); SQS-buffered + DLQ — A
+- **search-7.3** **`SearchIndexerConsumer` extends `SearchConsumer`** (Kafka ← `*.changed`/`*.deleted`, via `Kafka.subscribeEvents`) — upsert/delete docs + handle **GDPR forget** (drop/redact indexed PII). **Implemented as a long-running ECS `Consumer`, not a Lambda `Job`** as originally written here — the platform's `makeJob` trigger support is `"queue"`/`"table"` only, with no Lambda↔MSK event-source-mapping anywhere on the platform; `Kafka.subscribeEvents` + a `Consumer` is the supported primitive for a Kafka firehose reader, matching `AnalyticsIngestConsumer`'s precedent — A
 - **search-7.4** **`SearchReindexJob` extends `SearchJob`** (EventBridge/operator) — rebuild/backfill on mapping/analyzer change, zero-downtime alias swap — B
-- **search-7.5** Indexer **acts on every event** (indexes all, drops nothing) → a **`Job`**, not a `Consumer` — A
+- **search-7.5** Indexer **acts on every event** (indexes all, drops nothing) → a **`Consumer`** (see search-7.3's rationale for why not a `Job`) — A
 
 # Endpoints (first cut)
 

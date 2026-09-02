@@ -37,6 +37,7 @@ export namespace Register
         MONITOR      = "monitor",
         AUDIT        = "audit",
         ANALYTICS    = "analytics",
+        SEARCH       = "search",     // global content-search index + query plane (see apps/core/search/SPECS.md)
         PLATFORM     = "platform",   // cross-cutting actions any service emits (config / feature-flag)
         FAKE_EMAIL   = "fake-email", // DEV-ONLY simulated ESP (a "fake provider" leaf; non-emitting) — see FakeService
     }

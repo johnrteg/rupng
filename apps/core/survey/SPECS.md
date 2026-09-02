@@ -33,7 +33,7 @@ to the same scores no matter how they answered. Author once → run anywhere.
 |---|---|---|
 | **SMS** | **internal — workflow** | **compile** the definition to `collect-input` / `classify-reply` steps (one question per turn, keyword answers, branch). STOP / quiet-hours apply. This is *ours*, no external service. |
 | **Email / web** | **a form service** | render the definition as a **hosted form** (our form service, or an external provider) linked from the email; one submission with rich widgets. |
-| **Phone / IVR** | **a service (later)** | voice prompts + DTMF/speech, same definition. |
+| **Phone / IVR** | **voice's IVR flow engine** | **compile** the definition to a `Voice.IvrFlow` (DTMF-only gather per question, `PostVoiceInternalFlow` S2S create), placed via `PostVoiceCalls`; per-digit answers arrive back via voice's `voice.call` UPDATED event. Built — see survey-2.4. |
 
 * **SMS = native + workflow** (decided): a conversational survey *is* a workflow of `collect-input`
   steps the survey service generates — we don't hand SMS surveys to an external tool.
@@ -257,7 +257,11 @@ results**; **channels** deliver (via dispatch, gated by `canSend`), **workflow**
 - **survey-2.1** **SMS = compile-to-workflow** — generate `collect-input` / `classify-reply` steps; **don't rebuild two-way capture** *(gap #1)* — A
 - **survey-2.2** **Email/web = form service (BUILD, lean)** — render the shared definition as a **hosted form**; collect a POST *(gap #2)* — A
 - **survey-2.3** **External provider runner** — an **optional** email/web runner via marketplace (distribute-link+ingest, or import-definition) → same Survey/Question ids *(gap #2)* — B
-- **survey-2.4** **Phone / IVR runner** — voice prompts + DTMF/speech, same definition — C
+- **survey-2.4** **Phone / IVR runner** — compile the definition to voice's `IvrFlow` (DTMF gather per
+  question, via a new S2S `PostVoiceInternalFlow`), place calls via `PostVoiceCalls` carrying the
+  submission token in `mergeData`, and capture per-digit answers off voice's `voice.call` UPDATED event
+  (`lastAnsweredStepId`/`lastAnsweredValue`, added to `Voice.CallLog`). DTMF-only — `open_text` /
+  `multi_select` / `ranking` questions are skipped by this runner (no speech/NLU gather yet). **BUILT** — B
 - **survey-2.5** All runners **normalize responses to the same Survey/Question ids** (unified results) — A
 
 ## survey-3.0 Distribution — A

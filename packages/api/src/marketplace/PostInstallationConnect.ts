@@ -28,7 +28,7 @@ export class PostInstallationConnect extends RestfulEndpoint< PostInstallationCo
     public getMappings(): Array<RestfulEndpoint.FieldMap> { return [ { field: "id", location: RestfulEndpoint.AttrLocation.URI, required: true } ]; }
     public getQuerySchema(): RestfulEndpoint.Schema | null { return null; }
     public getBodySchema(): RestfulEndpoint.Schema | null
-    { return { type: "object", additionalProperties: true, properties: { apiKey: { type: "string" }, scopes: { type: "array" } } }; }
+    { return { type: "object", additionalProperties: true, properties: { apiKey: { type: "string" }, scopes: { type: "array" }, externalRef: { type: "string" } } }; }
 }
 
 export namespace PostInstallationConnect
@@ -36,7 +36,10 @@ export namespace PostInstallationConnect
     export const URI : string = apiPath( "marketplace", 1, "/installations/:id/connect" );
 
     export interface Query { id : Type.UUID; }
-    export interface Body extends RestfulEndpoint.AuthRequest { apiKey? : string; scopes? : Array<string>; }
+    /** `externalRef` — the provider's OWN id for this connection (e.g. a Shopify shop domain), collected
+     *  by the connect UI when the credential type needs one; persisted so inbound webhooks (which carry
+     *  no installationId) can resolve their owning installation — see `Marketplace.Installation.externalRef`. */
+    export interface Body extends RestfulEndpoint.AuthRequest { apiKey? : string; scopes? : Array<string>; externalRef? : string; }
     export interface Response extends Marketplace.ConnectResult {}
 
     export enum Error

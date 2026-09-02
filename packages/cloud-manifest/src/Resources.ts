@@ -61,6 +61,12 @@ export interface BucketSpec
     eventNotifications? : Array<BucketEventNotification>;
     cdn?               : CdnSpec;            // when access = PUBLIC_CDN
     presignedUpload?   : boolean;            // provision a presigner Lambda (S3 PUT/POST) + API route
+    // WORM (write-once-read-many) — S3 Object Lock. FORCES `versioned: true` (a CDK/S3 requirement) and can
+    // ONLY be set at bucket CREATION (CDK/S3 cannot retrofit Object Lock onto an existing bucket — changing
+    // this on an already-deployed bucket means a bucket replacement, not an in-place update). Used by the
+    // audit service's WORM archive (audit-3.1); "compliance" mode = no principal, including root, may
+    // shorten/remove the lock before `retentionDays` elapses.
+    objectLock?        : { mode : "governance" | "compliance"; retentionDays? : number };
     tags?              : Tags;
 }
 
@@ -237,10 +243,10 @@ export interface JobSpec
 
 export interface JobTrigger
 {
-    source     : "queue" | "eventbus" | "bucket" | "schedule" | "api";
-    ref?       : ResourceRef;                // the source resource (queue/bus/bucket/api)
+    source     : "queue" | "table" | "eventbus" | "bucket" | "schedule" | "api";
+    ref?       : ResourceRef;                // the source resource (queue/table/bus/bucket/api)
     schedule?  : string;                     // when source = schedule
-    batchSize? : number;                     // when source = queue
+    batchSize? : number;                     // when source = queue or table (DynamoDB Streams)
 }
 
 // ────────────────────────────────────────────────────────────────────────────

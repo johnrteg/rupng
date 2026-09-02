@@ -55,7 +55,7 @@ export namespace Ports
     export namespace VOICE        { export const MAIN = 8200; }   // planned
     export namespace PRINT        { export const MAIN = 8210; }
     export namespace SOCIAL       { export const MAIN = 8220; }
-    export namespace SURVEY       { export const MAIN = 8230; }
+    export namespace SURVEY       { export const MAIN = 8230; export const FORM = 8231; }
 
     // ── assets / links ───────────────────────────────────────────────────────
     export namespace MEDIA        { export const MAIN = 8240; export const BROWSE = 8241; export const STUDIO = 8242; }

@@ -27,6 +27,8 @@ import { JsonEditor } from "./JsonEditor";
 import { MediaConfigForm } from "./mediaConfig/MediaConfigForm";
 import { EmailConfigForm } from "./emailConfig/EmailConfigForm";
 import { VoiceConfigForm } from "./voiceConfig/VoiceConfigForm";
+import { SearchConfigForm } from "./searchConfig/SearchConfigForm";
+import { PrintConfigForm } from "./printConfig/PrintConfigForm";
 import { SocialConfigForm } from "./socialConfig/SocialConfigForm";
 import { MonitorConfigForm } from "./monitorConfig/MonitorConfigForm";
 import { AccountConfigForm } from "./accountConfig/AccountConfigForm";
@@ -35,6 +37,8 @@ import { AppBootstrapForm } from "./appConfig/AppBootstrapForm";
 import { AppServiceConfigForm } from "./appServiceConfig/AppServiceConfigForm";
 import { ReportConfigForm } from "./reportConfig/ReportConfigForm";
 import { RegistrationConfigForm } from "./registrationConfig/RegistrationConfigForm";
+import { SurveyConfigForm } from "./surveyConfig/SurveyConfigForm";
+import { TextingConfigForm } from "./textingConfig/TextingConfigForm";
 
 // Indentation used everywhere this panel pretty-prints (load + the Format button) — keep them in sync.
 const JSON_INDENT : number = 2;
@@ -55,6 +59,8 @@ const SMART_EDITORS : Record<string, Record<string, React.ComponentType<SmartEdi
     media:   { settings: MediaConfigForm },
     email:   { settings: EmailConfigForm },
     voice:   { settings: VoiceConfigForm },
+    search:  { settings: SearchConfigForm },
+    print:   { settings: PrintConfigForm },
     social:  { settings: SocialConfigForm },
     monitor: { settings: MonitorConfigForm },
     account: { settings: AccountConfigForm },
@@ -62,6 +68,8 @@ const SMART_EDITORS : Record<string, Record<string, React.ComponentType<SmartEdi
     app:     { web: AppBootstrapForm, settings: AppServiceConfigForm },
     report:  { settings: ReportConfigForm },
     registration: { settings: RegistrationConfigForm },
+    survey:  { settings: SurveyConfigForm },
+    texting: { settings: TextingConfigForm },
 };
 
 /** Pretty-print JSON content; non-JSON (or unparseable) content is returned unchanged. */

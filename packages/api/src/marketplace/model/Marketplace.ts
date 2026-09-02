@@ -241,6 +241,11 @@ export namespace Marketplace
         status:        InstallStatus;
         config:        Type.Json;          // validated against the definition's configSchema
         credentialRef?: CredentialRef;     // → vault entry (never the secret); absent while broker-managed (Nango)
+        externalRef?:  string;             // the provider's OWN id for this connection (e.g. a Shopify shop
+                                            // domain) — an inbound webhook carries no installationId of its
+                                            // own, so `PostMarketplaceWebhookImpl` resolves the owning
+                                            // installation from this via the `byExternalRef` GSI (cross-account,
+                                            // mirrors social's `connections.byId`); set at connect time.
         health:        Health;
 
         accepted?:     Acceptance;         // accept-to-enable record (audited)
@@ -277,6 +282,7 @@ export namespace Marketplace
             status:          { type: "string", enum: Object.values( InstallStatus ) },
             config:          { type: "object" },
             credentialRef:   { type: "string" },
+            externalRef:     { type: "string" },
             health:
             {
                 type: "object", additionalProperties: false, required: [ "state" ],

@@ -1,8 +1,8 @@
 //
-import { Registration } from "@repo/api";
+import { Registration, PhoneNumber } from "@repo/api";
 import { ResultUtils, type Type } from "@repo/common";
 
-import { CarrierProvider, CarrierContext, CarrierPairingStatus } from "../CarrierProvider";
+import { CarrierProvider, CarrierContext, CarrierPairingStatus, NumberSearchCriteria, AvailableNumber, OrderedNumber } from "../CarrierProvider";
 
 //
 // FakeCarrierAdapter — a DEV-ONLY simulated carrier (mirrors FakeVoiceAdapter,
@@ -63,6 +63,38 @@ export class FakeCarrierAdapter implements CarrierProvider
     public async checkPairingStatus( _phoneNumber : string, _context : CarrierContext ) : Promise<Type.Result<CarrierPairingStatus>>
     {
         return ResultUtils.ok( CarrierPairingStatus.OK );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    /** Synthesize a small, deterministic inventory in the reserved fictitious range — always "has" numbers,
+     *  so the search UX is exercisable offline. */
+    public async searchAvailableNumbers( criteria : NumberSearchCriteria, _context : CarrierContext ) : Promise<Type.Result<Array<AvailableNumber>>>
+    {
+        const prefix : string = criteria.areaCode ?? FakeCarrierAdapter.DEFAULT_AREA_CODE;
+        const limit : number = Math.max( 1, criteria.limit ?? 5 );
+        const results : Array<AvailableNumber> = [];
+        const seed : number = Date.now() % 10_000;
+        for( let index : number = 0; index < limit; index += 1 )
+        {
+            const line : string = String( ( seed + index ) % 10_000 ).padStart( 4, "0" );
+            results.push( { number: `+1${ prefix }${ FakeCarrierAdapter.EXCHANGE }${ line }`, type: criteria.type, monthlyPriceCents: 100 } );
+        }
+        return ResultUtils.ok( results );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    /** No real carrier to order from — the requested number is always "acquired" instantly. */
+    public async orderNumber( number : Type.PhoneE164, _criteria : NumberSearchCriteria, _context : CarrierContext ) : Promise<Type.Result<OrderedNumber>>
+    {
+        return ResultUtils.ok( { number, carrierOrderId: `fake-order-${ Date.now() }` } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    /** No real carrier review to submit to — TFV is instantly accepted (the CALLER still marks it VERIFIED
+     *  via the domain, this adapter only reports the submit itself succeeded). */
+    public async submitTollFreeVerification( _number : Type.PhoneE164, _details : PhoneNumber.TollFreeVerification, _context : CarrierContext ) : Promise<Type.Result<void>>
+    {
+        return ResultUtils.ok( undefined );
     }
 }
 

@@ -40,6 +40,10 @@ const voiceTwilio = env.VOICE_TWILIO_AUTH_TOKEN
     ? JSON.stringify( { accountSid: env.VOICE_TWILIO_ACCOUNT_SID ?? "", authToken: env.VOICE_TWILIO_AUTH_TOKEN } )
     : undefined;
 
+const printSmartystreets = env.PRINT_SMARTYSTREETS_AUTH_TOKEN
+    ? JSON.stringify( { authId: env.PRINT_SMARTYSTREETS_AUTH_ID ?? "", authToken: env.PRINT_SMARTYSTREETS_AUTH_TOKEN } )
+    : undefined;
+
 const secrets = {
     "local-platform-secret-ai-openai":    env.OPENAI_API_KEY,
     "local-platform-secret-ai-fish":      env.FISH_AUDIO_KEY,
@@ -48,6 +52,11 @@ const secrets = {
     "local-media-secret-browse-unsplash": unsplash,
     "local-email-secret-email-mailgun":   env.MAILGUN_API_KEY,
     "local-voice-secret-voice-twilio":    voiceTwilio,
+    "local-print-secret-print-postgrid":  env.PRINT_POSTGRID_API_KEY,
+    "local-print-secret-print-lob":       env.PRINT_LOB_API_KEY,
+    "local-print-secret-print-usps":      env.PRINT_USPS_USER_ID,
+    "local-print-secret-print-melissa":   env.PRINT_MELISSA_LICENSE_KEY,
+    "local-print-secret-print-smartystreets": printSmartystreets,
     // ai-anthropic / ai-elevenlabs / magnific / other email-* providers: no key in .env.local yet — set later.
 };
 

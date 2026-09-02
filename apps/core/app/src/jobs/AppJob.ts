@@ -1,5 +1,5 @@
 //
-import { Application, Job, Register } from "@repo/services";
+import { Application, Job, Register, Kafka } from "@repo/services";
 
 //
 // common app job base — the domain base every concrete app job extends (mirrors AppService on the
@@ -11,6 +11,11 @@ export abstract class AppJob<TEvent = unknown, TResult = void> extends Job<TEven
 {
     // name/version of this app, read from apps/core/app/package.json at startup
     protected pkg : Application.PackageInfo;
+
+    // Kafka facade — AppTelemetryJob republishes scrubbed behavior events onto Events.Stream.BEHAVIOR.
+    // Lazy + cached.
+    private _kafka? : Kafka;
+    protected get kafka() : Kafka { return this._kafka ??= new Kafka( this.cloud ); }
 
     ///////////////////////////////////////////////////////////////////////////////////////
     constructor( name : string )

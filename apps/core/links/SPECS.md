@@ -168,8 +168,16 @@ user scans QR  (= the same tracked link, rendered as a glyph)
 # Privacy & compliance
 
 * **Opaque codes — no PII in the URL** (per the no-PII-in-keys rule); the code→contact mapping is server-side.
-* **GDPR forget** — purge the code→contact mapping (keep aggregate counts); the link can resolve anonymously
-  or 410 after erasure.
+* **GDPR forget** — `contact`'s central forget fan-out (contact-10.3: redact the contact to a tombstone, then
+  call every content-holding service's S2S erase hook — see [contact](../contact/SPECS.md), already built and
+  calling `print`/`voice`/`report`'s `/internal/erase`) calls **`POST /links/internal/erase`** (naming matches
+  those three, not a links-specific "forget" verb) with `{ accountId, contactId }`. The handler **nulls
+  `contactId` on every matching `TrackedLink`** (found via `gsi_contactId` — see *Data model* — the same
+  "resolve a forgotten subject's rows via a GSI" shape as print's `gsi_mailid` / `findMailpieceByMailId`) while
+  leaving `code`/`target`/`campaignId`/`channel` untouched — a scan **keeps resolving** (availability-decoupling
+  still applies to a forgotten contact's QR), it just no longer attributes to a person. **Aggregate counts are
+  unaffected** (they're not keyed by contact). Idempotent — re-erasing an already-erased/unknown contact matches
+  zero rows, not an error (same contract as the other three erase hooks).
 * **Consent** — `unsubscribe` / STOP targets are first-class `targetType`s.
 
 # Data model (sketch)
@@ -180,6 +188,8 @@ TrackedLink   pk=LINK#<code>
     status, createdAt, expiresAt? }
   // status: active | flagged | hibernated | taken_down  (see Abuse handling)
   // read-optimized for the redirect; opaque code; hot codes cached in Redis
+  // GSI gsi_contactId (accountId, contactId) — resolves a GDPR-forgotten contact's rows for
+  //   POST /links/internal/erase to null out (mirrors print's gsi_mailid / findMailpieceByMailId)
 
 // click/scan is NOT stored as link state — emitted to analytics as an engagement/conversion touch (Kafka)
 ```
@@ -239,7 +249,7 @@ is the platform [AWS topology](../../../packages/services/src/aws/SPECS.md).
 | **No open redirect** — 302 only to the **stored target** (no user-supplied destination param) | A01 (open redirect) | A.8.26 | CC6.6 | ➖ | ➖ | ➖ | ➖ | ✅ |
 | **Short-domain TLS + DNS verification** — HTTPS-only; domain ownership proven before active | A02 / A05 | A.8.24 / A.5.23 | CC6.1 / CC6.6 | ➖ | Art 32 | ➖ | ➖ | ✅ |
 | **Whitelabel domain isolation** — a whitelabel domain belongs to **one** account; shared codes account-scoped | A01 | A.8.3 | CC6.1 | ➖ | Art 32 | ➖ | ➖ | ✅ |
-| **GDPR forget** — purge code→contact mapping (keep aggregate counts); resolve anonymously or **410** | A04 | A.8.10 | (Privacy) | §164.310(d)(2) | Art 17 | §1798.105 | ➖ | ✅ |
+| **GDPR forget** — `/internal/erase` nulls `contactId` (keeps aggregate counts); the code **keeps resolving**, just unattributed | A04 | A.8.10 | (Privacy) | §164.310(d)(2) | Art 17 | §1798.105 | ➖ | ✅ |
 | **No PII in engagement events / logs** — opaque `contactId` only | A09 | A.8.15 / A.8.16 | CC7.2 | ➖ | Art 5(1)(c) | §1798.100 | ➖ | ✅ |
 | **Consent targets** — `unsubscribe` / STOP are first-class `targetType`s | A04 | A.5.34 | (Privacy) | ➖ | Art 21 | §1798.120 | CAN-SPAM / TCPA | ✅ |
 | **Public-edge rate limiting / availability** — always-up redirect, abuse-throttled | A04 / A05 | A.8.6 / A.8.20 | CC6.6 / CC7.2 | ➖ | ➖ | ➖ | ➖ | ✅ |
@@ -405,7 +415,7 @@ embed; **[contact](../contact/SPECS.md)/[account](../account/specs/SPECS.md)** o
 
 ## links-7.0 Privacy & compliance — A
 - **links-7.1** **Opaque codes — no PII in the URL**; mapping server-side — A
-- **links-7.2** **GDPR forget** — purge code→contact mapping (keep aggregate counts); resolve anonymously or **410** — A
+- **links-7.2** **GDPR forget** — `POST /links/internal/erase` (called by [contact](../contact/SPECS.md)'s forget fan-out, matching print/voice/report's `/internal/erase` naming): null `contactId` on every `TrackedLink` for that `(accountId, contactId)` via `gsi_contactId`; code keeps resolving (aggregate counts unaffected), just unattributed — A
 - **links-7.3** **Consent** — `unsubscribe` / STOP first-class `targetType`s — A
 - **links-7.4** **No PII** in engagement events / logs — opaque `contactId` only — A
 - **links-7.5** **Tenant isolation** — codes account-scoped — A
@@ -491,7 +501,7 @@ step-up · **`Internal`** = VPC-only S2S. A senior role satisfies any junior min
 | Method | URI | Purpose | Access | Req |
 |---|---|---|---|---|
 | PUT | `/links/internal/campaigns/{campaignId}/policy` | Set a campaign's **post-archive link policy** (campaign calls on archive) | Internal | links-9.4 |
-| POST | `/links/internal/forget` | Purge code→contact mapping for a forgotten contact (keep aggregates) | Internal | links-7.2 |
+| POST | `/links/internal/erase` | S2S forget hook — `{ accountId, contactId }`; nulls `contactId` on every matching `TrackedLink` (keeps aggregates). Called by contact's forget fan-out, same naming/shape as print/voice/report's `/internal/erase` | Internal | links-7.2 |
 | GET, PUT | `/links/config` | Read / set the service's own runtime config (AppConfig-backed) | ROOT | links-11.1 |
 | GET | `/links/health` | Liveness / readiness of the redirect fleet | - | links-8.1 |
 

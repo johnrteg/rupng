@@ -1,6 +1,7 @@
 //
 import { Application, Service, Ports, Register, Dynamo, Kafka } from "@repo/services";
 import type { Type } from "@repo/common";
+import { Events } from "@repo/system";
 
 //
 // CampaignService — the campaign domain's Service BASE (not deployed alone). Holds the shared domain wiring
@@ -40,6 +41,17 @@ export class CampaignService extends Service
     public async nextRef( accountId : Type.UUID, kind : CampaignService.SequenceKind ) : Promise<Type.Result<number>>
     {
         return this.dynamo.increment( "campaign_counters", { accountId, kind }, "n" );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    /** Publish a `campaign.*` lifecycle event. Best-effort — a bus miss is logged, never fails the
+     *  caller. `data` is the entity's `@repo/api` wire model; `actorUserId` (if given) makes it a
+     *  USER-actored event, else a SERVICE-actored one. */
+    public async emit( verb : Events.Verb, targetId : string, accountId : string, data : unknown, actorUserId? : string ) : Promise<void>
+    {
+        const env : Events.Envelope = Events.envelope( { object: Events.Object.CAMPAIGN_CAMPAIGN, verb, accountId, target: { type: "campaign", id: targetId }, data, actorUserId } );
+        const published : Type.Result<void> = await this.kafka.publishEvent( env );
+        if( !published.ok ) this.log.warn( "campaign event publish failed", { action: env.action, targetId, error: published.error } );
     }
 }
 

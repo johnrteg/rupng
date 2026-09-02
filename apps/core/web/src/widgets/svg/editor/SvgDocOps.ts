@@ -153,6 +153,33 @@ export function moveLayer( doc : SvgDocument.Doc, pageId : string, layerId : str
     return { ...doc, pages };
 }
 
+/** Collect every `doc.assets` id referenced by an object subtree (recursing into groups), de-duplicated —
+ *  used by item export to know which `Asset` entries to bundle alongside the object. */
+export function collectAssetIds( node : SvgDocument.ObjectNode ) : Array<string>
+{
+    const ids : Array<string> = [];
+    // an image node references exactly one asset; a group contributes its children's references
+    if( node.kind === SvgDocument.ObjectKind.IMAGE ) ids.push( node.assetId );
+    if( node.kind === SvgDocument.ObjectKind.GROUP )
+        for( const child of node.objects )
+            ids.push( ...collectAssetIds( child ) );
+    return Array.from( new Set( ids ) );
+}
+
+/** Rewrite every `ImageNode.assetId` in a subtree (recursing into groups) via `idMap`, leaving ids absent
+ *  from the map unchanged — used by item import once the imported assets have been given fresh local ids. */
+export function remapAssetIds( node : SvgDocument.ObjectNode, idMap : Record<string, string> ) : SvgDocument.ObjectNode
+{
+    if( node.kind === SvgDocument.ObjectKind.IMAGE )
+        return { ...node, assetId: idMap[ node.assetId ] ?? node.assetId };
+    if( node.kind === SvgDocument.ObjectKind.GROUP )
+    {
+        const objects : Array<SvgDocument.ObjectNode> = node.objects.map( ( child : SvgDocument.ObjectNode ) : SvgDocument.ObjectNode => remapAssetIds( child, idMap ) );
+        return { ...node, objects };
+    }
+    return node;
+}
+
 /** An axis-aligned bounding box in doc space (pt), e.g. from {@link objectBounds}. */
 export interface Bounds
 {

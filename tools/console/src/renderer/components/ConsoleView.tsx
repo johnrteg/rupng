@@ -33,6 +33,7 @@ import { SecretsPanel } from "./SecretsPanel";
 import { DynamoPanel } from "./DynamoPanel";
 import { S3MediaPanel } from "./S3MediaPanel";
 import { CognitoPanel } from "./CognitoPanel";
+import { AuditPanel } from "./auditPanel/AuditPanel";
 import { ProxyPanel, loadRouting } from "./ProxyPanel";
 import { LogView, LEVELS, LogRow, parseLine, recLevelColor, ANSI } from "./LogView";
 
@@ -43,7 +44,7 @@ import { LogView, LEVELS, LogRow, parseLine, recLevelColor, ANSI } from "./LogVi
 // deploy multiplexes every container's logs into one stream.
 //
 
-type TabValue = LogStream | "web" | "proxy" | "api" | "config" | "secrets" | "data" | "cognito" | "storage" | "claude" | "jobs";
+type TabValue = LogStream | "web" | "proxy" | "api" | "config" | "secrets" | "data" | "cognito" | "storage" | "audit" | "claude" | "jobs";
 
 const STREAM_LABEL : Record<LogStream, string> = { build: "Build", image: "Docker", deploy: "Deploy", runtime: "Log" };
 
@@ -253,6 +254,7 @@ export function ConsoleView(
                     {!isFrontend && <Tab value="data" label="Data" />}
                     {!isFrontend && service === "auth" && <Tab value="cognito" label="Cognito" />}
                     {!isFrontend && service === "media" && <Tab value="storage" label="Storage" />}
+                    {!isFrontend && service === "audit" && <Tab value="audit" label="Audit" />}
                     <Tab value="claude" label="Claude" sx={{ color: "secondary.main" }} />
                     {!isFrontend && <Tab value="jobs" label="Jobs" />}
                 </Tabs>
@@ -324,6 +326,8 @@ export function ConsoleView(
                 ? <Box sx={{ flexGrow: 1, minHeight: 0 }}><CognitoPanel service={service} /></Box>
                 : tab === "storage"
                 ? <Box sx={{ flexGrow: 1, minHeight: 0 }}><S3MediaPanel service={service} /></Box>
+                : tab === "audit"
+                ? <Box sx={{ flexGrow: 1, minHeight: 0 }}><AuditPanel service={service} roles={roles} /></Box>
                 : tab === "claude"
                 ? <Box sx={{ flexGrow: 1, minHeight: 0 }}><ClaudePanel service={service} mode={claudeMode} onMode={onClaudeMode} /></Box>
                 : tab === "jobs"

@@ -38,7 +38,7 @@ export const CATALOG : Record<string, CatalogEntry> =
     voice        : { label: "Voice",        icon: "Call",             blurb: "Voice channel (scaffold + fake/Twilio)",  roles: { main: 8200 } },
     print        : { label: "Print",        icon: "Print",            blurb: "Print / direct mail channel",             roles: { main: 8210 } },
     social       : { label: "Social",       icon: "Share",            blurb: "Social channel",                          roles: { main: 8220 } },
-    survey       : { label: "Survey",       icon: "Poll",             blurb: "Surveys & forms",                         roles: { main: 8230 } },
+    survey       : { label: "Survey",       icon: "Poll",             blurb: "Surveys & forms",                         roles: { main: 8230, form: 8231 } },
     media        : { label: "Media",        icon: "PermMedia",        blurb: "Media assets & storage",                  roles: { main: 8240 } },
     links        : { label: "Links",        icon: "Link",             blurb: "Short links & tracking",                  roles: { main: 8250 } },
     analytics    : { label: "Analytics",    icon: "Analytics",        blurb: "Analytics ingestion & insight",           roles: { main: 8260 } },

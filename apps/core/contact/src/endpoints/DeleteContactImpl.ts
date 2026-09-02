@@ -2,6 +2,7 @@
 import { DeleteContact, Contact } from "@repo/api";
 import { NetworkUtils, ObjectUtils, type Type } from "@repo/common";
 import { RestfulEndpoint } from "@repo/endpoint";
+import { Events, Payloads } from "@repo/system";
 import ContactService from "../services/ContactService";
 
 //
@@ -36,6 +37,11 @@ export class DeleteContactImpl extends DeleteContact
 
         // archived contact drops out of reachable counts → recompute its segments (async)
         void this.service.enqueueSegmentRefresh( accountId, id );
+
+        // best-effort CRUD event — never blocks the response
+        const payload : Payloads.Contact = { id: archived.id, accountId: archived.accountId, firstName: archived.firstName, lastName: archived.lastName, status: archived.status };
+        void this.service.emit( Events.Verb.DELETED, archived.id, accountId, payload, auth.userId );
+
         return { status: NetworkUtils.Status.OK, data: { id, archived: true } };
     }
 }

@@ -16,8 +16,10 @@ import type { Register } from '@repo/system';   // the canonical service id this
 import { AiFactory, Ai } from '@repo/ai';
 import { AiRouting }   from '@repo/api';
 import { ObjectUtils, Type } from '@repo/common';
+import { Events }      from '@repo/system';
 import { AppConfig }   from './aws/AppConfig';
 import { Kms }         from './aws/Kms';
+import { Sqs }         from './aws/Sqs';
 
 
 export class Application
@@ -119,17 +121,58 @@ export class Application
     //   reputation(ip) -> { country, asn, isTor, isVpn, isHosting, score }   (calls GET /auth/internal/reputation)
     //   auth's risk engine owns the RiskPolicy (what to DO with the signals); callers just read them.
 
-    // TODO(audit): shared ACTION-LEVEL audit EMITTER — `audit(event)` on this base so every Service AND Job
-    // records "who did what, to what, when, from where, and whether it succeeded" the SAME way. EMIT, DON'T STORE:
-    // this method only ENQUEUES the event to SQS (the audit queue); the AUDIT service is the sole writer of the
-    // immutable (WORM) trail. See packages/services/README.md "Shared audit emitter" + apps/core/audit/SPECS.md.
-    //   audit({ actor, action, target:{type,id}, outcome, source?, context? }) -> void   (enqueues to audit SQS)
-    //   PII-LIGHT BY CONTRACT: `target` is an ID not a value; `context` is ids + enums — NEVER field values or
-    //   message content. This is why the trail survives a GDPR forget without redaction (audit-1.1 / 3.x).
-    //   NOT change-history: audit records THAT a change happened; the field-level {before,after} diff lives in the
-    //   owning service co-located (see changeHistory below + apps/core/contact/SPECS.md contact-13). Emit on:
-    //   login/access, role/permission change, export, config change, consent change, integration connect, money,
-    //   staff.impersonate, data.access. Reads of the audit trail are themselves audited (audit-5.2).
+    ////////////////////////////////////////////////////////////////////////
+    /**
+     * Shared ACTION-LEVEL audit emitter — "who did what, to what, when, from where, and whether it
+     * succeeded", recorded the SAME way by every Service and Job. EMIT, DON'T STORE: this method only
+     * enqueues to the platform-shared audit SQS queue (`QUEUE_AUDIT_EVENTS`, injected into every stack by
+     * `ServiceStack.usePlatformQueue` — see cloud/src/lib/PlatformStack.ts); the `audit` service's
+     * `AuditSinkJob` is the SOLE writer of the immutable (WORM) trail (apps/core/audit/SPECS.md).
+     *
+     * PII-LIGHT BY CONTRACT: `target` is an id, never a value; `context` is ids/enums/counts — NEVER field
+     * values or message content. This is why the trail survives a GDPR forget without redaction
+     * (audit-1.1 / 3.x). NOT change-history: audit records THAT a change happened; the field-level
+     * `{before, after}` diff lives in the owning service, co-located (see `changeHistory` below +
+     * apps/core/contact/SPECS.md contact-13). Best-effort: never throws, never blocks the caller's real
+     * work — a delivery failure logs a warning and returns (the audit queue's own DLQ is the safety net).
+     */
+    protected async audit( input : Application.AuditInput ) : Promise<void>
+    {
+        // 1. resolve the platform audit queue's URL — injected as a fixed env var into EVERY service's
+        //    compute (ServiceStack.usePlatformQueue), not resolved via the manifest-scoped CloudResolver.
+        const queueUrl : string | undefined = process.env.QUEUE_AUDIT_EVENTS;
+        if( !queueUrl )
+        {
+            this.log.warn( "audit: QUEUE_AUDIT_EVENTS not set — skipping emit", { action: input.action } );
+            return;
+        }
+
+        // 2. build the SAME contextual envelope every sink uses (Events.envelope centralizes eventId /
+        //    occurredAt / action derivation / actor default), then redirect routing to the audit trail
+        //    ONLY — this is a pure audit-trail emit, not a Kafka domain CRUD event (the builder's default).
+        const envelope : Events.Envelope & { retentionClass? : string } =
+        {
+            ...Events.envelope( {
+                object      : Events.objectOf( input.action ),
+                verb        : Events.verbOf( input.action ),
+                accountId   : input.accountId,
+                target      : input.target,
+                actorUserId : input.actorUserId,
+                source      : input.source,
+                outcome     : input.outcome,
+            } ),
+            context        : input.context,
+            sinks          : [ Events.Sink.AUDIT ],
+            retentionClass : input.retentionClass,
+        };
+
+        // 3. best-effort enqueue — swallow a failure (log + return) so an audit-emit hiccup never fails the
+        //    caller's primary action. A fresh `Sqs` here (not a cached base-class facade field) deliberately
+        //    avoids colliding with concrete services/jobs that already declare their OWN private `_sqs` field
+        //    for their own queues (a base + subclass private field of the same name is a TS2415 error).
+        const sent : Type.Result<void> = await new Sqs( this.cloud ).sendToUrl( queueUrl, envelope );
+        if( !sent.ok ) this.log.warn( "audit: enqueue failed", { action: input.action, error: sent.error } );
+    }
 
     // TODO(changeHistory): shared FIELD-LEVEL change-history WRITER — `changeHistory.record(...)` so every primary
     // object across services gets the SAME versioned, revertable diff trail with no per-service reinvention. Owned
@@ -359,6 +402,22 @@ export namespace Application
     {
         videoBucket?      : string;   // Bedrock Nova Reel async video output
         transcribeBucket? : string;   // Amazon Transcribe audio staging (input)
+    }
+
+    /** The ergonomic input to {@link Application.audit} — the per-call essentials; the envelope's
+     *  boilerplate (eventId, occurredAt, actor default) is stamped by the shared `Events.envelope` builder.
+     *  `retentionClass` is intentionally a loose string (not `Audit.RetentionClass`) — this package must not
+     *  depend on `apps/core/audit`; the sink resolves/validates it against the real enum on ingestion. */
+    export interface AuditInput
+    {
+        action        : Events.Action;
+        accountId     : Type.ID;
+        target        : Events.Target;
+        actorUserId?  : Type.ID;               // present -> a USER actor; absent -> the SERVICE actor
+        source?       : Events.SourceChannel;  // default API
+        outcome?      : Events.Outcome;        // default SUCCESS
+        context?      : Events.Context;        // PII-light — ids/enums/counts ONLY, never field values
+        retentionClass? : string;              // emitter hint (Audit.RetentionClass's string values)
     }
 
     // extended by inherited services

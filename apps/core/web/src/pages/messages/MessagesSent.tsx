@@ -8,10 +8,11 @@ import { Access } from '@repo/system';
 import AuthPage       from '@widgets/app/AuthPage';
 import SentEmailPanel from '@pages/messages/panels/SentEmailPanel';
 import SentVoicePanel from '@pages/messages/panels/SentVoicePanel';
+import SentPrintPanel from '@pages/messages/panels/SentPrintPanel';
 
 // the channels available on this page, in tab order — mirrors Messages : Send's channel set, minus Text (no
 // send path shipped yet, so there's nothing to show a log for)
-enum SentChannel { EMAIL = 0, VOICE = 1 }
+enum SentChannel { EMAIL = 0, VOICE = 1, PRINT = 2 }
 
 //
 // Messages : Sent — the account's per-channel send history + delivery/outcome status, one tab per channel
@@ -32,12 +33,14 @@ export function MessagesSent( _props : MessagesSent.Props ) : JSX.Element
                     <Tabs value={ channel } onChange={ onChannelChanged }>
                         <Tab label={"Email"} />
                         <Tab label={"Voice"} />
+                        <Tab label={"Print"} />
                     </Tabs>
                 </Box>
 
                 <Box sx={{ p: 2 }}>
                     { channel === SentChannel.EMAIL && <SentEmailPanel /> }
                     { channel === SentChannel.VOICE && <SentVoicePanel /> }
+                    { channel === SentChannel.PRINT && <SentPrintPanel /> }
                 </Box>
             </AuthPage>;
 }

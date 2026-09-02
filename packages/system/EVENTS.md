@@ -108,7 +108,7 @@ on shutdown. When notices land, emit `app.notice.created|updated|deleted` (add t
 | action | verb | `data` model | emitted by | status |
 |---|---|---|---|---|
 | `voice.call.created` | created | `Voice.CallLog` (`@repo/api`) | a call is dialed (or gated SUPPRESSED pre-dial) | live |
-| `voice.call.updated` | updated | `Voice.CallLog` | inbound status webhook normalizes the outcome (answered/no-answer/busy/voicemail/opted-out) | live |
+| `voice.call.updated` | updated | `Voice.CallLog` | inbound status webhook normalizes the outcome (answered/no-answer/busy/voicemail/opted-out); ALSO emitted per DTMF digit collected on an IVR-flow call (`VoiceService.ivrFlowStep` — `lastAnsweredStepId`/`lastAnsweredValue` on the row), consumed by survey's phone/IVR runner (survey-2.4) | live |
 | `voice.suppression.*` | — | — | — | planned (a suppression list write happens inline today, no separate event) |
 | `voice.ivr_flow.*` | — | — | — | planned (no IVR flow CRUD entity yet — see `apps/core/voice/SPECS.md`) |
 
@@ -124,9 +124,13 @@ on shutdown. When notices land, emit `app.notice.created|updated|deleted` (add t
 | `registration.campaign.created` | created | `Registration.Campaign` (`@repo/api`) | `RegistrationDomain.createCampaign` | live |
 | `registration.campaign.updated` | updated | `Registration.Campaign` | `RegistrationDomain.transitionCampaignStatus` / `patchCampaign` / `republishThroughput` — status transition (`DRAFT → … → ACTIVE/REJECTED/SUSPENDED/EXPIRED`), `mnoMetadata`/`mps` refresh, staff override, resubmit | live |
 | `registration.campaign.deleted` | deleted | `Registration.Campaign` | campaign withdrawn/removed | planned |
-| `registration.number.created` | created | `{ accountId, campaignId, brandId, phoneNumber, status, mps }` (no dedicated number model yet) | `RegistrationDomain.provisionNumbers` — number associated to an approved campaign | live |
+| `registration.number.created` | created | `{ accountId, campaignId, brandId, phoneNumber, status, mps }` (campaign-embedded — no dedicated number model) | `RegistrationDomain.provisionNumbers` — number associated to an approved campaign (bulk, blind) | live |
 | `registration.number.updated` | updated | same | `RegistrationDomain.transitionCampaignStatus` on entry to `ACTIVE` — the campaign's already-associated numbers become sendable, so each is re-published with the new status + `mps` | live |
 | `registration.number.deleted` | deleted | same | number disassociated from a campaign | planned |
+| `registration.number.created` | created | `PhoneNumber.PhoneNumber` (`@repo/api`) | `RegistrationDomain.orderNumber` — a standalone search-then-order (LONG_CODE/TOLL_FREE), distinct from the campaign-embedded bulk row above | live |
+| `registration.number.updated` | updated | `PhoneNumber.PhoneNumber` | `RegistrationDomain.releaseNumber` / `submitTollFreeVerification` / `reconcileNumber` — status or TFV transition | live |
+| `registration.shortcode.created` | created | `PhoneNumber.ShortCodeApplication` (`@repo/api`) | `RegistrationDomain.submitShortCodeApplication` | live |
+| `registration.shortcode.updated` | updated | `PhoneNumber.ShortCodeApplication` | `RegistrationDomain.patchShortCodeApplication` — staff-progressed status (no carrier webhook exists) | live |
 
 > Note: `registration.campaign.updated` carrying `status: "active"` is the **`campaign-active`
 > sending-precondition** signal texting gates outbound sending on (`apps/core/registration/SPECS.md`
@@ -134,14 +138,69 @@ on shutdown. When notices land, emit `app.notice.created|updated|deleted` (add t
 > cross-service DB read. The same `updated` event (on any `mnoMetadata`/`status` refresh, e.g. from
 > `RegistrationVettingJob`'s periodic re-vet) also carries the `mps` (`{ perMinute, perHour, perDay }`)
 > trust-score → throughput fields (`registration-7.2`) — this is the **published interface** dispatch paces
-> sends against, never a DB lookup into registration's own table. `registration.number.*` reserves the topic
-> for a future dedicated number-association entity/lifecycle; today number state lives embedded on
-> `Registration.Campaign.phoneNumbers` and has no separate emission site yet.
+> sends against, never a DB lookup into registration's own table. The standalone `PhoneNumber` rows above
+> are the future consumption bridge into `Texting.NumberRecord` — no texting-side consumer subscribes yet.
+
+### audit  🟢 live
+| action | verb | `data` model | emitted by | status |
+|---|---|---|---|---|
+| `audit.legal_hold.created` | created | `Audit.LegalHold` (`@repo/api`) | `PostAuditLegalHoldImpl` places a hold | live |
+| `audit.legal_hold.deleted` | deleted | `Audit.LegalHold` | `PostAuditLegalHoldImpl` releases a hold | live |
+| `audit.export.created` | created | `{ format, rowCount }` (inline) | `PostAuditExportImpl` — a DSAR/SOC 2 export ran | live |
+| `audit.event.accessed` | accessed | `{ count?, crossTenant? }` (inline) | `GetAuditEventsImpl` / `GetAuditEventImpl` / `GetStaffAuditEventsImpl` — reads of the trail are themselves audited (audit-5.2) | live |
+
+> Note: these four are emitted through `Application.audit()` (→ the platform audit SQS queue →
+> `AuditSinkJob`), NOT `kafka.publishEvent` directly — audit is the one service whose own admin actions
+> route through its own emit path rather than (or in addition to) Kafka, since the audit trail IS the
+> destination. `Application.audit()` is the shared, platform-wide emitter EVERY service gets (see
+> `packages/services/src/Application.ts`) — this table only lists the audit SERVICE's own emission
+> sites; other services' `this.audit(...)` call sites land here as they're added, one row per action,
+> as the catalog "grows by declaration" (apps/core/audit/SPECS.md).
+
+### contact  🟢 live
+| action | verb | `data` model | emitted by | status |
+|---|---|---|---|---|
+| `contact.contact.created` | created | `Payloads.Contact` (`@repo/system`) | `PostContactImpl` | live |
+| `contact.contact.updated` | updated | `Payloads.Contact` | `PatchContactImpl` | live |
+| `contact.contact.deleted` | deleted | `Payloads.Contact` | `DeleteContactImpl` | live |
+| `contact.contact.purged` | purged | redacted `Payloads.Contact` | GDPR forget worker (`ContactService.processForget`) | live |
+| `contact.segment.created` | created | `Payloads.Segment` (`@repo/system`) | `PostSegmentImpl` / `PostSegmentCopyImpl` | live |
+| `contact.segment.updated` | updated | `Payloads.Segment` | `PatchSegmentImpl` | live |
+| `contact.segment.deleted` | deleted | `Payloads.Segment` | `DeleteSegmentImpl` | live |
+
+> Consumed by: **search** (indexer — `contact`/`segment` doc types, `apps/core/search/SPECS.md` search-4.2).
+
+### campaign  🟢 live
+| action | verb | `data` model | emitted by | status |
+|---|---|---|---|---|
+| `campaign.campaign.created` | created | `Payloads.Campaign` (`@repo/system`) | `PostCampaignImpl` | live |
+| `campaign.campaign.updated` | updated | `Payloads.Campaign` | `PatchCampaignImpl` | live |
+| `campaign.campaign.deleted` | deleted | `Payloads.Campaign` | `DeleteCampaignImpl` | live |
+
+> Consumed by: **search** (indexer — `campaign` doc type, search-4.2).
+
+### email  🟢 live
+| action | verb | `data` model | emitted by | status |
+|---|---|---|---|---|
+| `email.template.created` | created | `Payloads.EmailTemplate` (`@repo/system`) | `EmailService.templateCreated` | live |
+| `email.template.updated` | updated | `Payloads.EmailTemplate` | `EmailService.templateUpdated` | live |
+| `email.template.deleted` | deleted | `Payloads.EmailTemplate` | `EmailService.templateDeleted` | live |
+| `email.message.created` | created | `Payloads.EmailMessage` (`@repo/system`) | `EmailService.sendToRecipient` — one send-log row per recipient | live |
+| `email.suppression.*`, `email.domain.*` | — | — | — | planned |
+
+> Consumed by: **search** (indexer — `email` doc type, search-4.2).
+
+### survey  🟢 live
+| Event | Verb | `data` model | Emitting site | Status |
+|---|---|---|---|---|
+| `survey.survey.created` / `.updated` / `.deleted` | created/updated/deleted | `Survey.Entity` (`@repo/api`) | `SurveyService.emit` — survey CRUD/publish impls | live |
+| `survey.response.created` | created | `SurveyResponse.Entity` (`@repo/api`) | `SurveyService.emit` — response capture starts (in_progress) | live |
+| `survey.response.updated` | updated | `SurveyResponse.Entity` (`@repo/api`) | `SurveyService.emit` — completed/abandoned transition (survey-5.2's completion-as-conversion / workflow trigger) | live |
 
 ### everything else  ⚪ planned
-`Object` topics are **defined** in [`Events.ts`](./src/Events.ts) for contact, campaign, workflow, email,
-texting, print, links, collab, marketplace, media variants, etc., but no emission is wired yet. Add a
-row here when a service starts emitting.
+`Object` topics are **defined** in [`Events.ts`](./src/Events.ts) for workflow, texting, print, links,
+collab, marketplace, media variants, etc., but no emission is wired yet. Add a row here when a service
+starts emitting.
 
 ---
 

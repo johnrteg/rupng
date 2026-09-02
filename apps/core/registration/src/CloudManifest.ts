@@ -107,6 +107,11 @@ export const manifest : ResourceManifest =
               ] },
             // the cost-estimate LEDGER (a stub — no billing engine exists yet; see Registration.CostEstimate)
             { key: "registration_costestimate", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "id", type: AttrType.STRING } },
+            // standalone number acquisition (registration-4.x extension — search/order/release, TFV) — see
+            // PhoneNumber.PhoneNumber. Distinct from the campaign-embedded `phoneNumbers` array above.
+            { key: "registration_number", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "id", type: AttrType.STRING } },
+            // short-code applications (registration-4.x) — staff-progressed, no carrier self-serve order exists.
+            { key: "registration_shortcode", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "id", type: AttrType.STRING } },
         ],
 
         // SQS (+ DLQ) — two verified-webhook intake queues (one per provider stream, so a TCR outage can't

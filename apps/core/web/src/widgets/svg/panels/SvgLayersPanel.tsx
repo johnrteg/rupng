@@ -1,3 +1,4 @@
+import AppModel from "@model/AppModel";
 //
 import React from "react";
 import { JSX } from "react";
@@ -10,6 +11,7 @@ import LockOpenOutlinedIcon      from "@mui/icons-material/LockOpenOutlined";
 import ExpandMoreOutlinedIcon    from "@mui/icons-material/ExpandMoreOutlined";
 import ChevronRightOutlinedIcon  from "@mui/icons-material/ChevronRightOutlined";
 import AddOutlinedIcon           from "@mui/icons-material/AddOutlined";
+import FileUploadOutlinedIcon    from "@mui/icons-material/FileUploadOutlined";
 import DragIndicatorOutlinedIcon from "@mui/icons-material/DragIndicatorOutlined";
 import TextFieldsOutlinedIcon    from "@mui/icons-material/TextFieldsOutlined";
 import CategoryOutlinedIcon      from "@mui/icons-material/CategoryOutlined";
@@ -17,11 +19,15 @@ import ImageOutlinedIcon         from "@mui/icons-material/ImageOutlined";
 import FolderOutlinedIcon        from "@mui/icons-material/FolderOutlined";
 
 import { SvgDocument } from "@repo/api";
+import { Type } from "@repo/common";
 
 import ButtonIcon from "@widgets/core/ButtonIcon";
+import BrowserUtils from "@utils/BrowserUtils";
 import { SvgEditorContext, SvgEditorContextValue } from "@widgets/svg/editor/SvgEditorContext";
 import { SvgEditorActionType, makeId } from "@widgets/svg/editor/SvgEditorModel";
-import { updateLayer, addLayer, replaceObject, moveObjectInLayer, moveLayer } from "@widgets/svg/editor/SvgDocOps";
+import { updateLayer, addLayer, replaceObject, moveObjectInLayer, moveLayer, findObject } from "@widgets/svg/editor/SvgDocOps";
+import { buildExportBundle } from "@widgets/svg/editor/SvgItemExport";
+import SvgItemImportDialog from "@widgets/svg/dialogs/SvgItemImportDialog";
 
 //
 // SvgLayersPanel — the left panel: the active page's layers (eye/lock toggles, opacity readout, click to
@@ -31,6 +37,7 @@ import { updateLayer, addLayer, replaceObject, moveObjectInLayer, moveLayer } fr
 //
 export function SvgLayersPanel( props : SvgLayersPanel.Props ) : JSX.Element
 {
+    const appmodel : AppModel = AppModel.instance();
     const editor : SvgEditorContextValue = React.useContext( SvgEditorContext );
 
     const [ editingLayer, setEditingLayer ]   = React.useState<string | null>( null );
@@ -41,6 +48,8 @@ export function SvgLayersPanel( props : SvgLayersPanel.Props ) : JSX.Element
     // drag-and-drop layer reorder state
     const draggingLayerId : React.MutableRefObject<string | null> = React.useRef<string | null>( null );
     const [ dragOverLayerId, setDragOverLayerId ] = React.useState<string | null>( null );
+    // item export/import
+    const [ importOpen, setImportOpen ] = React.useState<boolean>( false );
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // commit a doc change (snapshots for undo + marks dirty)
@@ -192,6 +201,28 @@ export function SvgLayersPanel( props : SvgLayersPanel.Props ) : JSX.Element
     function onSendToBack()    : void { moveContextObject( "back" ); }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // ── Item export/import ───────────────────────────────────────────────────
+
+    // export the context-menu object (+ its referenced doc.assets) to a downloadable .zip
+    async function onExportItem() : Promise<void>
+    {
+        if( contextMenu === null ) return;
+        const objectId : string = contextMenu.objectId;
+        closeContextMenu();
+
+        const object : SvgDocument.ObjectNode | undefined = findObject( props.doc, objectId );
+        const built : Type.Result<Blob> = await buildExportBundle( props.doc, objectId, appmodel );
+        if( built.ok ) BrowserUtils.downloadBlob( built.data, `${ object?.name ?? "item" }.rupitem.zip` );
+    }
+
+    // an imported item's object + materialized assets — merge into the doc and select it
+    function onItemImported( payload : { object : SvgDocument.ObjectNode; assets : Array<SvgDocument.Asset> } ) : void
+    {
+        editor.dispatch( { type: SvgEditorActionType.IMPORT_ITEM, object: payload.object, assets: payload.assets } );
+        setImportOpen( false );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // the icon for an object kind
     function objectIcon( kind : SvgDocument.ObjectKind ) : JSX.Element
     {
@@ -287,20 +318,24 @@ export function SvgLayersPanel( props : SvgLayersPanel.Props ) : JSX.Element
                 <Box sx={{ flexGrow: 1, overflow: "auto" }}>
                     { props.page.layers.map( ( layer : SvgDocument.Layer ) : JSX.Element => layerRow( layer ) ) }
                 </Box>
-                <Box sx={{ p: 1, borderTop: 1, borderColor: "divider" }}>
+                <Stack direction="row" spacing={ 1 } sx={{ p: 1, borderTop: 1, borderColor: "divider" }}>
                     <Button fullWidth size="small" startIcon={ <AddOutlinedIcon /> } onClick={ onAddLayer }>{"Add Layer"}</Button>
-                </Box>
+                    <Button fullWidth size="small" startIcon={ <FileUploadOutlinedIcon /> } onClick={ () : void => setImportOpen( true ) }>{"Import Item…"}</Button>
+                </Stack>
 
                 {/* z-order context menu — anchored to right-click position */}
                 <Menu open={ contextMenu !== null }
                       anchorReference="anchorPosition"
                       anchorPosition={ contextMenu !== null ? { top: contextMenu.y, left: contextMenu.x } : undefined }
                       onClose={ closeContextMenu }>
+                    <MenuItem onClick={ () : void => void onExportItem() }>{"Export Item…"}</MenuItem>
                     <MenuItem onClick={ onBringToFront }>{"Bring to Front"}</MenuItem>
                     <MenuItem onClick={ onBringForward }>{"Bring Forward"}</MenuItem>
                     <MenuItem onClick={ onSendBackward }>{"Send Backward"}</MenuItem>
                     <MenuItem onClick={ onSendToBack }>{"Send to Back"}</MenuItem>
                 </Menu>
+
+                <SvgItemImportDialog open={ importOpen } onImported={ onItemImported } onClose={ () : void => setImportOpen( false ) } />
             </Box>;
 }
 

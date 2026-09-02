@@ -1,7 +1,9 @@
 //
 import { Application, Service, Ports, Register, Dynamo, Kafka, Sqs } from "@repo/services";
-import type { Type } from "@repo/common";
-import { Segment, Contact } from "@repo/api";
+import { NetworkUtils, ObjectUtils, type Type } from "@repo/common";
+import { RestfulService } from "@repo/endpoint";
+import { Events } from "@repo/system";
+import { Segment, Contact, PostPrintInternalErase, PostVoiceInternalErase, PostReportInternalErase } from "@repo/api";
 import SegmentMatch from "../model/SegmentMatch";
 
 //
@@ -35,8 +37,30 @@ export class ContactService extends Service
     /** Kafka facade — CRUD event emission (contact.* topics), best-effort. Lazy + cached. */
     public get kafka() : Kafka { return this._kafka ??= new Kafka( this.cloud ); }
 
-    /** SQS facade — the contact-segment-refresh work queue. Lazy + cached. */
+    /** SQS facade — the contact-segment-refresh / contact-forget work queues. Lazy + cached. */
     public get sqs() : Sqs { return this._sqs ??= new Sqs( this.cloud ); }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    /** Publish a `contact.*` lifecycle event. Best-effort — a bus miss is logged, never fails the
+     *  caller. `data` is the entity's `@repo/api` wire model; `actorUserId` (if given) makes it a
+     *  USER-actored event, else a SERVICE-actored one. */
+    public async emit( verb : Events.Verb, targetId : string, accountId : string, data : unknown, actorUserId? : string ) : Promise<void>
+    {
+        const env : Events.Envelope = Events.envelope( { object: Events.Object.CONTACT_CONTACT, verb, accountId, target: { type: "contact", id: targetId }, data, actorUserId } );
+        const published : Type.Result<void> = await this.kafka.publishEvent( env );
+        if( !published.ok ) this.log.warn( "contact event publish failed", { action: env.action, targetId, error: published.error } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    /** Publish a `contact.segment` lifecycle event. Best-effort — a bus miss is logged, never fails the
+     *  caller. `data` is the entity's `@repo/api` wire model; `actorUserId` (if given) makes it a
+     *  USER-actored event, else a SERVICE-actored one. */
+    public async emitSegment( verb : Events.Verb, targetId : string, accountId : string, data : unknown, actorUserId? : string ) : Promise<void>
+    {
+        const env : Events.Envelope = Events.envelope( { object: Events.Object.CONTACT_SEGMENT, verb, accountId, target: { type: "segment", id: targetId }, data, actorUserId } );
+        const published : Type.Result<void> = await this.kafka.publishEvent( env );
+        if( !published.ok ) this.log.warn( "segment event publish failed", { action: env.action, targetId, error: published.error } );
+    }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     /** Allocate the next per-account sequential reference number for an entity kind (contact | segment; starts
@@ -65,6 +89,73 @@ export class ContactService extends Service
     {
         const sent : Type.Result<void> = await this.sqs.send( "contact-segment-materialize", { accountId, segmentId, trigger, actorUserId } );
         if( !sent.ok ) this.log.warn( "segment-materialize enqueue failed", { segmentId, error: sent.error } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // ── GDPR forget (contact-10.3) ────────────────────────────────────────────────────────────
+
+    /** Enqueue a forget request — the worker does the redaction + fan-out off the request path
+     *  (a multi-service fan-out can exceed the inline request budget). */
+    public async enqueueForget( accountId : string, contactId : string, actorUserId : string, reason? : string ) : Promise<Type.Result<void>>
+    {
+        return this.sqs.send( "contact-forget", { accountId, contactId, actorUserId, reason } );
+    }
+
+    /** WORKER: redact the contact to a tombstone shell, fan the erasure out to every content-holding
+     *  service's `/internal/erase` S2S hook, publish `contact.contact` PURGED, and refresh the
+     *  contact's segments (a forgotten contact drops out of reachable counts). Idempotent — forgetting
+     *  an already-forgotten contact re-runs harmlessly (redaction of already-empty fields is a no-op). */
+    public async processForget( accountId : string, contactId : string, actorUserId : string, reason? : string ) : Promise<void>
+    {
+        const got : Type.Result<Contact.Entity | undefined> = await this.dynamo.get<Contact.Entity>( "contacts", { accountId, contactId } );
+        if( !got.ok || !got.data ) { this.log.warn( "forget: contact not found", { accountId, contactId } ); return; }
+        const current : Contact.Entity = ObjectUtils.withDefaults( got.data, Contact.DEFAULT );
+
+        // fan out to content-holding services BEFORE clearing our own PII — voice keys erasure by
+        // phone number, so the numbers must still be on the row when we call it
+        await this.eraseFromContentServices( accountId, contactId, current.phones.map( ( entry : Contact.PhoneEntry ) : string => entry.value ) );
+
+        const now : Type.ISODateTime = new Date().toISOString();
+        const redacted : Contact.Entity =
+        {
+            ...current,
+            firstName: undefined, lastName: undefined, emails: [], phones: [], addresses: undefined,
+            link: undefined, social: undefined, externalRefs: undefined, notes: undefined, customFields: undefined,
+            status: Contact.ContactStatus.FORGOTTEN,
+            forgotten: { at: now, by: actorUserId, reason },
+            audit: { ...current.audit, modifiedAt: now, modifiedBy: actorUserId },
+        };
+
+        const wrote : Type.Result<void> = await this.dynamo.put( "contacts", { ...redacted, contactId } );
+        if( !wrote.ok ) { this.log.error( "forget: tombstone write failed", { accountId, contactId, error: wrote.error } ); return; }
+
+        await this.emit( Events.Verb.PURGED, contactId, accountId, redacted, actorUserId );
+        await this.audit( { action: "contact.contact.purged", accountId, target: { type: "contact", id: contactId }, actorUserId, context: reason ? { reason } : undefined } );
+        void this.enqueueSegmentRefresh( accountId, contactId );
+        this.log.info( "contact forgotten", { accountId, contactId } );
+    }
+
+    /** Best-effort fan-out to every service known to hold this contact's content (print-7.1,
+     *  voice-?, report-11.1). A target's failure is logged, never blocks the others or the
+     *  tombstone write — this is why the redaction step ABOVE doesn't depend on this succeeding. */
+    private async eraseFromContentServices( accountId : string, contactId : string, phones : Array<string> ) : Promise<void>
+    {
+        const print : RestfulService = new RestfulService( process.env.PRINT_INTERNAL_URL ?? NetworkUtils.url( NetworkUtils.Protocol.HTTP, "localhost", Ports.PRINT.MAIN, null, null ) );
+        const report : RestfulService = new RestfulService( process.env.REPORT_INTERNAL_URL ?? NetworkUtils.url( NetworkUtils.Protocol.HTTP, "localhost", Ports.REPORT.MAIN, null, null ) );
+        const voice : RestfulService = new RestfulService( process.env.VOICE_INTERNAL_URL ?? NetworkUtils.url( NetworkUtils.Protocol.HTTP, "localhost", Ports.VOICE.MAIN, null, null ) );
+
+        const printReply : RestfulService.Reply<PostPrintInternalErase.Response> = await print.fetch( new PostPrintInternalErase( { accountId, contactId } ) );
+        if( !printReply.ok ) this.log.warn( "forget fan-out: print erase failed", { accountId, contactId, status: printReply.status } );
+
+        const reportReply : RestfulService.Reply<PostReportInternalErase.Response> = await report.fetch( new PostReportInternalErase( { accountId, subjectId: contactId } ) );
+        if( !reportReply.ok ) this.log.warn( "forget fan-out: report erase failed", { accountId, contactId, status: reportReply.status } );
+
+        // voice keys erasure by phone number (its call log has no contactId column) — one call per number
+        for( const to of phones )
+        {
+            const voiceReply : RestfulService.Reply<PostVoiceInternalErase.Response> = await voice.fetch( new PostVoiceInternalErase( { accountId, to } ) );
+            if( !voiceReply.ok ) this.log.warn( "forget fan-out: voice erase failed", { accountId, to, status: voiceReply.status } );
+        }
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////

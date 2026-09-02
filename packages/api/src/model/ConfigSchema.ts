@@ -16,10 +16,15 @@ import { EmailConfig } from "../email/model/EmailConfig";
 import { SocialConfig } from "../social/model/SocialConfig";
 import { MonitorConfig } from "../monitor/model/MonitorConfig";
 import { VoiceConfig } from "../voice/model/VoiceConfig";
+import { PrintConfig } from "../print/model/PrintConfig";
 import { ReportConfig } from "../report/model/ReportConfig";
 import { RegistrationConfig } from "../registration/model/RegistrationConfig";
+import { SearchConfig } from "../search/model/SearchConfig";
 import { GetBootstrap } from "../app/GetBootstrap";
 import { AppServiceConfig } from "../app/model/AppServiceConfig";
+import { AuditConfig } from "../audit/model/AuditConfig";
+import { SurveyConfig } from "../survey/model/SurveyConfig";
+import { TextingConfig } from "../texting/model/TextingConfig";
 
 export namespace ConfigSchema
 {
@@ -32,10 +37,15 @@ export namespace ConfigSchema
         media:   { settings: MediaConfig.SCHEMA },
         email:   { settings: EmailConfig.SCHEMA },
         voice:   { settings: VoiceConfig.SCHEMA },
+        print:   { settings: PrintConfig.SCHEMA },
         report:  { settings: ReportConfig.SCHEMA },
         registration: { settings: RegistrationConfig.SCHEMA },
         social:  { settings: SocialConfig.SCHEMA },
         monitor: { settings: MonitorConfig.SCHEMA },
+        audit:   { settings: AuditConfig.SCHEMA },
+        search:  { settings: SearchConfig.SCHEMA },
+        survey:  { settings: SurveyConfig.SCHEMA },
+        texting: { settings: TextingConfig.SCHEMA },
         app:     { web: GetBootstrap.SCHEMA, settings: AppServiceConfig.SCHEMA },
     };
 
@@ -47,10 +57,15 @@ export namespace ConfigSchema
         media:   { settings: MediaConfig.validate as Validation.Validator<unknown> },
         email:   { settings: EmailConfig.validate as Validation.Validator<unknown> },
         voice:   { settings: VoiceConfig.validate as Validation.Validator<unknown> },
+        print:   { settings: PrintConfig.validate as Validation.Validator<unknown> },
         report:  { settings: ReportConfig.validate as Validation.Validator<unknown> },
         registration: { settings: RegistrationConfig.validate as Validation.Validator<unknown> },
         social:  { settings: SocialConfig.validate as Validation.Validator<unknown> },
         monitor: { settings: MonitorConfig.validate as Validation.Validator<unknown> },
+        audit:   { settings: AuditConfig.validate as Validation.Validator<unknown> },
+        search:  { settings: SearchConfig.validate as Validation.Validator<unknown> },
+        survey:  { settings: SurveyConfig.validate as Validation.Validator<unknown> },
+        texting: { settings: TextingConfig.validate as Validation.Validator<unknown> },
         app:     { web: GetBootstrap.validate as Validation.Validator<unknown>, settings: AppServiceConfig.validate as Validation.Validator<unknown> },
     };
 

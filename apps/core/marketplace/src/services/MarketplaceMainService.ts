@@ -23,12 +23,16 @@ import PostInternalUsageImpl from "../endpoints/PostInternalUsageImpl";
 import GetUsageImpl from "../endpoints/GetUsageImpl";
 import GetInstallationUsageImpl from "../endpoints/GetInstallationUsageImpl";
 import PostInternalActionImpl from "../endpoints/PostInternalActionImpl";
+import PostMarketplaceWebhookImpl from "../endpoints/PostMarketplaceWebhookImpl";
 
 //
 // MAIN role — the internal `/marketplace/internal/*` installations API a consuming service (e.g.
 // social) calls S2S to create a connection and resolve a fresh token, the `/marketplace/catalog`
-// browse/manage API, and the account-facing `/marketplace/installations/*` lifecycle API
-// (enable/list/detail/patch/pause/resume/connect/reauth/uninstall). The OAuth callback endpoint
+// browse/manage API, the account-facing `/marketplace/installations/*` lifecycle API
+// (enable/list/detail/patch/pause/resume/connect/reauth/uninstall), and inbound 3rd-party webhook
+// intake (`/marketplace/webhooks/:integrationId` — the connector runtime's front door). Webhook intake
+// lives here rather than a dedicated `MarketplaceWebhookService` role for the SAME reason social's does
+// (one ALB per manifest — see PostMarketplaceWebhookImpl). The OAuth callback endpoint
 // (`GET /marketplace/oauth/callback`) is a later addition.
 //
 export class MarketplaceMainService extends MarketplaceService
@@ -38,6 +42,12 @@ export class MarketplaceMainService extends MarketplaceService
     {
         super( MarketplaceService.Role.MAIN );
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // REPLACES the base's `formbody`-only registration — captures true raw bytes for
+    // `PostMarketplaceWebhookImpl`'s connector `verifyWebhook` check (Shopify's HMAC scheme), mirroring
+    // social's identical override for its own Meta webhook.
+    protected override addServerRegister() : void { this.enableRawBodyCapture(); }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     /** Register the marketplace endpoint impls (after the inherited /health + /version). */
@@ -66,6 +76,7 @@ export class MarketplaceMainService extends MarketplaceService
         this.register( new GetUsageImpl( this ) );
         this.register( new GetInstallationUsageImpl( this ) );
         this.register( new PostInternalActionImpl( this ) );
+        this.register( new PostMarketplaceWebhookImpl( this ) );
     }
 }
 

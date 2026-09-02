@@ -10,7 +10,9 @@ import {
     ApiAuthorizer, LaunchType,
     AttrType,
     Ports,
+    ResourceKind, AccessIntent,
 } from "@repo/cloud-manifest";
+import { Events } from "@repo/system";
 
 export const manifest : ResourceManifest =
 {
@@ -101,8 +103,24 @@ export const manifest : ResourceManifest =
             // (re)materialize a segment's QUERY membership from its saved filter — evaluate → reconcile join
             // rows → recount → flip PENDING→ACTIVE. Off the request path (can scan the contacts partition).
             { key: "contact-segment-materialize", maxReceiveCount: 3, dlq: true, visibilityTimeoutSec: 300 },
+            // GDPR forget (contact-10.3) — redact to a tombstone + fan the erasure out to every
+            // content-holding service's /internal/erase hook. Off the request path (a multi-service
+            // fan-out can exceed the inline budget).
+            { key: "contact-forget", maxReceiveCount: 3, dlq: true, visibilityTimeoutSec: 120 },
         ],
     },
+
+    // S2S: the forget fan-out calls each content-holding service's /internal/erase hook.
+    uses:
+    [
+        { service: "print",  kind: ResourceKind.SERVICE, key: "main", access: AccessIntent.INVOKE },
+        { service: "voice",  kind: ResourceKind.SERVICE, key: "main", access: AccessIntent.INVOKE },
+        { service: "report", kind: ResourceKind.SERVICE, key: "main", access: AccessIntent.INVOKE },
+    ],
+
+    // Kafka — contact.contact PURGED on a completed forget (analytics-1.7's forget-fan-out
+    // dependency, and any other consumer that needs to react to a contact's erasure).
+    publishes: [ { topic: Events.Object.CONTACT_CONTACT } ],
 
     tags: { domain: "core", tier: "service" },
 };

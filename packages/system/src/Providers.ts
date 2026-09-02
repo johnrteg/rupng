@@ -20,6 +20,7 @@ export namespace Providers
         EMAIL    = "email",      // transactional email providers (email service)
         TEXTING  = "texting",    // SMS/MMS providers (texting service)
         VOICE    = "voice",      // telephony/IVR providers (voice service)
+        PRINT    = "print",      // direct-mail fulfillment + address-verification providers (print service)
         PAYMENTS = "payments",   // payment processors (billing)
         // A2P registration/compliance credentials (registration service) — the TCR CSP account, the
         // Campaign Verify political-vetting bridge, and each carrier (CNP) we provision numbers through.
@@ -89,12 +90,52 @@ export namespace Providers
           fields: [ { name: "accountSid", label: "Account SID", secret: false }, { name: "authToken", label: "Auth Token" } ],
           keyHint: "Account SID starts with AC", docsUrl: "https://console.twilio.com/" },
         { id: "telnyx", label: "Telnyx", category: Category.TEXTING, scope: { service: "texting" }, secretKey: "texting-telnyx", docsUrl: "https://portal.telnyx.com/" },
+        { id: "telnyx3", label: "Telnyx (2nd account)", category: Category.TEXTING, scope: { service: "texting" }, secretKey: "texting-telnyx3",
+          docsUrl: "https://portal.telnyx.com/" },
+        // "bandwidth"/"vonage" are already taken by the REGISTRATION category's CNP (number-provisioning)
+        // credentials above — these are a DIFFERENT credential (the SMS-sending API), so they're prefixed
+        // `texting-` to keep `Providers.byId` unambiguous (same reasoning as voice's `voice-twilio`).
+        { id: "texting-bandwidth", label: "Bandwidth", category: Category.TEXTING, scope: { service: "texting" }, secretKey: "texting-bandwidth",
+          fields: [ { name: "accountId", label: "Account ID", secret: false }, { name: "username", label: "Username", secret: false }, { name: "password", label: "Password" }, { name: "applicationId", label: "Application ID", secret: false } ],
+          docsUrl: "https://dashboard.bandwidth.com/" },
+        { id: "texting-bandwidth3", label: "Bandwidth (2nd account)", category: Category.TEXTING, scope: { service: "texting" }, secretKey: "texting-bandwidth3",
+          fields: [ { name: "accountId", label: "Account ID", secret: false }, { name: "username", label: "Username", secret: false }, { name: "password", label: "Password" }, { name: "applicationId", label: "Application ID", secret: false } ],
+          docsUrl: "https://dashboard.bandwidth.com/" },
+        { id: "broadnet", label: "Broadnet", category: Category.TEXTING, scope: { service: "texting" }, secretKey: "texting-broadnet",
+          fields: [ { name: "username", label: "Username", secret: false }, { name: "password", label: "Password" } ],
+          docsUrl: "https://www.broadnet.eu/" },
+        { id: "infobip", label: "Infobip", category: Category.TEXTING, scope: { service: "texting" }, secretKey: "texting-infobip",
+          fields: [ { name: "apiKey", label: "API Key" }, { name: "baseUrl", label: "Base URL", secret: false } ],
+          keyHint: "Base URL is the account's own <name>.api.infobip.com host", docsUrl: "https://portal.infobip.com/" },
+        { id: "signalwire", label: "SignalWire", category: Category.TEXTING, scope: { service: "texting" }, secretKey: "texting-signalwire",
+          fields: [ { name: "spaceUrl", label: "Space URL", secret: false }, { name: "projectId", label: "Project ID", secret: false }, { name: "token", label: "API Token" } ],
+          docsUrl: "https://signalwire.com/signin" },
+        { id: "sinch", label: "Sinch", category: Category.TEXTING, scope: { service: "texting" }, secretKey: "texting-sinch",
+          fields: [ { name: "servicePlanId", label: "Service Plan ID", secret: false }, { name: "apiToken", label: "API Token" } ],
+          docsUrl: "https://dashboard.sinch.com/settings/access-keys" },
+        { id: "texting-vonage", label: "Vonage", category: Category.TEXTING, scope: { service: "texting" }, secretKey: "texting-vonage",
+          fields: [ { name: "apiKey", label: "API Key", secret: false }, { name: "apiSecret", label: "API Secret" } ],
+          docsUrl: "https://dashboard.nexmo.com/" },
 
         // Voice — telephony/IVR providers (voice service). A distinct id ("voice-twilio", not "twilio") so
         // Providers.byId can't ambiguously resolve to texting's own Twilio entry above.
         { id: "voice-twilio", label: "Twilio", category: Category.VOICE, scope: { service: "voice" }, secretKey: "voice-twilio",
           fields: [ { name: "accountSid", label: "Account SID", secret: false }, { name: "authToken", label: "Auth Token" } ],
           keyHint: "Account SID starts with AC", docsUrl: "https://console.twilio.com/" },
+
+        // Print — direct-mail fulfillment (PostGrid/Lob, also usable as AddressVerifier sources per print-2.6)
+        // + dedicated address-verification-only sources (print service).
+        { id: "postgrid", label: "PostGrid", category: Category.PRINT, scope: { service: "print" }, secretKey: "print-postgrid",
+          docsUrl: "https://dashboard.postgrid.com/" },
+        { id: "lob", label: "Lob", category: Category.PRINT, scope: { service: "print" }, secretKey: "print-lob",
+          keyHint: "starts with live_ / test_", docsUrl: "https://dashboard.lob.com/settings/api-keys" },
+        { id: "usps", label: "USPS Web Tools", category: Category.PRINT, scope: { service: "print" }, secretKey: "print-usps",
+          keyHint: "CASS/DPV only — no NCOA", docsUrl: "https://www.usps.com/business/web-tools-apis/" },
+        { id: "melissa", label: "Melissa", category: Category.PRINT, scope: { service: "print" }, secretKey: "print-melissa",
+          keyHint: "CASS + NCOALink", docsUrl: "https://www.melissa.com/developer" },
+        { id: "smartystreets", label: "SmartyStreets", category: Category.PRINT, scope: { service: "print" }, secretKey: "print-smartystreets",
+          fields: [ { name: "authId", label: "Auth ID", secret: false }, { name: "authToken", label: "Auth Token" } ],
+          keyHint: "CASS + NCOALink", docsUrl: "https://www.smarty.com/docs/cloud/us-address-verification-api" },
 
         // Registration — TCR/10DLC A2P registration credentials (registration service). We register as a
         // DIRECT CSP with TCR (SPECS.md gap #1, resolved), so the TCR credential is OURS, not a reseller's;

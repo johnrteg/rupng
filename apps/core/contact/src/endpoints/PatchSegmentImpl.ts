@@ -2,6 +2,7 @@
 import { Segment, PatchSegment } from "@repo/api";
 import { NetworkUtils, type Type } from "@repo/common";
 import { RestfulEndpoint } from "@repo/endpoint";
+import { Events, Payloads } from "@repo/system";
 import ContactService from "../services/ContactService";
 
 //
@@ -53,6 +54,10 @@ export class PatchSegmentImpl extends PatchSegment
 
         // re-derive membership off the request path (fills members + flips PENDING → ACTIVE)
         if( rematerialize ) void this.service.enqueueSegmentMaterialize( accountId, segmentId, Segment.RunTrigger.EDIT, auth.userId );
+
+        // best-effort CRUD event — never blocks the response
+        const payload : Payloads.Segment = { id: merged.id, accountId: merged.accountId, name: merged.name, status: merged.status };
+        void this.service.emitSegment( Events.Verb.UPDATED, merged.id, accountId, payload, auth.userId );
 
         return { status: NetworkUtils.Status.OK, data: merged };
     }

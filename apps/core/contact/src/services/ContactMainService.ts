@@ -8,6 +8,9 @@ import ContactService from "./ContactService";
 
 import GetContactsImpl from "../endpoints/GetContactsImpl";
 import GetInternalContactsImpl from "../endpoints/GetInternalContactsImpl";
+import GetInternalContactByIdentifierImpl from "../endpoints/GetInternalContactByIdentifierImpl";
+import PostInternalContactUpdateImpl from "../endpoints/PostInternalContactUpdateImpl";
+import PostContactForgetImpl from "../endpoints/PostContactForgetImpl";
 import GetContactImpl from "../endpoints/GetContactImpl";
 import PostContactImpl from "../endpoints/PostContactImpl";
 import PatchContactImpl from "../endpoints/PatchContactImpl";
@@ -49,6 +52,7 @@ export class ContactMainService extends ContactService
         super( ContactService.Role.MAIN );
         void this.startSegmentRefreshConsumer();
         void this.startSegmentMaterializeConsumer();
+        void this.startForgetConsumer();
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -108,6 +112,34 @@ export class ContactMainService extends ContactService
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // SQS contact-forget poll loop (dev drain) — redact + fan-out + PURGED emit, off the request path.
+    // MAIN drains locally; a Job Lambda in a deploy.
+    private async startForgetConsumer() : Promise<void>
+    {
+        this.log.info( "contact forget consumer started (SQS contact-forget)" );
+        while( !this.stopping )
+        {
+            try
+            {
+                const received : Type.Result<Array<Message>> = await this.sqs.receive( "contact-forget", 10, 10 );
+                if( !received.ok ) { await this.delay( 5000 ); continue; }
+                for( const message of received.data )
+                    await RequestContext.run( { transactionId: Sqs.transactionId( message ) }, async () : Promise<void> =>
+                    {
+                        try
+                        {
+                            const req = JSON.parse( message.Body ?? "{}" ) as { accountId? : string; contactId? : string; actorUserId? : string; reason? : string };
+                            if( req.accountId && req.contactId && req.actorUserId ) await this.processForget( req.accountId, req.contactId, req.actorUserId, req.reason );
+                            if( message.ReceiptHandle ) await this.sqs.delete( "contact-forget", message.ReceiptHandle );
+                        }
+                        catch( err ) { this.log.warn( "forget failed (will redeliver)", { error: String( err ) } ); }
+                    } );
+            }
+            catch( error ) { this.log.warn( "forget receive failed — backing off", { error: String( error ) } ); await this.delay( 5000 ); }
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     /** Stop the poll loop before the base closes the HTTP server (so the process can exit on SIGINT). */
     protected override async aboutToQuit() : Promise<void>
     {
@@ -125,6 +157,9 @@ export class ContactMainService extends ContactService
         await super.registerEndpoints();          // keeps /health + /version
         this.register( new GetContactsImpl( this ) );
         this.register( new GetInternalContactsImpl( this ) );
+        this.register( new GetInternalContactByIdentifierImpl( this ) );
+        this.register( new PostInternalContactUpdateImpl( this ) );
+        this.register( new PostContactForgetImpl( this ) );
         this.register( new GetContactImpl( this ) );
         this.register( new PostContactImpl( this ) );
         this.register( new PatchContactImpl( this ) );

@@ -32,16 +32,27 @@ export class PostInstallationConnectImpl extends PostInstallationConnect
 
         await this.service.appendAudit( installationId, Marketplace.InstallationAuditAction.CONNECT, auth.userId );
 
+        // `externalRef` (e.g. a Shopify shop domain) is persisted on EITHER branch, before the credential
+        // check completes — it's just a lookup key, harmless to store early, and an OAuth installation
+        // needs it in place before the (not-yet-built) OAuth callback can flip it ACTIVE.
+        const withRef : Marketplace.Installation = this.body?.externalRef ? { ...got.data, externalRef: this.body.externalRef } : got.data;
+
         if( this.body?.apiKey )
         {
-            const activated : Marketplace.Installation = { ...got.data, status: Marketplace.InstallStatus.ACTIVE, health: { state: Marketplace.HealthState.CONNECTED, checkedAt: new Date().toISOString() } };
+            const activated : Marketplace.Installation = { ...withRef, status: Marketplace.InstallStatus.ACTIVE, health: { state: Marketplace.HealthState.CONNECTED, checkedAt: new Date().toISOString() } };
             const wrote : Type.Result<void> = await this.service.dynamo.put( "installations", { ...activated } );
             if( !wrote.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "installation write failed" } };
             return { status: NetworkUtils.Status.OK, data: { validated: true } };
         }
 
+        if( this.body?.externalRef && this.body.externalRef !== got.data.externalRef )
+        {
+            const wroteRef : Type.Result<void> = await this.service.dynamo.put( "installations", { ...withRef } );
+            if( !wroteRef.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "installation write failed" } };
+        }
+
         const session : Type.Result<OAuth.ConnectSession> = await this.service.oauthFor( got.data.integrationId ).startConnect(
-            got.data.integrationId, installationId, { scopes: this.body?.scopes } );
+            got.data.integrationId, installationId, { scopes: this.body?.scopes, metadata: this.body?.externalRef ? { externalRef: this.body.externalRef } : undefined } );
         if( !session.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "connect failed" } };
 
         return { status: NetworkUtils.Status.OK, data: { authorizeUrl: session.data.token } };

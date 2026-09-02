@@ -15,7 +15,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     root,
-    include: ['packages/**/src/**/*.{test,spec}.{ts,tsx,js}','packages/**/tests/**/*.{ts,js}','cloud/test/**/*.{test,spec}.{ts,tsx,js}'],
+    include: ['packages/**/src/**/*.{test,spec}.{ts,tsx,js}','packages/**/tests/**/*.{ts,js}','apps/**/src/**/*.{test,spec}.{ts,tsx,js}','cloud/test/**/*.{test,spec}.{ts,tsx,js}'],
     exclude: ['**/node_modules/**','**/bin/**','**/cdk.out/**']
   }
 });

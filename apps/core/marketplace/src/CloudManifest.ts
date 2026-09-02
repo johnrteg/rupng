@@ -5,10 +5,11 @@
 // credential vault + OAuth broker (grant/refresh) live behind `@repo/oauth`, not this manifest, since
 // the default broker (Nango) manages its own storage. Covers: the S2S internal API social's
 // connections flow depends on, the account-facing lifecycle API (enable/pause/resume/uninstall/
-// connect/reauth), periodic connection-health probing, and a provider-agnostic outbound-action worker
-// (routes through the OAuth broker's proxy — no per-connector SDK needed for a plain REST call). The
-// webhook intake role + per-connector inbound normalize (`MarketplaceConnectorJob`) are blocked on
-// picking a first concrete connector to build against (see SPECS.md's `MarketplaceWebhookService`).
+// connect/reauth), periodic connection-health probing, a provider-agnostic outbound-action worker
+// (routes through the OAuth broker's proxy — no per-connector SDK needed for a plain REST call), and
+// (as of Shopify — the first concrete connector, `src/connectors/`) inbound webhook intake +
+// per-connector normalize (`MarketplaceConnectorJob`). Webhook intake is a route on the MAIN role, not
+// a dedicated `MarketplaceWebhookService`, for the same one-ALB-per-manifest reason social's is too.
 //
 import {
     ResourceManifest,
@@ -73,7 +74,11 @@ export const manifest : ResourceManifest =
               ] },
             { key: "installations", partitionKey: { name: "installationId", type: AttrType.STRING },
               globalSecondaryIndexes: [
-                  { name: "byAccount", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "status", type: AttrType.STRING }, projection: "ALL" },
+                  { name: "byAccount",    partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "status", type: AttrType.STRING }, projection: "ALL" },
+                  // CROSS-ACCOUNT (pk=externalRef) — webhook intake resolves a payload's provider-native
+                  // connection id (e.g. a Shopify shop domain) back to its owning installation without
+                  // foreknowledge; mirrors social's `connections.byId`.
+                  { name: "byExternalRef", partitionKey: { name: "externalRef", type: AttrType.STRING }, projection: "ALL" },
               ] },
             { key: "installation_audit", partitionKey: { name: "installationId", type: AttrType.STRING }, sortKey: { name: "seq", type: AttrType.NUMBER } },
             // per-installation monotonic sequence counters (mirrors campaign/social's counter pattern).
@@ -82,14 +87,16 @@ export const manifest : ResourceManifest =
             { key: "usage_meters", partitionKey: { name: "accountId", type: AttrType.STRING }, sortKey: { name: "meterKey", type: AttrType.STRING } },
         ],
 
-        // SQS (+ DLQ) — the outbound-action work queue (marketplace-4.2), fed by PostInternalAction.
+        // SQS (+ DLQ) — the outbound-action work queue (marketplace-4.2, fed by PostInternalAction) and
+        // the inbound webhook-intake work queue (marketplace-5.0, fed by PostMarketplaceWebhookImpl).
         queues:
         [
-            { key: "marketplace-actions", maxReceiveCount: 5, dlq: true, visibilityTimeoutSec: 60 },
+            { key: "marketplace-actions",   maxReceiveCount: 5, dlq: true, visibilityTimeoutSec: 60 },
+            { key: "marketplace-connector", maxReceiveCount: 5, dlq: true, visibilityTimeoutSec: 30 },
         ],
 
-        // Lambda workers. No vpc:true on either — both only talk to their own DynamoDB + the OAuth
-        // broker (Nango, over the public internet), never a VPC-internal ALB call.
+        // Lambda workers. No vpc:true on any — all only talk to their own DynamoDB + the OAuth broker
+        // (Nango, over the public internet), never a VPC-internal ALB call.
         jobs:
         [
             { key: "marketplaceHealthJob", handler: "jobs/MarketplaceHealthJob.handler", runtime: JobRuntime.NODE_22,
@@ -97,6 +104,9 @@ export const manifest : ResourceManifest =
             { key: "marketplaceActionJob", handler: "jobs/MarketplaceActionJob.handler", runtime: JobRuntime.NODE_22,
               memoryMB: { default: 256 }, timeoutSec: 30,
               triggers: [ { source: "queue", ref: { service: "marketplace", kind: ResourceKind.QUEUE, key: "marketplace-actions", access: AccessIntent.CONSUME }, batchSize: 5 } ] },
+            { key: "marketplaceConnectorJob", handler: "jobs/MarketplaceConnectorJob.handler", runtime: JobRuntime.NODE_22,
+              memoryMB: { default: 256 }, timeoutSec: 30,
+              triggers: [ { source: "queue", ref: { service: "marketplace", kind: ResourceKind.QUEUE, key: "marketplace-connector", access: AccessIntent.CONSUME }, batchSize: 5 } ] },
         ],
 
         // EventBridge — fires the health sweep every 30 minutes. Must come after `jobs` for the

@@ -618,6 +618,10 @@ export namespace RestfulEndpoint
         // `data` is already a serialized non-JSON body — e.g. a synchronous provider call-control webhook that
         // must reply with TwiML (`NetworkUtils.MimeType.XML`), not a JSON envelope.
         contentType? : string;
+        // Extra reply headers (applied before `data` is sent) — e.g. `Location` for a real 3xx redirect
+        // (links' resolve endpoint: a browser needs an actual `Location` header, not a JSON body naming
+        // the target). Rare — most endpoints omit this.
+        headers?     : Record<string, string>;
     }
 
     // returned in header under Headers.STATS

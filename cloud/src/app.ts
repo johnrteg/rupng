@@ -34,6 +34,14 @@ import { manifest as monitorManifest } from "monitor/manifest"; // apps/core/mon
 import { manifest as collabManifest } from "collab/manifest"; // apps/core/collab/src/CloudManifest.ts (rooms/members/messages DDB + Redis) — chat v1 only, no Y.js/Hocuspocus yet
 import { manifest as reportManifest } from "report/manifest"; // apps/core/report/src/CloudManifest.ts (submissions/schedules DDB, generate SQS+Lambda, iCal sweep) — contacts/accounts/campaigns generators only
 import { manifest as registrationManifest } from "registration/manifest"; // apps/core/registration/src/CloudManifest.ts (brand/campaign/cost-estimate DDB, webhook+submit+vetting SQS, poll EventBridge) — TCR/10DLC, fake carrier only
+import { manifest as auditManifest } from "audit/manifest"; // apps/core/audit/src/CloudManifest.ts (events + legal_holds DDB, WORM S3 archive, sink/archive/retention jobs) — the platform's immutable audit trail
+import { manifest as printManifest } from "print/manifest"; // apps/core/print/src/CloudManifest.ts (mailpieces/templates/tracking + global address DDB, render/submit/tracking SQS) — scaffold + fake mail/address-verifier providers only
+import { manifest as analyticsManifest } from "analytics/manifest"; // apps/core/analytics/src/CloudManifest.ts (dedup DDB, raw event lake S3, ingest Kafka consumer) — MVP: JSON lake, no Parquet/Athena yet
+import { manifest as textingManifest } from "texting/manifest"; // apps/core/texting/src/CloudManifest.ts (messages DDB, send/dlr SQS) — MVP scaffold + fake provider only
+import { manifest as surveyManifest } from "survey/manifest"; // apps/core/survey/src/CloudManifest.ts (surveys/distributions/responses/tokens DDB, response/ingest/distribution SQS, WorkQueue) — MAIN (authed API) + FORM (public hosted-form ingress)
+import { manifest as linksManifest } from "links/manifest"; // apps/core/links/src/CloudManifest.ts (links + domains DDB, touch SQS) — MVP: single combined role, no real custom-domain routing yet
+import { manifest as searchManifest } from "search/manifest"; // apps/core/search/src/CloudManifest.ts (OpenSearch index-then-query + Redis cache, indexer Consumer + reindex Job) — no index-mapping/analyzer creation + SearchReindexJob is a stub yet
+import { manifest as workflowManifest } from "workflow/manifest"; // apps/core/workflow/src/CloudManifest.ts (definitions/versions/instances DDB, advance+scheduler-wake SQS, step/scheduler Jobs, dynamic Scheduler, trigger Consumer) — 6-node catalog slice, send_text delegation stubbed
 
 // Generate the API Gateway routes from the service's public RestfulEndpoint defs (same defs the web
 // client + server share), so the gateway can't drift from the contract — the endpoints carry their own
@@ -41,7 +49,7 @@ import { manifest as registrationManifest } from "registration/manifest"; // app
 // manifest already declares (e.g. the root /version + /health probes), never replacing it.
 import { apiEndpoints } from "./lib/endpoints";
 import {
-    GetBootstrap, GetOpenApi, GetArticle, GetAccount,
+    GetBootstrap, GetOpenApi, GetArticle, PostAppEvent, GetAccount,
     PostUpload, PostUploadComplete, PostAssetReplace, GetAssets, GetAsset, GetAssetStatus, PatchAsset, PostAvatar, PostAssetVariants, PostAssetRescan, PostAssetScan, PostAssetDuplicate, PostAssetPoster, DeleteAsset, GetMediaUrl, GetItemVersions, PostItemRevert, PostItemText, GetDensities, PostAssetDensity, GetVariantSpecs,
     GetBrowseProviders, PostBrowseSearch, PostBrowseImport, PostAiGenerate, GetGenerateBatch, PostGeneratePromote, DeleteGenerateBatch, PostAssetTranscribe, PostAssetExtractAudio,
     PostAssetArchive, GetArchives, GetArchiveUrl, DeleteArchive, PostAssetCompress, PostInternalAsset,
@@ -57,25 +65,33 @@ import {
     PostPasskeyRegisterOptions, PostPasskeyRegisterVerify, PostLoginPasskeyOptions, PostLoginPasskeyVerify,
     GetPasskeys, DeletePasskey,
     GetApiKeys, PostApiKey, DeleteApiKey,
-    GetContacts, GetContact, PostContact, PatchContact, DeleteContact,
+    GetContacts, GetContact, PostContact, PatchContact, DeleteContact, PostContactForget,
     GetSegments, PostSegment, PostSegmentPreview, PostSegmentRefresh, PostSegmentReset, PostSegmentCopy, GetSegmentRuns, PatchSegment, DeleteSegment,
     GetSegmentMembers, PostSegmentMembers, DeleteSegmentMember, GetContactSegments,
     GetContactFields, PostContactField, PatchContactField, DeleteContactField,
     GetImportMaps, GetImportMap, PostImportMap, PatchImportMap, DeleteImportMap, PostImportMapCopy,
     GetCampaigns, GetCampaign, PostCampaign, PatchCampaign, DeleteCampaign,
+    GetWorkflows, GetWorkflow, PostWorkflow, PatchWorkflow, DeleteWorkflow, PostWorkflowPublish, GetWorkflowVersions, PostWorkflowPause, PostWorkflowResume, GetWorkflowInstances, GetWorkflowInstance, PostWorkflowInstance,
     PostEmailSend, GetEmailTemplates, GetEmailTemplate, PostEmailTemplate, PatchEmailTemplate, DeleteEmailTemplate, PostEmailTemplatePublish, PostEmailTemplatePreview, GetEmailTemplateVersion, PostEmailTemplateRevert, PostEmailPreview, GetEmailConfig, PutEmailConfig,
     PostEmailBatch, GetEmailBlasts, PatchEmailBlast, DeleteEmailBlast, GetEmailLog,
     PostVoiceCalls, PostVoiceCallsBulk, PostVoiceCallsTest, GetVoiceCallsLog, GetVoiceCall, GetVoiceNumbers, GetVoiceConfig, PutVoiceConfig, GetVoiceProviders, PutVoiceProvider, PostVoiceWebhookControl, PostVoiceWebhookStatus,
-    GetVoiceFlows, PostVoiceFlow, GetVoiceFlow, PatchVoiceFlow, DeleteVoiceFlow, PostVoiceFlowPreview,
+    GetVoiceFlows, PostVoiceFlow, PostVoiceInternalFlow, GetVoiceFlow, PatchVoiceFlow, DeleteVoiceFlow, PostVoiceFlowPreview,
     GetVoiceCallRecording, GetVoiceCallTranscript, PostVoiceInternalErase, PostVoiceWebhookRecording,
     GetVoiceDlq, PostVoiceDlqRequeue,
     GetVoiceDispatchState, PostVoiceDispatchSuspend, PostVoiceDispatchResume,
+    PostPrintMailpieces, PostPrintMailpiecesBatch, GetPrintMailpieces, GetPrintMailpiece, GetPrintMailpieceTracking,
+    PostPrintProof, PostPrintMailpieceApprove, PostPrintCostPreview,
+    GetPrintTemplates, PostPrintTemplates, PatchPrintTemplate, DeletePrintTemplate,
+    PostPrintAddressVerify, PostPrintAddressVerifyBatch, GetPrintProviders, PutPrintProvider,
+    PostPrintWebhook, GetPrintInternalAddressVerify, PostPrintInternalErase,
+    GetPrintConfig, PutPrintConfig, GetPrintDlq, PostPrintDlqRequeue,
+    GetPrintDispatchState, PostPrintDispatchSuspend, PostPrintDispatchResume,
     PostInstallation, GetInstallationToken, DeleteInstallation,
     GetCatalog, GetCatalogItem, PostCatalog, PatchCatalog,
     GetInstallations, GetInstallation, PostInstallationEnable, PatchInstallation,
     PostInstallationPause, PostInstallationResume, PostInstallationConnect, PostInstallationReauth, UninstallInstallation,
     GetInstallationHealth, PostInstallationHealthCheck,
-    PostInternalUsage, GetUsage, GetInstallationUsage, PostInternalAction,
+    PostInternalUsage, GetUsage, GetInstallationUsage, PostInternalAction, PostMarketplaceWebhook,
     GetConnections, PostConnection, DeleteConnection,
     GetPosts, PostPost, GetPost, DeletePost, GetPostRenditions, PostPostPublish,
     GetSocialConfig, PutSocialConfig,
@@ -86,19 +102,33 @@ import {
     PostCollabRooms, GetCollabRooms, GetCollabRoom, PatchCollabRoom, DeleteCollabRoom,
     PostCollabDms, GetCollabRoomMembers, PostCollabRoomMembers, DeleteCollabRoomMember,
     GetCollabMessages, GetCollabConfig, PutCollabConfig,
-    GetInternalContacts, GetInternalSubAccounts, GetInternalCampaigns, PostInternalSend,
+    GetInternalContacts, GetInternalContactByIdentifier, PostInternalContactUpdate, GetInternalSubAccounts, GetInternalCampaigns, PostInternalSend,
     PostReportRuns, GetReportSubmissions, GetReportSubmission, GetReportSubmissionDownload, DeleteReportSubmission,
     GetReportSchedules, GetReportSchedule, PatchReportSchedule, PostReportSchedulePause, PostReportScheduleResume, DeleteReportSchedule,
     GetReportSchedulesStale, PostReportInternalErase, GetReportConfig, PutReportConfig,
-    PostRegistrationBrand, GetRegistrationBrand, GetRegistrationBrands, PatchRegistrationBrand,
+    PostRegistrationBrand, GetRegistrationBrand, GetRegistrationMyBrand, GetRegistrationBrands, PatchRegistrationBrand,
     PostRegistrationCampaign, GetRegistrationCampaign, GetRegistrationCampaigns, PatchRegistrationCampaign,
     GetRegistrationVettingStatus, PostRegistrationVettingRefresh, PostRegistrationResubmit, PostRegistrationReprovision,
     PostRegistrationOverride, PostRegistrationNudge, PostRegistrationCheckSync,
     GetRegistrationConfig, PutRegistrationConfig, PostRegistrationWebhookTcr, PostRegistrationWebhookCv,
     GetInternalRegistrationBrands, GetInternalRegistrationCampaigns, GetInternalRegistrationCostEstimates,
+    PostRegistrationNumberSearch, PostRegistrationNumberOrder, GetRegistrationNumbers, PostRegistrationNumberRelease,
+    PostRegistrationTollFreeVerification, PostRegistrationShortCodeApplication, GetRegistrationShortCodeApplications, PatchRegistrationShortCodeApplication,
+    GetAuditEvents, GetAuditEvent, GetStaffAuditEvents, PostAuditExport, PostAuditLegalHold, GetAuditConfig, PutAuditConfig,
+    GetAnalyticsMetrics, GetAnalyticsFunnels, GetAnalyticsEngagement, GetAnalyticsDeliverability, PostAnalyticsReprocess,
+    PostTextingSend, GetTextingLog, PostTextingWebhook,
+    PostLinksMint, PostLinksMintBatch, GetLinksCodeQr, GetLinksCode, GetLinksResolve,
+    GetLinksDomains, PostLinksDomain, PostLinksDomainVerify, DeleteLinksDomain,
+    GetLinksAccountDomains, PostLinksAccountDomain, DeleteLinksAccountDomain, PutLinksAccountDomainDefault,
+    PostLinksInternalErase,
+    GetSearch, GetSearchSuggest, PostSearchInternalReindex, GetSearchConfig, PutSearchConfig,
+    GetSurveys, PostSurvey, GetSurvey, PutSurvey, PostSurveyPublish,
+    PostDistribution, GetDistribution, GetResponses, GetResults,
+    PostInternalResponse, PostSurveyWebhook, GetSurveyConfig, PutSurveyConfig,
+    GetSurveyForm, PostSurveyForm,
 } from "@repo/api";
 if( appManifest.owns.api )
-    appManifest.owns.api.endpoints = [ ...( appManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetBootstrap(), new GetOpenApi(), new GetArticle() ] ) ];
+    appManifest.owns.api.endpoints = [ ...( appManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [ new GetBootstrap(), new GetOpenApi(), new GetArticle(), new PostAppEvent() ] ) ];
 if( authManifest.owns.api )
     authManifest.owns.api.endpoints = [ ...( authManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
         new PostLogin(),
@@ -152,7 +182,7 @@ if( mediaManifest.owns.api )
 if( contactManifest.owns.api )
     contactManifest.owns.api.endpoints = [ ...( contactManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
         // contact + segment CRUD (initial cut)
-        new GetContacts(), new GetContact(), new PostContact(), new PatchContact(), new DeleteContact(),
+        new GetContacts(), new GetContact(), new PostContact(), new PatchContact(), new DeleteContact(), new PostContactForget(),
         new GetSegments(), new PostSegment(), new PostSegmentPreview(), new PostSegmentRefresh(), new PostSegmentReset(), new PostSegmentCopy(), new GetSegmentRuns(), new PatchSegment(), new DeleteSegment(),
         // segment ↔ contact membership (the join)
         new GetSegmentMembers(), new PostSegmentMembers(), new DeleteSegmentMember(), new GetContactSegments(),
@@ -161,7 +191,12 @@ if( contactManifest.owns.api )
         // import maps (reusable column→field maps: system catalog + account maps, copyable)
         new GetImportMaps(), new GetImportMap(), new PostImportMap(), new PatchImportMap(), new DeleteImportMap(), new PostImportMapCopy(),
         // S2S: report's contacts generator reads via this INTERNAL list endpoint (no cross-service DB reads)
-        new GetInternalContacts()
+        new GetInternalContacts(),
+        // S2S: channel services (texting/email/print) resolve a sender to a contactId before emitting
+        // an analytics engagement event (analytics-1.7) — no PII ever lands in the analytics lake
+        new GetInternalContactByIdentifier(),
+        // S2S: survey's SurveyResponseJob lands scores/tags on scoring (survey-4.2) — no cross-service DB write
+        new PostInternalContactUpdate()
     ] ) ];
 if( campaignManifest.owns.api )
     campaignManifest.owns.api.endpoints = [ ...( campaignManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
@@ -169,6 +204,14 @@ if( campaignManifest.owns.api )
         new GetCampaigns(), new GetCampaign(), new PostCampaign(), new PatchCampaign(), new DeleteCampaign(),
         // S2S: report's campaigns generator reads via this INTERNAL list endpoint
         new GetInternalCampaigns()
+    ] ) ];
+if( workflowManifest.owns.api )
+    workflowManifest.owns.api.endpoints = [ ...( workflowManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        // definition CRUD + versioning/publish/pause/resume
+        new GetWorkflows(), new GetWorkflow(), new PostWorkflow(), new PatchWorkflow(), new DeleteWorkflow(),
+        new PostWorkflowPublish(), new GetWorkflowVersions(), new PostWorkflowPause(), new PostWorkflowResume(),
+        // instance reads + manual start
+        new GetWorkflowInstances(), new GetWorkflowInstance(), new PostWorkflowInstance()
     ] ) ];
 if( emailManifest.owns.api )
     emailManifest.owns.api.endpoints = [ ...( emailManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
@@ -188,13 +231,29 @@ if( voiceManifest.owns.api )
         // provider webhooks — synchronous call-control + async status + async recording
         new PostVoiceWebhookControl(), new PostVoiceWebhookStatus(), new PostVoiceWebhookRecording(),
         // IVR flow CRUD + preview
-        new GetVoiceFlows(), new PostVoiceFlow(), new GetVoiceFlow(), new PatchVoiceFlow(), new DeleteVoiceFlow(), new PostVoiceFlowPreview(),
+        new GetVoiceFlows(), new PostVoiceFlow(), new PostVoiceInternalFlow(), new GetVoiceFlow(), new PatchVoiceFlow(), new DeleteVoiceFlow(), new PostVoiceFlowPreview(),
         // recording/transcript reads + the S2S forget hook
         new GetVoiceCallRecording(), new GetVoiceCallTranscript(), new PostVoiceInternalErase(),
         // DLQ list + requeue (ops)
         new GetVoiceDlq(), new PostVoiceDlqRequeue(),
         // WorkQueue dispatch state (ops) + per-account suspend/resume
         new GetVoiceDispatchState(), new PostVoiceDispatchSuspend(), new PostVoiceDispatchResume()
+    ] ) ];
+if( printManifest.owns.api )
+    printManifest.owns.api.endpoints = [ ...( printManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        // mailpiece submit (S2S single/batch) + reads + tracking timeline
+        new PostPrintMailpieces(), new PostPrintMailpiecesBatch(), new GetPrintMailpieces(), new GetPrintMailpiece(), new GetPrintMailpieceTracking(),
+        // proof/cost preview + proof approval
+        new PostPrintProof(), new PostPrintMailpieceApprove(), new PostPrintCostPreview(),
+        // template CRUD
+        new GetPrintTemplates(), new PostPrintTemplates(), new PatchPrintTemplate(), new DeletePrintTemplate(),
+        // address verification (user-facing + S2S batch) + provider/verifier admin
+        new PostPrintAddressVerify(), new PostPrintAddressVerifyBatch(), new GetPrintProviders(), new PutPrintProvider(),
+        // mail-fulfillment provider tracking webhook + S2S address verify + the forget hook
+        new PostPrintWebhook(), new GetPrintInternalAddressVerify(), new PostPrintInternalErase(),
+        // config + DLQ list/requeue (ops) + WorkQueue dispatch state (ops) + per-account suspend/resume
+        new GetPrintConfig(), new PutPrintConfig(), new GetPrintDlq(), new PostPrintDlqRequeue(),
+        new GetPrintDispatchState(), new PostPrintDispatchSuspend(), new PostPrintDispatchResume()
     ] ) ];
 if( marketplaceManifest.owns.api )
     marketplaceManifest.owns.api.endpoints = [ ...( marketplaceManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
@@ -205,7 +264,8 @@ if( marketplaceManifest.owns.api )
         new GetInstallations(), new GetInstallation(), new PostInstallationEnable(), new PatchInstallation(),
         new PostInstallationPause(), new PostInstallationResume(), new PostInstallationConnect(), new PostInstallationReauth(), new UninstallInstallation(),
         new GetInstallationHealth(), new PostInstallationHealthCheck(),
-        new PostInternalUsage(), new GetUsage(), new GetInstallationUsage(), new PostInternalAction()
+        new PostInternalUsage(), new GetUsage(), new GetInstallationUsage(), new PostInternalAction(),
+        new PostMarketplaceWebhook()
     ] ) ];
 if( socialManifest.owns.api )
     socialManifest.owns.api.endpoints = [ ...( socialManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
@@ -244,7 +304,7 @@ if( reportManifest.owns.api )
 if( registrationManifest.owns.api )
     registrationManifest.owns.api.endpoints = [ ...( registrationManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
         // brand + campaign CRUD (registration-1.0/2.0)
-        new PostRegistrationBrand(), new GetRegistrationBrand(), new GetRegistrationBrands(), new PatchRegistrationBrand(),
+        new PostRegistrationBrand(), new GetRegistrationBrand(), new GetRegistrationMyBrand(), new GetRegistrationBrands(), new PatchRegistrationBrand(),
         new PostRegistrationCampaign(), new GetRegistrationCampaign(), new GetRegistrationCampaigns(), new PatchRegistrationCampaign(),
         // lifecycle operations (registration-11.x): vetting read/refresh, resubmit, reprovision, override, nudge, check&sync
         new GetRegistrationVettingStatus(), new PostRegistrationVettingRefresh(), new PostRegistrationResubmit(), new PostRegistrationReprovision(),
@@ -254,7 +314,51 @@ if( registrationManifest.owns.api )
         // provider webhook intake — served by the WEBHOOK role, routed by path (registration-12.3)
         new PostRegistrationWebhookTcr(), new PostRegistrationWebhookCv(),
         // S2S: the `report` service's brand/campaign/cost-estimate reads
-        new GetInternalRegistrationBrands(), new GetInternalRegistrationCampaigns(), new GetInternalRegistrationCostEstimates()
+        new GetInternalRegistrationBrands(), new GetInternalRegistrationCampaigns(), new GetInternalRegistrationCostEstimates(),
+        // phone number acquisition + short code (registration-4.x extension)
+        new PostRegistrationNumberSearch(), new PostRegistrationNumberOrder(), new GetRegistrationNumbers(), new PostRegistrationNumberRelease(),
+        new PostRegistrationTollFreeVerification(),
+        new PostRegistrationShortCodeApplication(), new GetRegistrationShortCodeApplications(), new PatchRegistrationShortCodeApplication()
+    ] ) ];
+if( auditManifest.owns.api )
+    auditManifest.owns.api.endpoints = [ ...( auditManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        // read + admin ONLY (audit-7.2) — no event-write endpoint; writes arrive only via the platform
+        // audit SQS queue, consumed by AuditSinkJob.
+        new GetAuditEvents(), new GetAuditEvent(), new GetStaffAuditEvents(),
+        new PostAuditExport(), new PostAuditLegalHold(),
+        new GetAuditConfig(), new PutAuditConfig()
+    ] ) ];
+if( analyticsManifest.owns.api )
+    analyticsManifest.owns.api.endpoints = [ ...( analyticsManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        // the A/B-priority Query API read endpoints (analytics-5/7) — the rest of the "Endpoints
+        // (first cut)" table (behavior/cohorts/benchmarks/attribution/schema) is deferred
+        new GetAnalyticsMetrics(), new GetAnalyticsFunnels(), new GetAnalyticsEngagement(), new GetAnalyticsDeliverability(),
+        new PostAnalyticsReprocess()
+    ] ) ];
+if( textingManifest.owns.api )
+    textingManifest.owns.api.endpoints = [ ...( textingManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        new PostTextingSend(), new GetTextingLog(), new PostTextingWebhook()
+    ] ) ];
+if( linksManifest.owns.api )
+    linksManifest.owns.api.endpoints = [ ...( linksManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        new PostLinksMint(), new PostLinksMintBatch(), new GetLinksCodeQr(), new GetLinksCode(), new GetLinksResolve(),
+        new GetLinksDomains(), new PostLinksDomain(), new PostLinksDomainVerify(), new DeleteLinksDomain(),
+        new GetLinksAccountDomains(), new PostLinksAccountDomain(), new DeleteLinksAccountDomain(), new PutLinksAccountDomainDefault(),
+        new PostLinksInternalErase()
+    ] ) ];
+if( searchManifest.owns.api )
+    searchManifest.owns.api.endpoints = [ ...( searchManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        // query path (search-2.1/2.3) + type-ahead suggest + S2S reindex trigger + ops config
+        new GetSearch(), new GetSearchSuggest(), new PostSearchInternalReindex(), new GetSearchConfig(), new PutSearchConfig()
+    ] ) ];
+if( surveyManifest.owns.api )
+    surveyManifest.owns.api.endpoints = [ ...( surveyManifest.owns.api.endpoints ?? [] ), ...apiEndpoints( [
+        // definition CRUD/publish + distribution setup + results/reads + config (MAIN role, authed)
+        new GetSurveys(), new PostSurvey(), new GetSurvey(), new PutSurvey(), new PostSurveyPublish(),
+        new PostDistribution(), new GetDistribution(), new GetResponses(), new GetResults(),
+        new PostInternalResponse(), new PostSurveyWebhook(), new GetSurveyConfig(), new PutSurveyConfig(),
+        // public hosted-form fetch/submit (FORM role, unauthenticated + bot-protected)
+        new GetSurveyForm(), new PostSurveyForm()
     ] ) ];
 
 // ── Resolve environment from CDK context: `cdk synth -c env=staging` (default dev) ──
@@ -283,7 +387,16 @@ const platformManifest : PlatformManifest = {
     // provider registry (@repo/system Providers): every platform-scoped provider's secret is provisioned here.
     // Created empty; values set via the Console. Service-specific provider keys live in that service's
     // owns.secrets (also derived from the registry — see each CloudManifest).
-    secrets       : Providers.platform().map( ( provider ) => ( { key: provider.secretKey, description: `${ provider.label } (${ provider.category })` } ) ),
+    secrets       : [
+        ...Providers.platform().map( ( provider ) => ( { key: provider.secretKey, description: `${ provider.label } (${ provider.category })` } ) ),
+        // NOT a Providers.ts entry — not a user-supplied vendor key, so no Console credential field: every
+        // channel service hashes an unknown sender's identifier into an opaque `anonId` with this SAME salt
+        // (AnalyticsIdentity, @repo/services) so repeat events from one unknown sender group consistently
+        // across services. CDK's random-placeholder default is exactly the desired value here (no
+        // put-secrets.mjs entry needed — unlike a real vendor key, any random string works as long as
+        // every service reads the SAME one, which the platform-shared secret guarantees).
+        { key: "analytics-anon-salt", description: "Shared HMAC salt for hashing unknown senders into an analytics anonId" },
+    ],
 };
 const platform : PlatformStack = new PlatformStack( app, `platform-${deployEnv}`, {
     manifest  : platformManifest,
@@ -312,6 +425,14 @@ const manifests : Array<ResourceManifest> = [
     collabManifest,
     reportManifest,
     registrationManifest,
+    auditManifest,
+    printManifest,
+    analyticsManifest,
+    textingManifest,
+    linksManifest,
+    searchManifest,
+    surveyManifest,
+    workflowManifest,
 ];
 
 // Shared gateway registry: each ServiceStack publishes its API Gateway(s) here and a CDN (web) reads
@@ -341,6 +462,10 @@ for( const manifest of manifests )
         albs,                                        // cross-stack internal ALB routing (S2S)
         userPools,                                   // cross-stack user-pool id routing (self-service JWT verify)
         platformSecrets : platform.secrets,          // shared AI provider keys (read-granted + ARN-injected)
+        platformAuditQueue : platform.auditQueue,    // shared audit ingestion queue (send-granted + URL-injected)
+        platformAuditDlq   : platform.auditDlq,
+        platformSearchEndpoint      : platform.searchEndpoint,       // shared OpenSearch endpoint (ambient; grant is opt-in via `uses: [{ kind: SEARCH }]`)
+        platformSearchCollectionArn : platform.searchCollectionArn,
         stackName : `${manifest.service}-${deployEnv}`,
         env       : { account, region },             // the AWS account/region (cdk.StackProps)
     } );

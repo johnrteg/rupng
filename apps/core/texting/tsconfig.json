@@ -1,0 +1,8 @@
+{
+  "extends": "@repo/tsconfig/base.json",
+  "compilerOptions": {
+    "outDir": "./bin",
+    "types": ["vitest/globals", "node"]
+  },
+  "include": ["src/**/*"]
+}

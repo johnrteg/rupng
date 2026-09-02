@@ -1,5 +1,6 @@
 //
-import { Registration } from "@repo/api";
+import { Registration, PhoneNumber } from "@repo/api";
+import type { Texting } from "@repo/api";
 import type { Type } from "@repo/common";
 
 //
@@ -33,7 +34,33 @@ export interface CarrierProvider
     /** The carrier's view of one number's campaign pairing — the drift check the reconciliation sweep uses to
      *  catch a number that silently fell off its campaign. */
     checkPairingStatus( phoneNumber : string, context : CarrierContext ) : Promise<Type.Result<CarrierPairingStatus>>;
+
+    /** Search this carrier's available-number inventory (registration-4.x) — LONG_CODE or TOLL_FREE only.
+     *  Read-only; nothing is committed. Returns as many candidates as the carrier's inventory has, up to
+     *  `criteria.limit`. */
+    searchAvailableNumbers( criteria : NumberSearchCriteria, context : CarrierContext ) : Promise<Type.Result<Array<AvailableNumber>>>;
+
+    /** Order ONE specific number returned by a prior search — a real, billable carrier order (distinct from
+     *  `provisionNumbers`'s blind bulk count-based acquire). Some carriers confirm asynchronously; a `PENDING`
+     *  order is resolved by the poll sweep or a webhook. */
+    orderNumber( number : Type.PhoneE164, criteria : NumberSearchCriteria, context : CarrierContext ) : Promise<Type.Result<OrderedNumber>>;
+
+    /** Submit toll-free verification (TFV) — the business attestation ALL THREE real carriers require for a
+     *  TOLL_FREE number's A2P eligibility. Async: the real decision (VERIFIED/REJECTED) arrives via webhook or
+     *  the poll sweep, never in this call's own response. */
+    submitTollFreeVerification( number : Type.PhoneE164, details : PhoneNumber.TollFreeVerification, context : CarrierContext ) : Promise<Type.Result<void>>;
 }
+
+/** What one search asks for — LONG_CODE or TOLL_FREE only (SHORT_CODE has no self-serve inventory to search;
+ *  see `Registration.ShortCodeApplication` instead). */
+export interface NumberSearchCriteria { type : Texting.NumberType; areaCode? : string; contains? : string; limit? : number; }
+
+/** One inventory candidate a search returned — not yet owned. */
+export interface AvailableNumber { number : Type.PhoneE164; type : Texting.NumberType; monthlyPriceCents? : number; }
+
+/** What a successful (or pending) order returns — `carrierOrderId` is the vendor's own reference, kept for
+ *  support + reconciliation even once the number itself is confirmed. */
+export interface OrderedNumber { number : Type.PhoneE164; carrierOrderId? : string; }
 
 /** A number's campaign-pairing state at the carrier — a closed set, never a free-form string, so the
  *  reconciliation logic can switch on it exhaustively. */

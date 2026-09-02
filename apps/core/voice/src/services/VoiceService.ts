@@ -588,13 +588,18 @@ export class VoiceService extends Service
                 return { message: VoiceService.OPT_OUT_MESSAGE };
             }
 
+            const answeredStepId : string = stepId;   // the step whose gather just captured `input` (before advancing)
             const nextStepId : string | undefined = step.gather.branches[ input ] ?? step.gather.branches[ "default" ];
             const nextStep : Voice.IvrStep | undefined = nextStepId !== undefined ? flow.steps[ nextStepId ] : undefined;
             if( nextStepId === undefined || nextStep === undefined ) return { message: VoiceService.GOODBYE_MESSAGE };
 
             stepId = nextStepId;
             step = nextStep;
-            await this.putCall( { ...call, currentStepId: stepId, updatedAt: new Date().toISOString() } );
+            const row : Voice.CallLog = { ...call, currentStepId: stepId, lastAnsweredStepId: answeredStepId, lastAnsweredValue: input, updatedAt: new Date().toISOString() };
+            await this.putCall( row );
+            // a consuming service (e.g. survey's phone/IVR runner) reacts to this per-answer, keyed off
+            // `mergeData` + `lastAnsweredStepId`/`lastAnsweredValue` — no per-step history, just the latest.
+            void this.emitCall( Events.Verb.UPDATED, row );
             this.log.trace( "ivr flow advanced", { accountId: call.accountId, callId: call.callId, flowId: flow.id, stepId } );
         }
 

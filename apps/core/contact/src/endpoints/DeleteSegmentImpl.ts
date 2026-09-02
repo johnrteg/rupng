@@ -2,6 +2,7 @@
 import { Segment, DeleteSegment } from "@repo/api";
 import { NetworkUtils, type Type } from "@repo/common";
 import { RestfulEndpoint } from "@repo/endpoint";
+import { Events, Payloads } from "@repo/system";
 import ContactService from "../services/ContactService";
 
 //
@@ -31,6 +32,10 @@ export class DeleteSegmentImpl extends DeleteSegment
 
         const wrote : Type.Result<void> = await this.service.dynamo.put( "segments", { ...archived, segmentId } );
         if( !wrote.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "segment archive failed" } };
+
+        // best-effort CRUD event — never blocks the response
+        const payload : Payloads.Segment = { id: archived.id, accountId: archived.accountId, name: archived.name, status: archived.status };
+        void this.service.emitSegment( Events.Verb.DELETED, archived.id, accountId, payload, auth.userId );
 
         return { status: NetworkUtils.Status.OK, data: { id: segmentId, archived: true } };
     }

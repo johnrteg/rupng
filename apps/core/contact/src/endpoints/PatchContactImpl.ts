@@ -2,6 +2,7 @@
 import { PatchContact, Contact } from "@repo/api";
 import { NetworkUtils, ObjectUtils, type Type } from "@repo/common";
 import { RestfulEndpoint } from "@repo/endpoint";
+import { Events, Payloads } from "@repo/system";
 import ContactService from "../services/ContactService";
 
 //
@@ -44,6 +45,11 @@ export class PatchContactImpl extends PatchContact
 
         // channels/consent may have changed → recompute the counts of the segments this contact is in (async)
         void this.service.enqueueSegmentRefresh( accountId, id );
+
+        // best-effort CRUD event — never blocks the response
+        const payload : Payloads.Contact = { id: merged.id, accountId: merged.accountId, firstName: merged.firstName, lastName: merged.lastName, status: merged.status };
+        void this.service.emit( Events.Verb.UPDATED, merged.id, accountId, payload, auth.userId );
+
         return { status: NetworkUtils.Status.OK, data: merged };
     }
 }

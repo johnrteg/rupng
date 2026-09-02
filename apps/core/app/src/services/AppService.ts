@@ -1,5 +1,5 @@
 //
-import { Application, Service, Ports, Register, Kafka } from "@repo/services";
+import { Application, Service, Ports, Register, Kafka, Sqs } from "@repo/services";
 import { GetBootstrap, AppServiceConfig } from "@repo/api";
 import { Type } from "@repo/common";
 
@@ -18,6 +18,11 @@ export class AppService extends Service
     // its read models / caches warm. Lazy + cached.
     private _kafka? : Kafka;
     public get kafka() : Kafka { return this._kafka ??= new Kafka( this.cloud ); }
+
+    // SQS facade — the public role enqueues raw telemetry/behavior-event batches onto the
+    // `telemetry` queue for AppTelemetryJob to scrub + republish. Lazy + cached.
+    private _sqs? : Sqs;
+    public get sqs() : Sqs { return this._sqs ??= new Sqs( this.cloud ); }
 
     ///////////////////////////////////////////////////////////////////////////////////////
     constructor( role : AppService.Role )

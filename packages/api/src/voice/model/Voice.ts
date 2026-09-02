@@ -97,6 +97,12 @@ export namespace Voice
         error?            : string;
         recordingKey?     : string;   // the `voice` S3 bucket object key (NOT a URL — presigned fresh on each read; PII, TTL'd via bucket lifecycle)
         transcript?       : string;   // spoken-call transcript (Ai.transcribe on the downloaded recording); PII
+        // the most recent IVR gather this call answered — no per-step history is kept (only the latest), but
+        // this is enough for a consumer (e.g. survey's phone/IVR runner) to react per-answer off the emitted
+        // `voice.call` UPDATED event rather than polling; `lastAnsweredStepId` is the step whose `gather`
+        // captured `lastAnsweredValue` (the raw DTMF digits), NOT the new `currentStepId` it advanced to.
+        lastAnsweredStepId?    : string;
+        lastAnsweredValue?     : string;
         createdAt         : string;
         updatedAt         : string;
     }

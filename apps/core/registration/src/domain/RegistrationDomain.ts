@@ -3,13 +3,13 @@ import { randomUUID } from "node:crypto";
 
 import { ScanCommand, type ScanCommandOutput } from "@aws-sdk/lib-dynamodb";
 
-import { Registration, RegistrationConfig, Billing } from "@repo/api";
+import { Registration, RegistrationConfig, Billing, PhoneNumber, Texting } from "@repo/api";
 import { ObjectUtils, ResultUtils, type Type } from "@repo/common";
 import { Events } from "@repo/system";
 import type { AppConfig, Dynamo, Kafka, Secrets, Sqs, Trace } from "@repo/services";
 
 import { CarrierFactory } from "../providers/CarrierFactory";
-import { CarrierProvider, CarrierContext, CarrierPairingStatus } from "../providers/CarrierProvider";
+import { CarrierProvider, CarrierContext, CarrierPairingStatus, AvailableNumber, OrderedNumber } from "../providers/CarrierProvider";
 import { CvClient } from "../providers/CvClient";
 import { TcrClient } from "../providers/TcrClient";
 import { RegistrationStateMachine } from "./RegistrationStateMachine";
@@ -537,6 +537,12 @@ export class RegistrationDomain
         if( found.data === undefined ) return ResultUtils.err( "campaign not found" );
         if( !RegistrationDomain.CAMPAIGN_EDITABLE.includes( found.data.status ) )
             return ResultUtils.err( `a campaign in status "${ found.data.status }" cannot be edited` );
+
+        if( fields.numberSelection !== undefined )
+        {
+            const invalid : string | undefined = RegistrationDomain.validateNumberSelection( fields.numberSelection );
+            if( invalid !== undefined ) return ResultUtils.err( invalid );
+        }
 
         const campaign : Registration.Campaign = { ...found.data, ...fields, updatedAt: new Date().toISOString() };
         const wrote : Type.Result<void> = await this.putCampaign( campaign );
@@ -1188,6 +1194,287 @@ export class RegistrationDomain
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    // ── Phone number acquisition (registration-4.x extension) ────────────────────────────────
+    // Standalone search/order/release for LONG_CODE + TOLL_FREE, toll-free verification, and the short-code
+    // application record. Distinct from `provisionNumbers`' campaign-embedded bulk array above — see
+    // `PhoneNumber.ts`'s header for why a second, standalone entity exists alongside it.
+
+    /** One owned number by our own id. */
+    public async getNumber( accountId : string, id : string ) : Promise<Type.Result<PhoneNumber.PhoneNumber | undefined>>
+    {
+        return this.deps.dynamo.get<PhoneNumber.PhoneNumber>( "registration_number", { accountId, id } );
+    }
+
+    /** Every number on one account's partition. */
+    public async listNumbers( accountId : string ) : Promise<Type.Result<Array<PhoneNumber.PhoneNumber>>>
+    {
+        return this.deps.dynamo.query<PhoneNumber.PhoneNumber>( "registration_number", {
+            KeyConditionExpression: "accountId = :account", ExpressionAttributeValues: { ":account": accountId },
+        } );
+    }
+
+    /** EVERY number across every account — the poll sweep's candidate set (mirrors `scanBrands`/`scanCampaigns`). */
+    public async scanNumbers() : Promise<Type.Result<Array<PhoneNumber.PhoneNumber>>>
+    {
+        return ResultUtils.from( async () : Promise<Array<PhoneNumber.PhoneNumber>> =>
+        {
+            const output : ScanCommandOutput = await this.deps.dynamo.client.send( new ScanCommand( { TableName: this.deps.dynamo.table( "registration_number" ) } ) );
+            return ( output.Items ?? [] ) as Array<PhoneNumber.PhoneNumber>;
+        } );
+    }
+
+    /** Persist a number row (create or full replace). */
+    public async putNumber( number : PhoneNumber.PhoneNumber ) : Promise<Type.Result<void>>
+    {
+        const wrote : Type.Result<void> = await this.deps.dynamo.put( "registration_number", { ...number } );
+        if( !wrote.ok ) this.deps.log.warn( "number write failed", { accountId: number.accountId, id: number.id, error: wrote.error } );
+        else this.deps.log.trace( "item stored: registration_number", { accountId: number.accountId, id: number.id, status: number.status } );
+        return wrote;
+    }
+
+    /** Publish a `registration.number` event for a STANDALONE number row — a distinct data shape from
+     *  `emitNumbers`' campaign-embedded rows above (see EVENTS.md); the future bridge into `Texting.NumberRecord`. */
+    public async emitNumber( verb : Events.Verb, number : PhoneNumber.PhoneNumber ) : Promise<void>
+    {
+        const envelope : Events.Envelope = Events.envelope( {
+            object: Events.Object.REGISTRATION_NUMBER, verb, accountId: number.accountId,
+            target: { type: "registration.number", id: number.id }, data: number,
+        } );
+        const published : Type.Result<void> = await this.deps.kafka.publishEvent( envelope );
+        if( !published.ok ) this.deps.log.warn( "registration.number event publish failed", { id: number.id, verb, error: published.error } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    /** Search a carrier's available-number inventory (LONG_CODE/TOLL_FREE only) — read-only, nothing committed. */
+    public async searchNumbers( numberType : Texting.NumberType, carrierProvider : Registration.CarrierProvider,
+                                criteria : { areaCode? : string; contains? : string; limit? : number } ) : Promise<Type.Result<Array<AvailableNumber>>>
+    {
+        const config : RegistrationConfig.Config = await this.config();
+        const carrier : Type.Result<RegistrationDomain.ResolvedCarrier> = await this.carrierFor( carrierProvider, config );
+        if( !carrier.ok ) return ResultUtils.err( carrier.error );
+        return carrier.data.adapter.searchAvailableNumbers( { type: numberType, ...criteria }, carrier.data.context );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    /** Order ONE specific searched number. A LONG_CODE order REQUIRES an already-approved campaign to bind
+     *  to (the carrier won't sell one without it); TOLL_FREE needs none (its own TFV is separate). The row is
+     *  persisted (and a `registration.number` CREATED published) whether the carrier call succeeds OR fails —
+     *  a FAILED row is real audit history, not noise. */
+    public async orderNumber( accountId : string, number : Type.PhoneE164, numberType : Texting.NumberType,
+                              carrierProvider : Registration.CarrierProvider, campaignId? : string ) : Promise<Type.Result<PhoneNumber.PhoneNumber>>
+    {
+        if( numberType === Texting.NumberType.LONG_CODE )
+        {
+            if( campaignId === undefined ) return ResultUtils.err( "a long-code order requires an approved campaignId" );
+            const campaign : Type.Result<Registration.Campaign | undefined> = await this.getCampaign( accountId, campaignId );
+            if( !campaign.ok ) return ResultUtils.err( campaign.error );
+            if( campaign.data === undefined ) return ResultUtils.err( "campaign not found" );
+            const approved : boolean = [ Registration.CampaignStatus.APPROVED, Registration.CampaignStatus.NUMBER_ASSOCIATED, Registration.CampaignStatus.ACTIVE ].includes( campaign.data.status );
+            if( !approved ) return ResultUtils.err( "the campaign is not approved" );
+        }
+
+        const config : RegistrationConfig.Config = await this.config();
+        const carrier : Type.Result<RegistrationDomain.ResolvedCarrier> = await this.carrierFor( carrierProvider, config );
+        if( !carrier.ok ) return ResultUtils.err( carrier.error );
+
+        const now : string = new Date().toISOString();
+        const ordered : Type.Result<OrderedNumber> = await carrier.data.adapter.orderNumber( number, { type: numberType }, carrier.data.context );
+
+        const row : PhoneNumber.PhoneNumber =
+        {
+            id: randomUUID(), accountId, number: ordered.ok ? ordered.data.number : undefined, numberType, carrier: carrierProvider,
+            carrierOrderId: ordered.ok ? ordered.data.carrierOrderId : undefined,
+            status: ordered.ok ? PhoneNumber.OrderStatus.ACTIVE : PhoneNumber.OrderStatus.FAILED,
+            campaignId, failureReason: ordered.ok ? undefined : ordered.error,
+            orderedAt: now, activatedAt: ordered.ok ? now : undefined,
+        };
+        const wrote : Type.Result<void> = await this.putNumber( row );
+        if( !wrote.ok ) return ResultUtils.err( wrote.error );
+        await this.emitNumber( Events.Verb.CREATED, row );
+
+        if( !ordered.ok ) return ResultUtils.err( `carrier order failed: ${ ordered.error }` );
+        return ResultUtils.ok( row );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    /** Release an owned number back to the carrier — idempotent (an already-RELEASED row is a success, not
+     *  an error). Reuses the ORIGINAL `CarrierProvider.releaseNumber` (still a scaffold on the real carriers —
+     *  a pre-existing, separate gap; only `FakeCarrierAdapter` actually releases anything today). */
+    public async releaseNumber( accountId : string, id : string ) : Promise<Type.Result<PhoneNumber.PhoneNumber>>
+    {
+        const found : Type.Result<PhoneNumber.PhoneNumber | undefined> = await this.getNumber( accountId, id );
+        if( !found.ok ) return ResultUtils.err( found.error );
+        if( found.data === undefined ) return ResultUtils.err( "number not found" );
+        const number : PhoneNumber.PhoneNumber = found.data;
+        if( number.status === PhoneNumber.OrderStatus.RELEASED ) return ResultUtils.ok( number );
+
+        const config : RegistrationConfig.Config = await this.config();
+        const carrier : Type.Result<RegistrationDomain.ResolvedCarrier> = await this.carrierFor( number.carrier, config );
+        if( !carrier.ok ) return ResultUtils.err( carrier.error );
+
+        if( number.number !== undefined )
+        {
+            const released : Type.Result<void> = await carrier.data.adapter.releaseNumber( number.number, carrier.data.context );
+            if( !released.ok ) return ResultUtils.err( `carrier release failed: ${ released.error }` );
+        }
+
+        const updated : PhoneNumber.PhoneNumber = { ...number, status: PhoneNumber.OrderStatus.RELEASED, releasedAt: new Date().toISOString() };
+        const wrote : Type.Result<void> = await this.putNumber( updated );
+        if( !wrote.ok ) return ResultUtils.err( wrote.error );
+        await this.emitNumber( Events.Verb.UPDATED, updated );
+        return ResultUtils.ok( updated );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    /** Submit toll-free verification for an owned TOLL_FREE number. Async by nature — this only reports
+     *  whether the SUBMISSION reached the carrier; the real decision (VERIFIED/REJECTED) needs a carrier
+     *  webhook (an unverified per-carrier payload shape today — see the adapters' own headers) or a staff
+     *  correction. The poll sweep (`reconcileNumber`) only surfaces the row as still outstanding — a stated
+     *  gap, not a silent one. */
+    public async submitTollFreeVerification( accountId : string, id : string,
+                                             details : Omit<PhoneNumber.TollFreeVerification, "status" | "submittedAt" | "decidedAt" | "rejectionReason"> ) : Promise<Type.Result<PhoneNumber.PhoneNumber>>
+    {
+        const found : Type.Result<PhoneNumber.PhoneNumber | undefined> = await this.getNumber( accountId, id );
+        if( !found.ok ) return ResultUtils.err( found.error );
+        if( found.data === undefined ) return ResultUtils.err( "number not found" );
+        const number : PhoneNumber.PhoneNumber = found.data;
+        if( number.numberType !== Texting.NumberType.TOLL_FREE ) return ResultUtils.err( "toll-free verification only applies to toll-free numbers" );
+        if( number.number === undefined ) return ResultUtils.err( "the number is not yet active" );
+
+        const config : RegistrationConfig.Config = await this.config();
+        const carrier : Type.Result<RegistrationDomain.ResolvedCarrier> = await this.carrierFor( number.carrier, config );
+        if( !carrier.ok ) return ResultUtils.err( carrier.error );
+
+        const now : string = new Date().toISOString();
+        const tollFreeVerification : PhoneNumber.TollFreeVerification = { ...details, status: PhoneNumber.TfvStatus.SUBMITTED, submittedAt: now };
+        const submitted : Type.Result<void> = await carrier.data.adapter.submitTollFreeVerification( number.number, tollFreeVerification, carrier.data.context );
+        if( !submitted.ok ) return ResultUtils.err( `carrier TFV submit failed: ${ submitted.error }` );
+
+        const updated : PhoneNumber.PhoneNumber =
+        {
+            ...number, tollFreeVerification,
+            nextPollAt: RegistrationStateMachine.nextPollAt( config.pollSweep, 0 ), pollAttempts: 0,
+        };
+        const wrote : Type.Result<void> = await this.putNumber( updated );
+        if( !wrote.ok ) return ResultUtils.err( wrote.error );
+        await this.emitNumber( Events.Verb.UPDATED, updated );
+        return ResultUtils.ok( updated );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // ── Number poll sweep support (registration-4.x) ──────────────────────────────────────────
+
+    /** Numbers with an in-flight TFV whose `nextPollAt` is due — the sweep's candidate set. */
+    public async dueNumbers( now : Date = new Date() ) : Promise<Type.Result<Array<PhoneNumber.PhoneNumber>>>
+    {
+        const all : Type.Result<Array<PhoneNumber.PhoneNumber>> = await this.scanNumbers();
+        if( !all.ok ) return all;
+        const due : Array<PhoneNumber.PhoneNumber> = all.data
+            .filter( ( number : PhoneNumber.PhoneNumber ) : boolean => number.nextPollAt !== undefined && number.nextPollAt <= now.toISOString() );
+        return ResultUtils.ok( due );
+    }
+
+    /** Reconcile ONE in-flight number row. NO carrier adapter exposes a verified TFV status-check call today
+     *  (see the adapters' headers) — this can't auto-resolve VERIFIED/REJECTED, so it backs off `nextPollAt`
+     *  and logs the row as still outstanding rather than fabricating a decision. */
+    public async reconcileNumber( accountId : string, id : string ) : Promise<Type.Result<void>>
+    {
+        const found : Type.Result<PhoneNumber.PhoneNumber | undefined> = await this.getNumber( accountId, id );
+        if( !found.ok ) return ResultUtils.err( found.error );
+        if( found.data === undefined ) return ResultUtils.err( "number not found" );
+        const number : PhoneNumber.PhoneNumber = found.data;
+
+        const config : RegistrationConfig.Config = await this.config();
+        const attempts : number = ( number.pollAttempts ?? 0 ) + 1;
+        const updated : PhoneNumber.PhoneNumber = { ...number, nextPollAt: RegistrationStateMachine.nextPollAt( config.pollSweep, attempts ), pollAttempts: attempts };
+        const wrote : Type.Result<void> = await this.putNumber( updated );
+        if( !wrote.ok ) return ResultUtils.err( wrote.error );
+        this.deps.log.trace( "number TFV still outstanding — no carrier status-check available, backing off", { accountId, id, attempts } );
+        return ResultUtils.ok( undefined );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // ── Short-code application (registration-4.x) ─────────────────────────────────────────────
+    // No carrier exposes a self-serve short-code ORDER api (verified — see PhoneNumber.ts) — this is a
+    // staff-progressed application record, not a carrier-driven state machine.
+
+    /** One application by our own id. */
+    public async getShortCodeApplication( accountId : string, id : string ) : Promise<Type.Result<PhoneNumber.ShortCodeApplication | undefined>>
+    {
+        return this.deps.dynamo.get<PhoneNumber.ShortCodeApplication>( "registration_shortcode", { accountId, id } );
+    }
+
+    /** Every application on one account's partition. */
+    public async listShortCodeApplications( accountId : string ) : Promise<Type.Result<Array<PhoneNumber.ShortCodeApplication>>>
+    {
+        return this.deps.dynamo.query<PhoneNumber.ShortCodeApplication>( "registration_shortcode", {
+            KeyConditionExpression: "accountId = :account", ExpressionAttributeValues: { ":account": accountId },
+        } );
+    }
+
+    /** Persist an application row (create or full replace). */
+    public async putShortCodeApplication( application : PhoneNumber.ShortCodeApplication ) : Promise<Type.Result<void>>
+    {
+        const wrote : Type.Result<void> = await this.deps.dynamo.put( "registration_shortcode", { ...application } );
+        if( !wrote.ok ) this.deps.log.warn( "short-code application write failed", { accountId: application.accountId, id: application.id, error: wrote.error } );
+        return wrote;
+    }
+
+    /** Publish a `registration.shortcode` lifecycle event. */
+    public async emitShortCodeApplication( verb : Events.Verb, application : PhoneNumber.ShortCodeApplication ) : Promise<void>
+    {
+        const envelope : Events.Envelope = Events.envelope( {
+            object: Events.Object.REGISTRATION_SHORTCODE, verb, accountId: application.accountId,
+            target: { type: "registration.shortcode", id: application.id }, data: application,
+        } );
+        const published : Type.Result<void> = await this.deps.kafka.publishEvent( envelope );
+        if( !published.ok ) this.deps.log.warn( "registration.shortcode event publish failed", { id: application.id, verb, error: published.error } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    /** Submit a short-code request — lands SUBMITTED for staff to progress (`patchShortCodeApplication`);
+     *  there is no carrier call to make here (see the class-level note above). */
+    public async submitShortCodeApplication( accountId : string,
+                                             fields : { preference : PhoneNumber.ShortCodePreference; vanityCode? : string; useCase : string; campaignId? : string } ) : Promise<Type.Result<PhoneNumber.ShortCodeApplication>>
+    {
+        if( fields.preference === PhoneNumber.ShortCodePreference.VANITY && !fields.vanityCode )
+            return ResultUtils.err( "a vanityCode is required when preference is vanity" );
+
+        const now : string = new Date().toISOString();
+        const application : PhoneNumber.ShortCodeApplication =
+        {
+            id: randomUUID(), accountId, preference: fields.preference, vanityCode: fields.vanityCode,
+            useCase: fields.useCase, campaignId: fields.campaignId, status: PhoneNumber.ShortCodeStatus.SUBMITTED, submittedAt: now,
+        };
+        const wrote : Type.Result<void> = await this.putShortCodeApplication( application );
+        if( !wrote.ok ) return ResultUtils.err( wrote.error );
+        await this.emitShortCodeApplication( Events.Verb.CREATED, application );
+        return ResultUtils.ok( application );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    /** Staff-progressed status update — the only way a short-code application moves once submitted (no
+     *  carrier webhook exists). Sets `decidedAt` on entry to a terminal status (ACTIVE/REJECTED). */
+    public async patchShortCodeApplication( accountId : string, id : string, status : PhoneNumber.ShortCodeStatus,
+                                            shortCode? : string, staffNote? : string ) : Promise<Type.Result<PhoneNumber.ShortCodeApplication>>
+    {
+        const found : Type.Result<PhoneNumber.ShortCodeApplication | undefined> = await this.getShortCodeApplication( accountId, id );
+        if( !found.ok ) return ResultUtils.err( found.error );
+        if( found.data === undefined ) return ResultUtils.err( "short-code application not found" );
+
+        const terminal : boolean = status === PhoneNumber.ShortCodeStatus.ACTIVE || status === PhoneNumber.ShortCodeStatus.REJECTED;
+        const updated : PhoneNumber.ShortCodeApplication =
+        {
+            ...found.data, status, shortCode: shortCode ?? found.data.shortCode, staffNote: staffNote ?? found.data.staffNote,
+            decidedAt: terminal ? new Date().toISOString() : found.data.decidedAt,
+        };
+        const wrote : Type.Result<void> = await this.putShortCodeApplication( updated );
+        if( !wrote.ok ) return ResultUtils.err( wrote.error );
+        await this.emitShortCodeApplication( Events.Verb.UPDATED, updated );
+        return ResultUtils.ok( updated );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // ── Internals ─────────────────────────────────────────────────────────────────────────────
 
     // resolve a brand from Campaign Verify's own id (mirrored onto Brand.cvId when the verification opened).
@@ -1374,6 +1661,15 @@ export class RegistrationDomain
         return undefined;
     }
 
+    // SINGLE needs the exact number to pin to; AREA_CODE needs the NPA to filter the group by. ALL needs
+    // neither — the whole registered group is eligible.
+    private static validateNumberSelection( selection : Texting.NumberSelection ) : string | undefined
+    {
+        if( selection.mode === Texting.NumberSelectionMode.SINGLE && !selection.number ) return "numberSelection.number is required when mode is single";
+        if( selection.mode === Texting.NumberSelectionMode.AREA_CODE && !selection.areaCode ) return "numberSelection.areaCode is required when mode is area_code";
+        return undefined;
+    }
+
     // resolve the per-unit rate for one charge point from the config's fee tables. An unpriced use case
     // estimates ZERO — a missing price row is an operator omission, not a reason to block a registration.
     private static rateFor( config : RegistrationConfig.Config, input : RegistrationDomain.EstimateInput ) : Billing.Rate
@@ -1544,7 +1840,7 @@ export namespace RegistrationDomain
         "brandId" | "usecase" | "description" | "messageFlow" | "sample1" | "sample2" | "sample3" | "sample4" | "sample5" |
         "optin" | "help" | "optout" | "subscriberOptin" | "subscriberOptout" | "subscriberHelp" | "embeddedLink" |
         "embeddedPhone" | "numberPool" | "ageGated" | "directLending" | "affiliateMarketing" | "autoRenewal" |
-        "privacyPolicyLink" | "termsAndConditionsLink" | "provider" | "areaCode"> & { subUsecases? : Array<Registration.UseCase> };
+        "privacyPolicyLink" | "termsAndConditionsLink" | "provider" | "areaCode" | "numberSelection"> & { subUsecases? : Array<Registration.UseCase> };
 
     /** "Which entity" — every lifecycle op takes exactly one of these. */
     export interface EntityRef { brandId? : string; campaignId? : string; }

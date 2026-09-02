@@ -192,6 +192,7 @@ export class Service extends Daemon
             //
             // reply to client
             //
+            for( const [ name, value ] of Object.entries( response.headers ?? {} ) ) reply.header( name, value );
             reply.header( NetworkUtils.HeaderType.CONTENT, response.contentType ?? NetworkUtils.MimeType.JSON )
                  .code( response.status )
                  .send( response.data );

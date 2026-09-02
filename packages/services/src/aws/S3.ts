@@ -84,6 +84,8 @@ export class S3
                 return S3.build( [ "acct", spec.accountId, "reports", spec.reportId ], spec.submissionId, spec.ext );
             case S3.Domain.MARKETPLACE:
                 return S3.build( [ "global", "marketplace", spec.integrationId ], spec.variant, spec.ext );
+            case S3.Domain.EVENTS:
+                return S3.build( [ "acct", spec.accountId, "channel", spec.channel, "date", spec.date ], spec.variant, spec.ext );
             default:
                 return S3.unhandled( spec );   // exhaustiveness: `spec` is `never` here once every case is handled
         }
@@ -281,6 +283,7 @@ export namespace S3
         BRANDING    = "branding",   // account branding — logo / icon / …
         REPORT      = "reports",    // generated report artifacts
         MARKETPLACE = "marketplace",// platform-GLOBAL marketplace catalog assets (e.g. integration icons)
+        EVENTS      = "events",     // analytics raw event lake — one batch file per ingest flush
     }
 
     // Each descriptor's path order + scope (acct/ vs user/ vs platform-global) is fixed by {@link S3.key};
@@ -305,8 +308,14 @@ export namespace S3
      *  account/user scope); catalog assets like an integration's icon, e.g. variant `"icon"`. */
     export interface MarketplaceKey { domain : Domain.MARKETPLACE; integrationId : string; variant : string; ext : string; }
 
+    /** `acct/<accountId>/channel/<channel>/date/<date>/<variant>.<ext>` — the analytics raw lake, partitioned
+     *  per apps/core/analytics/SPECS.md (`account/channel/date` — tenant isolation + cheap scans + deletion).
+     *  `date` is `YYYY-MM-DD` (occurredAt's UTC date); `variant` is one ingest-flush's batch id; `ext` is
+     *  `"json"` in the MVP cut (Parquet/Kafka-Connect are a later phase — see SPECS gap register). */
+    export interface EventsKey   { domain : Domain.EVENTS;   accountId : string; channel : string; date : string; variant : string; ext : string; }
+
     /** A fully-typed object-key descriptor — one shape per {@link Domain} (discriminated on `domain`). */
-    export type ObjectKey = MediaKey | AvatarKey | BrandingKey | ReportKey | MarketplaceKey;
+    export type ObjectKey = MediaKey | AvatarKey | BrandingKey | ReportKey | MarketplaceKey | EventsKey;
 
     /** A key arg to the object methods: a raw string or a typed {@link S3.ObjectKey}. */
     export type Key = string | ObjectKey;

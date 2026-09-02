@@ -2,6 +2,7 @@
 import { PatchCampaign, Campaign } from "@repo/api";
 import { NetworkUtils, ObjectUtils, type Type } from "@repo/common";
 import { RestfulEndpoint } from "@repo/endpoint";
+import { Events, Payloads } from "@repo/system";
 import CampaignService from "../services/CampaignService";
 
 //
@@ -47,6 +48,10 @@ export class PatchCampaignImpl extends PatchCampaign
 
         const wrote : Type.Result<void> = await this.service.dynamo.put( "campaigns", { ...merged, campaignId: id } );
         if( !wrote.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "campaign write failed" } };
+
+        // best-effort CRUD event — never blocks the response
+        const payload : Payloads.Campaign = { id: merged.id, accountId: merged.accountId, name: merged.name, status: merged.status };
+        void this.service.emit( Events.Verb.UPDATED, merged.id, accountId, payload, auth.userId );
 
         return { status: NetworkUtils.Status.OK, data: merged };
     }

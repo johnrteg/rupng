@@ -1,10 +1,10 @@
 //
 import { randomUUID } from "node:crypto";
 
-import { Application, Service, Register, Dynamo, S3, Sqs, Kafka, Secrets, Ses } from "@repo/services";
-import { Events, Providers } from "@repo/system";
+import { Application, Service, Register, Dynamo, S3, Sqs, Kafka, Secrets, Ses, AnalyticsIdentity } from "@repo/services";
+import { Events, Providers, Payloads } from "@repo/system";
 import { Ports } from "@repo/cloud-manifest";
-import { Email, EmailConfig, EmailTemplate, Notification } from "@repo/api";
+import { Email, EmailConfig, EmailTemplate, Notification, Analytics } from "@repo/api";
 import { ObjectUtils } from "@repo/common";
 import type { Type } from "@repo/common";
 
@@ -27,6 +27,7 @@ export class EmailService extends Service
     private _kafka?   : Kafka;
     private _secrets? : Secrets;
     private _ses?     : Ses;
+    private _analyticsIdentity? : AnalyticsIdentity;
 
     /** The transport-adapter registry (SES / Lettr / fake + marketplace). */
     protected readonly providers : EmailFactory = new EmailFactory();
@@ -57,6 +58,9 @@ export class EmailService extends Service
     public get kafka() : Kafka { return this._kafka ??= new Kafka( this.cloud ); }
     /** Secrets facade — provider API keys (resolved by the config's `secretRef`). Lazy + cached. */
     public get secrets() : Secrets { return this._secrets ??= new Secrets( this.cloud ); }
+    /** Resolves an unknown recipient address to an analytics `contactId`/`anonId` (analytics-1.7) — a known
+     *  `recipient.contactId` short-circuits this; only a bare literal address needs it. Lazy + cached. */
+    public get analyticsIdentity() : AnalyticsIdentity { return this._analyticsIdentity ??= new AnalyticsIdentity( this.cloud ); }
     /** SES facade — the IAM-auth SES transport (no API key). Lazy + cached. */
     public get ses() : Ses { return this._ses ??= new Ses( this.cloud ); }
 
@@ -221,6 +225,22 @@ export class EmailService extends Service
     public templateDeleted( entity : EmailTemplate.Entity, userId? : string ) : Promise<void> { return this.emitTemplate( Events.Verb.DELETED, entity, userId ); }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
+    /** Publish an `email.message` event for a send-log row (best-effort — a bus miss is logged, never fails
+     *  the send). The envelope's `data` is a slim `Payloads.EmailMessage`, not the full send-log entity. */
+    public async emitMessage( row : Email.SendLog ) : Promise<void>
+    {
+        const payload : Payloads.EmailMessage = { id: row.messageId, accountId: row.accountId, to: row.to, subject: row.subject, status: row.status };
+        const published : Type.Result<void> = await this.kafka.publishEvent( Events.envelope( {
+            object:    Events.Object.EMAIL_MESSAGE,
+            verb:      Events.Verb.CREATED,
+            accountId: row.accountId,
+            target:    { type: "email.message", id: row.messageId },
+            data:      payload,
+        } ) );
+        if( !published.ok ) this.log.warn( "email.message event publish failed", { messageId: row.messageId, error: published.error } );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
     // ── Send path (email-1 / email-5) ─────────────────────────────────────────────────────────────
 
     /** ENQUEUE a send — the endpoint's fast path. Drops the request onto the email-send queue and returns; the
@@ -328,9 +348,11 @@ export class EmailService extends Service
         this.log.trace( "message sending", { accountId: ctx.accountId, to: resolved.email, provider: ctx.adapter.provider } );
         const result : Email.SendResult = await ctx.adapter.send( outbound, ctx.context );
         const status : Email.Status = result.ok ? Email.Status.SENT : Email.Status.FAILED;
-        await this.writeLog( ctx.accountId, resolved.email, outbound.subject, ctx.request, status,
+        const row : Email.SendLog = await this.writeLog( ctx.accountId, resolved.email, outbound.subject, ctx.request, status,
             { provider: ctx.adapter.provider, from: outbound.from, replyTo: outbound.replyTo, html: outbound.html, text: outbound.text, headers: outbound.headers,
               providerMessageId: result.providerMessageId, error: result.error } );
+        await this.emitEngagementEvent( row, recipient.contactId );
+        await this.emitMessage( row );
         if( result.ok ) this.log.info( "email sent", { accountId: ctx.accountId, to: resolved.email, provider: ctx.adapter.provider, providerMessageId: result.providerMessageId } );
         else this.log.warn( "email send failed", { accountId: ctx.accountId, to: resolved.email, retryable: result.retryable, error: result.error } );
     }
@@ -457,7 +479,7 @@ export class EmailService extends Service
     // write one send-log row (best-effort — the log is observability, never fails a send). `detail` carries the
     // ACTUALLY-RESOLVED provider + the exact rendered Outbound (from/replyTo/html/text/headers) — absent for the
     // pre-render suppression short-circuit's minimal call (caller still passes what it has at that point).
-    private async writeLog( accountId : string, to : string, subject : string, request : Email.SendRequest, status : Email.Status, detail : EmailService.WriteLogDetail = {} ) : Promise<void>
+    private async writeLog( accountId : string, to : string, subject : string, request : Email.SendRequest, status : Email.Status, detail : EmailService.WriteLogDetail = {} ) : Promise<Email.SendLog>
     {
         const row : Email.SendLog =
         {
@@ -477,6 +499,48 @@ export class EmailService extends Service
         const wrote : Type.Result<void> = await this.dynamo.put( "email_log", { ...row } );
         if( !wrote.ok ) this.log.warn( "send-log write failed", { accountId, to, error: wrote.error } );
         else this.log.trace( "item stored: email_log", { accountId, to, status, messageId: row.messageId } );
+        return row;
+    }
+
+    // provider-reported status -> the analytics canonical event-type taxonomy (analytics-1.2). SUPPRESSED
+    // is our OWN compliance block (no provider send even attempted) — not emitted here.
+    private static readonly ANALYTICS_EVENT_TYPE_FROM_STATUS : Partial<Record<Email.Status, Analytics.EventType>> =
+    {
+        [ Email.Status.SENT ]:   Analytics.EventType.SENT,
+        [ Email.Status.FAILED ]: Analytics.EventType.DELIVERY_FAILED,
+    };
+
+    /** Build + publish this send's `Analytics.Event` onto `Events.Stream.ENGAGEMENT` (analytics-1.7) —
+     *  best-effort, never blocks the send path. A recipient sent by `contactId` already carries it; a bare
+     *  literal address resolves through `AnalyticsIdentity` (contactId, or a stable anonId for an unknown
+     *  address — never the raw email itself). */
+    private async emitEngagementEvent( row : Email.SendLog, recipientContactId : string | undefined ) : Promise<void>
+    {
+        const eventType : Analytics.EventType | undefined = EmailService.ANALYTICS_EVENT_TYPE_FROM_STATUS[ row.status ];
+        if( eventType === undefined ) return;
+
+        const identity : AnalyticsIdentity.Result = recipientContactId !== undefined
+            ? { contactId: recipientContactId }
+            : await this.analyticsIdentity.resolve( row.accountId, row.to.toLowerCase() );
+
+        const event : Analytics.Event =
+        {
+            eventId:         randomUUID(),
+            occurredAt:      row.createdAt,
+            ingestedAt:      new Date().toISOString(),
+            accountId:       row.accountId,
+            campaignId:      row.campaignId ?? null,
+            messageId:       row.messageId,
+            contactId:       identity.contactId ?? null,
+            anonId:          identity.anonId,
+            channel:         "email",
+            provider:        row.provider ?? "unknown",
+            eventType,
+            providerEventId: row.providerMessageId ?? row.messageId,
+        };
+        const published : Type.Result<void> = await this.kafka.publishStream<Analytics.Event>(
+            Events.Stream.ENGAGEMENT, event, { key: ( value : Analytics.Event ) : string => value.accountId } );
+        if( !published.ok ) this.log.warn( "engagement event publish failed", { messageId: row.messageId, eventType, error: published.error } );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////

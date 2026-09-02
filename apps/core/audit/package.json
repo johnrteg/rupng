@@ -1,0 +1,32 @@
+{
+    "name": "audit",
+    "version": "1.0.0",
+    "private": true,
+    "main": "./bin/index.js",
+    "exports": {
+        ".": "./bin/index.js",
+        "./manifest": "./src/CloudManifest.ts"
+    },
+    "scripts": {
+        "build": "rup-bundle",
+        "dev": "tsx watch src/index.ts",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@repo/api": "*",
+        "@repo/common": "*",
+        "@repo/endpoint": "*",
+        "@repo/services": "*",
+        "@repo/system": "*",
+        "@aws-sdk/client-dynamodb": "3.1073.0",
+        "@aws-sdk/lib-dynamodb": "3.1073.0",
+        "@aws-sdk/util-dynamodb": "3.996.5"
+    },
+    "devDependencies": {
+        "@repo/build": "*",
+        "@repo/tsconfig": "*",
+        "@types/aws-lambda": "8.10.162",
+        "@types/node": "26.0.0",
+        "tsx": "4.22.4"
+    }
+}

@@ -12,4 +12,9 @@ export * from "./app";
 export * from "./media";
 export * from "./social";
 export * from "./marketplace";
+export * from "./contact";
+export * from "./campaign";
+export * from "./email";
+export * from "./survey";
+export * from "./workflow";
 

@@ -1,5 +1,5 @@
 //
-import { Application, Job, Register, Dynamo } from "@repo/services";
+import { Application, Job, Register, Dynamo, Kafka } from "@repo/services";
 
 import { HealthPipeline } from "../pipeline/HealthPipeline";
 
@@ -13,6 +13,7 @@ export abstract class MarketplaceJob<TEvent = unknown, TResult = void> extends J
     protected pkg : Application.PackageInfo;
 
     private _dynamo? : Dynamo;
+    private _kafka?  : Kafka;
 
     ///////////////////////////////////////////////////////////////////////////////////////
     constructor( name : string )
@@ -24,6 +25,9 @@ export abstract class MarketplaceJob<TEvent = unknown, TResult = void> extends J
 
     ///////////////////////////////////////////////////////////////////////////////////////
     protected get dynamo() : Dynamo { return this._dynamo ??= new Dynamo( this.cloud ); }
+
+    /** Kafka facade — CRUD/trigger event emission (marketplace.* topics), best-effort. Lazy + cached. */
+    protected get kafka() : Kafka { return this._kafka ??= new Kafka( this.cloud ); }
 
     /** The facades the shared `HealthPipeline` needs. */
     protected pipelineDeps() : HealthPipeline.Deps { return { dynamo: this.dynamo, log: this.log }; }

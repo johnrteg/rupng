@@ -9,6 +9,7 @@
 // (registration-5.0), never treated as locally authoritative.
 //
 import { Billing } from "../../account/model/Billing";
+import { Texting } from "../../texting/model/Texting";
 
 export namespace Registration
 {
@@ -284,6 +285,10 @@ export namespace Registration
         provider               : CarrierProvider;
         areaCode?              : string;
         phoneNumbers           : Array<string>;   // E.164 numbers live on this campaign today
+        // how texting picks a `from` among this campaign's registered lines at send time (texting-4.10) — ALL
+        // (whole group) / AREA_CODE (subset) / SINGLE (pinned). Consumed by texting via the registration.campaign
+        // event, never a cross-service DB read. Undefined = texting falls back to its own placeholder behavior.
+        numberSelection?       : Texting.NumberSelection;
 
         status                 : CampaignStatus;
         statusHistory          : Array<StatusHistoryEntry<CampaignStatus>>;

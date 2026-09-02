@@ -1,0 +1,29 @@
+{
+    "name": "print",
+    "version": "1.0.0",
+    "private": true,
+    "main": "./bin/index.js",
+    "exports": {
+        ".": "./bin/index.js",
+        "./manifest": "./src/CloudManifest.ts"
+    },
+    "scripts": {
+        "build": "rup-bundle",
+        "dev": "tsx watch src/index.ts",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@repo/api": "*",
+        "@repo/common": "*",
+        "@repo/endpoint": "*",
+        "@repo/services": "*",
+        "pdf-lib": "1.17.1"
+    },
+    "devDependencies": {
+        "@repo/build": "*",
+        "@repo/tsconfig": "*",
+        "@types/aws-lambda": "8.10.162",
+        "@types/node": "26.0.0",
+        "tsx": "4.22.4"
+    }
+}

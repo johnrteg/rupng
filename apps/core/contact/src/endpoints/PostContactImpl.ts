@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { PostContact, Contact } from "@repo/api";
 import { NetworkUtils, type Type } from "@repo/common";
 import { RestfulEndpoint } from "@repo/endpoint";
+import { Events, Payloads } from "@repo/system";
 import ContactService from "../services/ContactService";
 
 //
@@ -45,6 +46,10 @@ export class PostContactImpl extends PostContact
         // persist — the table SK is `contactId`, so mirror `id` into it
         const wrote : Type.Result<void> = await this.service.dynamo.put( "contacts", { ...entity, contactId: id } );
         if( !wrote.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "contact write failed" } };
+
+        // best-effort CRUD event — never blocks the response
+        const payload : Payloads.Contact = { id: entity.id, accountId: entity.accountId, firstName: entity.firstName, lastName: entity.lastName, status: entity.status };
+        void this.service.emit( Events.Verb.CREATED, entity.id, accountId, payload, auth.userId );
 
         return { status: NetworkUtils.Status.OK, data: entity };
     }

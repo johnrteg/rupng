@@ -38,7 +38,7 @@ import * as rum from "aws-cdk-lib/aws-rum";
 import * as amplify from "aws-cdk-lib/aws-amplify";
 import { WebSocketLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as lambda from "aws-cdk-lib/aws-lambda";
-import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
+import { SqsEventSource, DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as scheduler from "aws-cdk-lib/aws-scheduler";
 import { HttpLambdaIntegration, HttpAlbIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
@@ -116,6 +116,17 @@ export interface ServiceStackProps extends cdk.StackProps
     // Platform-shared secrets (logical key → secret) from PlatformStack. Every service is granted read and
     // gets each ARN injected as `SECRET_<KEY>`, so its AiFactory can resolve the platform AI provider keys.
     platformSecrets? : Map<string, secretsmanager.ISecret>;
+    // The platform-shared audit ingestion queue (+ DLQ) from PlatformStack. Every service is granted SEND
+    // and gets the URL injected as `QUEUE_AUDIT_EVENTS`, so `Application.audit()` can enqueue with zero
+    // per-service manifest edits; the `audit` service's own `AuditSinkJob` binds its trigger to this SAME
+    // construct (see `usePlatformQueue` + `makeJob`'s trigger resolution).
+    platformAuditQueue? : sqs.IQueue;
+    platformAuditDlq?   : sqs.IQueue;
+    // The shared OpenSearch endpoint + collection/domain ARN from PlatformStack (ambient pass-through, like
+    // the above — cheap to pass to every stack). Only GRANTED (env-injected + IAM) to a service that
+    // declares `uses: [{ kind: SEARCH }]` — see `injectSearchEndpoint` / `grantUses`'s SEARCH case.
+    platformSearchEndpoint?      : string;
+    platformSearchCollectionArn? : string;
 }
 
 /**
@@ -140,6 +151,10 @@ export class ServiceStack extends cdk.Stack
     // Platform-shared secrets (AI keys, …) imported from PlatformStack — granted read + ARN-injected, but
     // not owned by this stack. Kept separate from `secrets` so we grant (never create/destroy) them.
     private readonly platformSecrets : Map<string, secretsmanager.ISecret> = new Map();
+    // Platform-shared queues (the audit ingestion queue, …) imported from PlatformStack — every grantee
+    // gets SEND (never consume — that's `audit`'s own AuditSinkJob's Lambda role, granted automatically by
+    // its `SqsEventSource`), URL-injected, but not owned/created/destroyed by this stack.
+    private readonly platformQueues : Map<string, sqs.IQueue> = new Map();
     private readonly topics  : Map<string, sns.ITopic>        = new Map();
 
     private readonly lambdas  : Array<lambda.Function> = [];   // API-integration targets
@@ -163,6 +178,8 @@ export class ServiceStack extends cdk.Stack
     private readonly gateways  : GatewayRegistry;    // cross-stack: gateways this + sibling stacks expose
     private readonly albs      : AlbRegistry;        // cross-stack: internal ALB DNS this + sibling stacks expose
     private readonly userPools : UserPoolRegistry;   // cross-stack: user pool ids this + sibling stacks expose
+    private readonly platformSearchEndpoint?      : string;   // shared OpenSearch endpoint from PlatformStack
+    private readonly platformSearchCollectionArn? : string;   // shared OpenSearch collection/domain ARN
 
     // A provisioned user pool the API's JWT authorizer can reference directly.
     private _userPool?       : cognito.UserPool;
@@ -187,6 +204,8 @@ export class ServiceStack extends cdk.Stack
         this.gateways  = props.gateways ?? new Map();
         this.albs      = props.albs ?? new Map();
         this.userPools = props.userPools ?? new Map();
+        this.platformSearchEndpoint      = props.platformSearchEndpoint;
+        this.platformSearchCollectionArn = props.platformSearchCollectionArn;
 
         const owns = props.manifest.owns;
 
@@ -199,6 +218,10 @@ export class ServiceStack extends cdk.Stack
         // Platform-shared secrets (AI keys, …): inject each ARN as `SECRET_<KEY>` BEFORE compute snapshots
         // the env; read is granted in grantOwned. Ambient to every service (all run the AiFactory).
         ( props.platformSecrets ?? new Map() ).forEach( ( secret, key ) => this.usePlatformSecret( key, secret ) );
+        // The platform audit queue (+ DLQ): every stack gets SEND access + the URL injected, ambient like the
+        // platform secrets above (audit-1.2 — no per-service manifest edit needed to become audit-write-capable).
+        if( props.platformAuditQueue ) this.usePlatformQueue( "audit-events", props.platformAuditQueue );
+        if( props.platformAuditDlq )   this.usePlatformQueue( "audit-events-dlq", props.platformAuditDlq );
         ( owns.snsTopics ?? [] ).forEach( s => this.makeSnsTopic( s ) );
         ( owns.logGroups ?? [] ).forEach( s => this.makeLogGroup( s ) );
         ( owns.appConfig ?? [] ).forEach( s => this.makeAppConfig( s ) );
@@ -228,6 +251,11 @@ export class ServiceStack extends cdk.Stack
         // in cloud/src/app.ts's `manifests[]`, same as SERVICE refs) into `USERPOOL_<KEY>`, for a service with
         // no API Gateway JWT authorizer in front to verify Cognito tokens itself.
         ( props.manifest.uses ?? [] ).filter( ref => ref.kind === ResourceKind.USER_POOL ).forEach( ref => this.injectUserPoolId( ref ) );
+        // A `uses: [{ kind: SEARCH, ... }]` reference resolves the platform-shared OpenSearch endpoint
+        // (from PlatformStack, passed in ambient via props.platformSearchEndpoint) into `SEARCH_<KEY>` —
+        // same before-compute ordering requirement as SERVICE/USER_POOL above. The IAM grant itself happens
+        // later in `grantUses` (needs `this.grantees`, populated once compute exists).
+        ( props.manifest.uses ?? [] ).filter( ref => ref.kind === ResourceKind.SEARCH ).forEach( ref => this.injectSearchEndpoint( ref ) );
 
         // 3. Jobs first (user-pool triggers reference them), THEN user pools — so USERPOOL_* lands in
         //    this.envVars BEFORE compute snapshots the env into the ECS task definition — THEN compute, API.
@@ -306,6 +334,7 @@ export class ServiceStack extends cdk.Stack
         this.keys.forEach(    k => k.grantEncryptDecrypt( g ) );
         this.secrets.forEach( s => s.grantRead( g ) );
         this.platformSecrets.forEach( s => s.grantRead( g ) );   // read-only on the platform-shared AI keys
+        this.platformQueues.forEach(  q => q.grantSendMessages( g ) );   // send-only on the platform audit queue
         this.topics.forEach(  t => t.grantPublish( g ) );
 
         // Managed AWS AI services (IAM-only, no resource): grant each declared service's curated action set.
@@ -338,9 +367,17 @@ export class ServiceStack extends cdk.Stack
         const site : StaticSiteSpec | undefined = spec.cdn?.staticSite;
         // a static-site bucket is filled by BucketDeployment; auto-empty it locally so `cdklocal destroy` is clean
         const autoEmpty : boolean = site !== undefined && isLocal( this.deployEnv );
+        // Object Lock (WORM) can ONLY be set at bucket creation and forces versioning — see BucketSpec.objectLock.
+        const objectLockRetention : s3.ObjectLockRetention | undefined = spec.objectLock
+            ? ( spec.objectLock.mode === "compliance"
+                ? s3.ObjectLockRetention.compliance( cdk.Duration.days( spec.objectLock.retentionDays ?? 365 ) )
+                : s3.ObjectLockRetention.governance( cdk.Duration.days( spec.objectLock.retentionDays ?? 365 ) ) )
+            : undefined;
         const bucket : s3.Bucket = new s3.Bucket( this, `Bucket-${spec.key}`, {
             bucketName        : this.name( ResourceKind.BUCKET, spec.key ),
-            versioned         : spec.versioned ?? false,
+            versioned         : spec.objectLock ? true : ( spec.versioned ?? false ),
+            objectLockEnabled  : spec.objectLock ? true : undefined,
+            objectLockDefaultRetention : objectLockRetention,
             encryption        : cmk ? s3.BucketEncryption.KMS : s3.BucketEncryption.S3_MANAGED,
             encryptionKey     : cmk,
             blockPublicAccess : s3.BlockPublicAccess.BLOCK_ALL,   // never public; served via CloudFront/OAC or signed URLs
@@ -570,6 +607,18 @@ export class ServiceStack extends cdk.Stack
     {
         this.platformSecrets.set( key, secret );
         this.envVars[ envVarName( ResourceKind.SECRET, key ) ] = secret.secretArn;
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
+    /** Record a platform-shared queue (owned by PlatformStack, e.g. the audit ingestion queue) and inject
+     *  its URL as `QUEUE_<KEY>` — the SAME env var shape `Sqs.url()`/`CloudResolver.queueUrl()` already read
+     *  for a LOCALLY-owned queue, so callers don't need to know whether a logical key is platform- or
+     *  service-owned. SEND is granted (never consume) later in {@link grantOwned}; a Lambda's own CONSUME
+     *  trigger (see {@link makeJob}) is granted narrowly by CDK's `SqsEventSource`, not here. */
+    private usePlatformQueue( key : string, queue : sqs.IQueue ) : void
+    {
+        this.platformQueues.set( key, queue );
+        this.envVars[ envVarName( ResourceKind.QUEUE, key ) ] = queue.queueUrl;
     }
 
     //////////////////////////////////////////////////////////////////////////////
@@ -872,8 +921,21 @@ export class ServiceStack extends cdk.Stack
         ( spec.triggers ?? [] ).forEach( trig => {
             if( trig.source === "queue" && trig.ref )
             {
-                const q : sqs.IQueue | undefined = this.queues.get( trig.ref.key );
+                // a locally-owned queue OR an imported platform queue (e.g. `AuditSinkJob` binding to the
+                // shared audit-events queue) — both are keyed the same way, so one lookup covers either.
+                const q : sqs.IQueue | undefined = this.queues.get( trig.ref.key ) ?? this.platformQueues.get( trig.ref.key );
                 if( q ) fn.addEventSource( new SqsEventSource( q, { batchSize: trig.batchSize } ) );
+            }
+            else if( trig.source === "table" && trig.ref )
+            {
+                // DynamoDB Streams -> Lambda (e.g. `AuditArchiveJob` mirroring newly-inserted rows to S3
+                // Object Lock). The table must have `stream` set in its `TableSpec` (see `makeTable`).
+                const t : dynamodb.ITable | undefined = this.tables.get( trig.ref.key );
+                if( t ) fn.addEventSource( new DynamoEventSource( t, {
+                    startingPosition : lambda.StartingPosition.LATEST,
+                    batchSize        : trig.batchSize ?? 100,
+                    retryAttempts    : 3,
+                } ) );
             }
             // TODO: eventbus / bucket / schedule triggers
         } );
@@ -1120,6 +1182,21 @@ export class ServiceStack extends cdk.Stack
     }
 
     //////////////////////////////////////////////////////////////////////////////
+    /** Inject the platform-shared OpenSearch endpoint as `SEARCH_<KEY>` — ambient from PlatformStack (passed
+     *  via `ServiceStackProps.platformSearchEndpoint`), gated behind an explicit `uses: [{ kind: SEARCH }]`
+     *  declaration so only a service that actually needs OpenSearch gets the env var + (later) the IAM grant. */
+    private injectSearchEndpoint( ref : ResourceRef ) : void
+    {
+        if( !this.platformSearchEndpoint )
+        {
+            cdk.Annotations.of( this ).addWarning( `uses: search/${ref.key} but no platform OpenSearch cluster is configured — ` +
+                `is 'searchCluster' set on the PlatformManifest in cloud/src/app.ts?` );
+            return;
+        }
+        this.envVars[ envVarName( ResourceKind.SEARCH, ref.key ) ] = this.platformSearchEndpoint;
+    }
+
+    //////////////////////////////////////////////////////////////////////////////
     /** Grant this service's compute least-privilege access to a resource owned by another service. */
     private grantUses( ref : ResourceRef ) : void
     {
@@ -1166,6 +1243,20 @@ export class ServiceStack extends cdk.Stack
                 break;   // no IAM to grant (plain HTTP) — the env var was already injected pre-compute, see injectServiceUrl
             case ResourceKind.USER_POOL:
                 break;   // no IAM to grant (JWKS is fetched over public HTTPS) — the env var was already injected, see injectUserPoolId
+            case ResourceKind.SEARCH:
+            {
+                // OpenSearch Serverless data-plane calls are SigV4-signed by the grantee's OWN identity — the
+                // collection's data-access policy (PlatformStack.makeSearch) already lists the account root as
+                // principal, which (per OpenSearch Serverless semantics) admits any in-account identity; what's
+                // still missing is the identity-side IAM permission, granted here. The env var was already
+                // injected pre-compute, see injectSearchEndpoint.
+                const resourceArns : Array<string> = this.platformSearchCollectionArn ? [ this.platformSearchCollectionArn ] : [ "*" ];
+                this.grantees.forEach( ( g : iam.IGrantable ) : void =>
+                {
+                    iam.Grant.addToPrincipal( { grantee: g, actions: [ "aoss:APIAccessAll" ], resourceArns } );
+                } );
+                break;
+            }
             default:
                 cdk.Annotations.of( this ).addInfo( `uses: ${ref.kind}:${ref.service}/${ref.key} grant not yet implemented` );
         }

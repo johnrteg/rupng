@@ -17,6 +17,7 @@ export { default as GetVersion } from './common/GetVersion';
 export { default as GetBootstrap } from './app/GetBootstrap';
 export { default as GetOpenApi } from './app/GetOpenApi';
 export { default as GetArticle } from './app/GetArticle';
+export { default as PostAppEvent } from './app/PostAppEvent';
 export { PasswordPolicy } from './app/model/PasswordPolicy';
 export { AppServiceConfig } from './app/model/AppServiceConfig';
 
@@ -99,6 +100,7 @@ export { default as PostVoiceWebhookControl } from './voice/PostVoiceWebhookCont
 export { default as PostVoiceWebhookStatus } from './voice/PostVoiceWebhookStatus';
 export { default as GetVoiceFlows } from './voice/GetVoiceFlows';
 export { default as PostVoiceFlow } from './voice/PostVoiceFlow';
+export { default as PostVoiceInternalFlow } from './voice/PostVoiceInternalFlow';
 export { default as GetVoiceFlow } from './voice/GetVoiceFlow';
 export { default as PatchVoiceFlow } from './voice/PatchVoiceFlow';
 export { default as DeleteVoiceFlow } from './voice/DeleteVoiceFlow';
@@ -112,6 +114,59 @@ export { default as PostVoiceDlqRequeue } from './voice/PostVoiceDlqRequeue';
 export { default as GetVoiceDispatchState } from './voice/GetVoiceDispatchState';
 export { default as PostVoiceDispatchSuspend } from './voice/PostVoiceDispatchSuspend';
 export { default as PostVoiceDispatchResume } from './voice/PostVoiceDispatchResume';
+
+// print — the physical direct-mail SEND channel (apps/core/print). TWO independent provider factories: mail
+// fulfillment (Print.Provider — PostGrid/Lob) and address verification (Print.AddressVerifierId — USPS/
+// PostGrid/Lob/Melissa/SmartyStreets); fake adapters only until real credentials land — see
+// apps/core/print/SPECS.md.
+export { Print } from './print/model/Print';
+export { Texting } from './texting/model/Texting';
+export { Links } from './links/model/Links';
+export { default as PostLinksMint } from './links/PostLinksMint';
+export { default as PostLinksMintBatch } from './links/PostLinksMintBatch';
+export { default as GetLinksCodeQr } from './links/GetLinksCodeQr';
+export { default as GetLinksCode } from './links/GetLinksCode';
+export { default as GetLinksResolve } from './links/GetLinksResolve';
+export { default as GetLinksDomains } from './links/GetLinksDomains';
+export { default as PostLinksDomain } from './links/PostLinksDomain';
+export { default as PostLinksDomainVerify } from './links/PostLinksDomainVerify';
+export { default as DeleteLinksDomain } from './links/DeleteLinksDomain';
+export { default as GetLinksAccountDomains } from './links/GetLinksAccountDomains';
+export { default as PostLinksAccountDomain } from './links/PostLinksAccountDomain';
+export { default as DeleteLinksAccountDomain } from './links/DeleteLinksAccountDomain';
+export { default as PutLinksAccountDomainDefault } from './links/PutLinksAccountDomainDefault';
+export { default as PostLinksInternalErase } from './links/PostLinksInternalErase';
+export { default as PostTextingSend } from './texting/PostTextingSend';
+export { default as GetTextingLog } from './texting/GetTextingLog';
+export { default as PostTextingWebhook } from './texting/PostTextingWebhook';
+export { TextingConfig } from './texting/model/TextingConfig';
+export { PrintConfig } from './print/model/PrintConfig';
+export { default as PostPrintMailpieces } from './print/PostPrintMailpieces';
+export { default as PostPrintMailpiecesBatch } from './print/PostPrintMailpiecesBatch';
+export { default as GetPrintMailpieces } from './print/GetPrintMailpieces';
+export { default as GetPrintMailpiece } from './print/GetPrintMailpiece';
+export { default as GetPrintMailpieceTracking } from './print/GetPrintMailpieceTracking';
+export { default as PostPrintProof } from './print/PostPrintProof';
+export { default as PostPrintMailpieceApprove } from './print/PostPrintMailpieceApprove';
+export { default as PostPrintCostPreview } from './print/PostPrintCostPreview';
+export { default as GetPrintTemplates } from './print/GetPrintTemplates';
+export { default as PostPrintTemplates } from './print/PostPrintTemplates';
+export { default as PatchPrintTemplate } from './print/PatchPrintTemplate';
+export { default as DeletePrintTemplate } from './print/DeletePrintTemplate';
+export { default as PostPrintAddressVerify } from './print/PostPrintAddressVerify';
+export { default as PostPrintAddressVerifyBatch } from './print/PostPrintAddressVerifyBatch';
+export { default as GetPrintProviders } from './print/GetPrintProviders';
+export { default as PutPrintProvider } from './print/PutPrintProvider';
+export { default as PostPrintWebhook } from './print/PostPrintWebhook';
+export { default as GetPrintInternalAddressVerify } from './print/GetPrintInternalAddressVerify';
+export { default as PostPrintInternalErase } from './print/PostPrintInternalErase';
+export { default as GetPrintConfig } from './print/GetPrintConfig';
+export { default as PutPrintConfig } from './print/PutPrintConfig';
+export { default as GetPrintDlq } from './print/GetPrintDlq';
+export { default as PostPrintDlqRequeue } from './print/PostPrintDlqRequeue';
+export { default as GetPrintDispatchState } from './print/GetPrintDispatchState';
+export { default as PostPrintDispatchSuspend } from './print/PostPrintDispatchSuspend';
+export { default as PostPrintDispatchResume } from './print/PostPrintDispatchResume';
 
 // collab — Slack-like rooms/DMs/chat/presence (apps/core/collab); v1 SCOPE IS CHAT ONLY — no Y.js/Hocuspocus
 // CRDT document co-editing or whiteboard yet (a deferred gap, see apps/core/collab/SPECS.md)
@@ -131,6 +186,21 @@ export { default as GetCollabConfig } from './collab/GetCollabConfig';
 export { default as PutCollabConfig } from './collab/PutCollabConfig';
 
 // media — model (shared: index record + variants) then endpoints
+export { Analytics } from './analytics/model/Analytics';
+export { default as GetAnalyticsMetrics } from './analytics/GetAnalyticsMetrics';
+export { default as GetAnalyticsFunnels } from './analytics/GetAnalyticsFunnels';
+export { default as GetAnalyticsEngagement } from './analytics/GetAnalyticsEngagement';
+export { default as GetAnalyticsDeliverability } from './analytics/GetAnalyticsDeliverability';
+export { default as PostAnalyticsReprocess } from './analytics/PostAnalyticsReprocess';
+
+// search — global content-search plane (see apps/core/search/SPECS.md); index-then-query, RBAC-filtered
+export { Search } from './search/model/Search';
+export { SearchConfig } from './search/model/SearchConfig';
+export { default as GetSearch } from './search/GetSearch';
+export { default as GetSearchSuggest } from './search/GetSearchSuggest';
+export { default as PostSearchInternalReindex } from './search/PostSearchInternalReindex';
+export { default as GetSearchConfig } from './search/GetSearchConfig';
+export { default as PutSearchConfig } from './search/PutSearchConfig';
 export { Media } from './media/model/Media';
 export { Captions } from './media/model/Captions';         // shared .srt/.vtt parse + serialize (editor + caption burn-in)
 export { MediaConfig } from './media/model/MediaConfig';   // service runtime config (AppConfig settings)
@@ -286,6 +356,9 @@ export { default as PatchImportMap } from './contact/PatchImportMap';
 export { default as DeleteImportMap } from './contact/DeleteImportMap';
 export { default as PostImportMapCopy } from './contact/PostImportMapCopy';
 export { default as GetInternalContacts } from './contact/GetInternalContacts';
+export { default as GetInternalContactByIdentifier } from './contact/GetInternalContactByIdentifier';
+export { default as PostInternalContactUpdate } from './contact/PostInternalContactUpdate';
+export { default as PostContactForget } from './contact/PostContactForget';
 
 // campaign — model (shared: campaign → channel → strategy → plan) then endpoints
 export { Campaign } from './campaign/model/Campaign';
@@ -295,6 +368,22 @@ export { default as GetCampaign } from './campaign/GetCampaign';
 export { default as PostCampaign } from './campaign/PostCampaign';
 export { default as PatchCampaign } from './campaign/PatchCampaign';
 export { default as DeleteCampaign } from './campaign/DeleteCampaign';
+
+// workflow — model (definition graph + instance) then endpoints
+export { Workflow } from './workflow/model/Workflow';
+export { WorkflowInstance } from './workflow/model/WorkflowInstance';
+export { default as GetWorkflows } from './workflow/GetWorkflows';
+export { default as GetWorkflow } from './workflow/GetWorkflow';
+export { default as PostWorkflow } from './workflow/PostWorkflow';
+export { default as PatchWorkflow } from './workflow/PatchWorkflow';
+export { default as DeleteWorkflow } from './workflow/DeleteWorkflow';
+export { default as PostWorkflowPublish } from './workflow/PostWorkflowPublish';
+export { default as GetWorkflowVersions } from './workflow/GetWorkflowVersions';
+export { default as PostWorkflowPause } from './workflow/PostWorkflowPause';
+export { default as PostWorkflowResume } from './workflow/PostWorkflowResume';
+export { default as GetWorkflowInstances } from './workflow/GetWorkflowInstances';
+export { default as GetWorkflowInstance } from './workflow/GetWorkflowInstance';
+export { default as PostWorkflowInstance } from './workflow/PostWorkflowInstance';
 
 // marketplace — model (catalog / installation / credential vault) then S2S internal endpoints
 export { Marketplace } from './marketplace/model/Marketplace';
@@ -320,6 +409,7 @@ export { default as PostInternalUsage } from './marketplace/PostInternalUsage';
 export { default as GetUsage } from './marketplace/GetUsage';
 export { default as GetInstallationUsage } from './marketplace/GetInstallationUsage';
 export { default as PostInternalAction } from './marketplace/PostInternalAction';
+export { default as PostMarketplaceWebhook } from './marketplace/PostMarketplaceWebhook';
 
 // social — model (connected destinations, posts, service config) then endpoints
 export { SocialAccount } from './social/model/SocialAccount';
@@ -384,8 +474,18 @@ export { default as PutReportConfig } from './report/PutReportConfig';
 // registries fit later without a new namespace. See apps/core/registration/SPECS.md.
 export { Registration } from './registration/model/Registration';
 export { RegistrationConfig } from './registration/model/RegistrationConfig';
+export { PhoneNumber } from './registration/model/PhoneNumber';
+export { default as PostRegistrationNumberSearch } from './registration/PostRegistrationNumberSearch';
+export { default as PostRegistrationNumberOrder } from './registration/PostRegistrationNumberOrder';
+export { default as GetRegistrationNumbers } from './registration/GetRegistrationNumbers';
+export { default as PostRegistrationNumberRelease } from './registration/PostRegistrationNumberRelease';
+export { default as PostRegistrationTollFreeVerification } from './registration/PostRegistrationTollFreeVerification';
+export { default as PostRegistrationShortCodeApplication } from './registration/PostRegistrationShortCodeApplication';
+export { default as GetRegistrationShortCodeApplications } from './registration/GetRegistrationShortCodeApplications';
+export { default as PatchRegistrationShortCodeApplication } from './registration/PatchRegistrationShortCodeApplication';
 export { default as PostRegistrationBrand } from './registration/PostRegistrationBrand';
 export { default as GetRegistrationBrand } from './registration/GetRegistrationBrand';
+export { default as GetRegistrationMyBrand } from './registration/GetRegistrationMyBrand';
 export { default as GetRegistrationBrands } from './registration/GetRegistrationBrands';
 export { default as PatchRegistrationBrand } from './registration/PatchRegistrationBrand';
 export { default as PostRegistrationCampaign } from './registration/PostRegistrationCampaign';
@@ -406,3 +506,36 @@ export { default as PostRegistrationWebhookCv } from './registration/PostRegistr
 export { default as GetInternalRegistrationBrands } from './registration/GetInternalRegistrationBrands';
 export { default as GetInternalRegistrationCampaigns } from './registration/GetInternalRegistrationCampaigns';
 export { default as GetInternalRegistrationCostEstimates } from './registration/GetInternalRegistrationCostEstimates';
+
+// audit — model (the wire-facing audit-event/retention/legal-hold/export shapes + service config) then endpoints
+export { Audit } from './audit/model/Audit';
+export { AuditConfig } from './audit/model/AuditConfig';
+export { default as GetAuditEvents } from './audit/GetAuditEvents';
+export { default as GetAuditEvent } from './audit/GetAuditEvent';
+export { default as GetStaffAuditEvents } from './audit/GetStaffAuditEvents';
+export { default as PostAuditExport } from './audit/PostAuditExport';
+export { default as PostAuditLegalHold } from './audit/PostAuditLegalHold';
+export { default as GetAuditConfig } from './audit/GetAuditConfig';
+export { default as PutAuditConfig } from './audit/PutAuditConfig';
+
+// survey — model (definition/question/distribution/response/config) then endpoints
+export { Survey } from './survey/model/Survey';
+export { Question } from './survey/model/Question';
+export { Distribution } from './survey/model/Distribution';
+export { Response as SurveyResponse } from './survey/model/Response';
+export { SurveyConfig } from './survey/model/SurveyConfig';
+export { default as GetSurveys } from './survey/GetSurveys';
+export { default as PostSurvey } from './survey/PostSurvey';
+export { default as GetSurvey } from './survey/GetSurvey';
+export { default as PutSurvey } from './survey/PutSurvey';
+export { default as PostSurveyPublish } from './survey/PostSurveyPublish';
+export { default as PostDistribution } from './survey/PostDistribution';
+export { default as GetDistribution } from './survey/GetDistribution';
+export { default as GetResponses } from './survey/GetResponses';
+export { default as GetResults } from './survey/GetResults';
+export { default as GetSurveyForm } from './survey/GetSurveyForm';
+export { default as PostSurveyForm } from './survey/PostSurveyForm';
+export { default as PostInternalResponse } from './survey/PostInternalResponse';
+export { default as PostSurveyWebhook } from './survey/PostSurveyWebhook';
+export { default as GetSurveyConfig } from './survey/GetSurveyConfig';
+export { default as PutSurveyConfig } from './survey/PutSurveyConfig';

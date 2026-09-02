@@ -157,6 +157,7 @@ export namespace Events
         TEXTING_SUPPRESSION = "texting.suppression",
         
         EMAIL_TEMPLATE      = "email.template",
+        EMAIL_MESSAGE       = "email.message",   // a sent/received message (send-log row) — feeds the search indexer
         EMAIL_SUPPRESSION   = "email.suppression",
         EMAIL_DOMAIN        = "email.domain",
 
@@ -171,14 +172,17 @@ export namespace Events
         SOCIAL_POST         = "social.post",
         SOCIAL_ACCOUNT      = "social.account",
         SURVEY_SURVEY       = "survey.survey",
+        SURVEY_RESPONSE     = "survey.response",
 
         // registration / marketplace
         REGISTRATION_NUMBER        = "registration.number",
+        REGISTRATION_SHORTCODE     = "registration.shortcode",
         REGISTRATION_BRAND         = "registration.brand",
         REGISTRATION_CAMPAIGN      = "registration.campaign",
         MARKETPLACE_INTEGRATION    = "marketplace.integration",
         MARKETPLACE_OAUTH_TOKEN    = "marketplace.oauth_token",
         MARKETPLACE_ZAPIER_ACTION  = "marketplace.zapier_action",
+        MARKETPLACE_TRIGGER_EVENT  = "marketplace.trigger_event",   // a connector's normalized inbound event (marketplace-4.5)
 
         // assets
         MEDIA_ASSET  = "media.asset",
@@ -198,6 +202,7 @@ export namespace Events
         MONITOR_ALARM                = "monitor.alarm",
         AUDIT_LEGAL_HOLD             = "audit.legal_hold",
         AUDIT_EXPORT                 = "audit.export",
+        AUDIT_EVENT                  = "audit.event",   // reads of the trail are themselves audited (audit-5.2)
         ANALYTICS_ATTRIBUTION_CONFIG = "analytics.attribution_config",
 
         // cross-cutting
@@ -308,8 +313,18 @@ export namespace Events
         [Object.MEDIA_JOB]:      JobProgress;   // async processing progress (media-19.2)
         [Object.SOCIAL_ACCOUNT]: Payloads.SocialAccount;
         [Object.SOCIAL_POST]:    Payloads.SocialPost;
-        [Object.MARKETPLACE_INTEGRATION]: Payloads.MarketplaceIntegration;
-        // … one per published entity (e.g. [Object.CONTACT_CONTACT]: Payloads.Contact) as services land.
+        [Object.MARKETPLACE_INTEGRATION]:  Payloads.MarketplaceIntegration;
+        [Object.MARKETPLACE_TRIGGER_EVENT]: Payloads.MarketplaceTriggerEvent;
+        [Object.CONTACT_CONTACT]:    Payloads.Contact;
+        [Object.CONTACT_SEGMENT]:    Payloads.Segment;
+        [Object.CAMPAIGN_CAMPAIGN]:  Payloads.Campaign;
+        [Object.EMAIL_TEMPLATE]:     Payloads.EmailTemplate;
+        [Object.EMAIL_MESSAGE]:      Payloads.EmailMessage;
+        [Object.SURVEY_SURVEY]:      Payloads.Survey;
+        [Object.SURVEY_RESPONSE]:    Payloads.SurveyResponse;
+        [Object.WORKFLOW_WORKFLOW]:  Payloads.Workflow;
+        [Object.WORKFLOW_INSTANCE]:  Payloads.WorkflowInstance;
+        // … one per published entity as services land.
     }
 
     /** The representation for an Object — its registered payload type, or `unknown` until registered. */
@@ -435,6 +450,7 @@ export namespace Events
         // channels
         [ Object.TEXTING_SUPPRESSION ]: { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.MESSAGING } },
         [ Object.EMAIL_TEMPLATE ]:      { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT } },
+        [ Object.EMAIL_MESSAGE ]:       { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.MESSAGING } },
         [ Object.EMAIL_SUPPRESSION ]:   { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.MESSAGING } },
         [ Object.EMAIL_DOMAIN ]:        { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING } },
         [ Object.VOICE_CALL ]:          { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.MESSAGING }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.USER, category: Category.MESSAGING } },
@@ -446,16 +462,21 @@ export namespace Events
         [ Object.SOCIAL_POST ]:         { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.MESSAGING }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.USER, category: Category.MESSAGING }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.USER, category: Category.MESSAGING } },
         [ Object.SOCIAL_ACCOUNT ]:      { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.INTEGRATION }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.INTEGRATION } },
         [ Object.SURVEY_SURVEY ]:       { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.PURGED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.COMPLIANCE } },
+        // a response is CREATED when capture starts (in_progress) and UPDATED on every subsequent
+        // completed/abandoned transition — survey-5.2's "completion as conversion / workflow trigger"
+        [ Object.SURVEY_RESPONSE ]:     { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.PURGED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.COMPLIANCE } },
 
         // registration / marketplace
         // UPDATED is emitted when a campaign goes ACTIVE — its already-associated numbers become sendable, so
         // texting's per-number gate needs a re-publish carrying the new status/mps, not just the original CREATED
         [ Object.REGISTRATION_NUMBER ]:       { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING } },
+        [ Object.REGISTRATION_SHORTCODE ]:    { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING } },
         [ Object.REGISTRATION_BRAND ]:        { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING } },
         [ Object.REGISTRATION_CAMPAIGN ]:     { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.MESSAGING } },
         [ Object.MARKETPLACE_INTEGRATION ]:   { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.INTEGRATION }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.INTEGRATION } },
         [ Object.MARKETPLACE_OAUTH_TOKEN ]:   { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.INTEGRATION }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.INTEGRATION } },
         [ Object.MARKETPLACE_ZAPIER_ACTION ]: { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.INTEGRATION } },
+        [ Object.MARKETPLACE_TRIGGER_EVENT ]: { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.INTEGRATION } },
 
         // assets / links
         [ Object.MEDIA_ASSET ]:  { [ Verb.CREATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.UPDATED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.DELETED ]: { minAccess: Access.AccountRole.USER, category: Category.CONTENT }, [ Verb.PURGED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.COMPLIANCE } },
@@ -473,6 +494,7 @@ export namespace Events
         [ Object.MONITOR_ALARM ]:                { [ Verb.CREATED ]: { minAccess: Access.AppRole.APPLICATION, category: Category.OPS }, [ Verb.UPDATED ]: { minAccess: Access.AppRole.APPLICATION, category: Category.OPS }, [ Verb.DELETED ]: { minAccess: Access.AppRole.APPLICATION, category: Category.OPS } },
         [ Object.AUDIT_LEGAL_HOLD ]:             { [ Verb.CREATED ]: { minAccess: Access.AppRole.ROOT, category: Category.COMPLIANCE }, [ Verb.DELETED ]: { minAccess: Access.AppRole.ROOT, category: Category.COMPLIANCE } },
         [ Object.AUDIT_EXPORT ]:                 { [ Verb.CREATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.COMPLIANCE } },
+        [ Object.AUDIT_EVENT ]:                  { [ Verb.ACCESSED ]: { minAccess: Access.AppRole.APPLICATION, category: Category.COMPLIANCE } },
         [ Object.ANALYTICS_ATTRIBUTION_CONFIG ]: { [ Verb.UPDATED ]: { minAccess: Access.AccountRole.ACCOUNT, category: Category.OPS } },
 
         // cross-cutting

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { PostCampaign, Campaign } from "@repo/api";
 import { NetworkUtils, type Type } from "@repo/common";
 import { RestfulEndpoint } from "@repo/endpoint";
+import { Events, Payloads } from "@repo/system";
 import CampaignService from "../services/CampaignService";
 
 //
@@ -52,6 +53,10 @@ export class PostCampaignImpl extends PostCampaign
 
         const wrote : Type.Result<void> = await this.service.dynamo.put( "campaigns", { ...entity, campaignId: id } );
         if( !wrote.ok ) return { status: NetworkUtils.Status.INTERNAL_SERVER_ERROR, data: { message: "campaign write failed" } };
+
+        // best-effort CRUD event — never blocks the response
+        const payload : Payloads.Campaign = { id: entity.id, accountId: entity.accountId, name: entity.name, status: entity.status };
+        void this.service.emit( Events.Verb.CREATED, entity.id, accountId, payload, auth.userId );
 
         return { status: NetworkUtils.Status.OK, data: entity };
     }

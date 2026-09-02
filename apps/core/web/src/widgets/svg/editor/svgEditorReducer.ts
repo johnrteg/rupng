@@ -18,8 +18,9 @@ function pushHistory( history : HistoryStack, current : SvgDocument.Doc | null )
     return { past, future: [], maxSize: HISTORY_MAX_SIZE };
 }
 
-/** Deep-clone an object subtree with fresh ids throughout (group children recurse) — for paste. */
-function cloneWithFreshIds( node : SvgDocument.ObjectNode ) : SvgDocument.ObjectNode
+/** Deep-clone an object subtree with fresh ids throughout (group children recurse) — for paste and item
+ *  import (exported so `SvgItemImport.ts` can reuse it rather than duplicating id-cloning logic). */
+export function cloneWithFreshIds( node : SvgDocument.ObjectNode ) : SvgDocument.ObjectNode
 {
     // a group re-ids itself AND every descendant; other kinds just re-id themselves
     if( node.kind === SvgDocument.ObjectKind.GROUP )
@@ -151,6 +152,19 @@ export function svgEditorReducer( state : SvgEditorState, action : SvgEditorActi
             const history : HistoryStack = pushHistory( state.history, state.doc );
             const selectedIds : Array<string> = additions.map( ( node : SvgDocument.ObjectNode ) : string => node.id );
             return { ...state, doc: nextDoc, history, dirtyFlag: true, selectedIds };
+        }
+
+        // import item — merge the imported assets into doc.assets, append the object to the active layer,
+        // snapshot for undo, and select the newly-inserted object
+        case SvgEditorActionType.IMPORT_ITEM :
+        {
+            if( state.doc === null ) return state;
+            const doc : SvgDocument.Doc = appendToActiveLayer(
+                { ...state.doc, assets: [ ...state.doc.assets, ...action.assets ] },
+                state.activePage, state.activeLayer, [ action.object ]
+            );
+            const history : HistoryStack = pushHistory( state.history, state.doc );
+            return { ...state, doc, history, dirtyFlag: true, selectedIds: [ action.object.id ] };
         }
 
         case SvgEditorActionType.CLEAR_DIRTY :

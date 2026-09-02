@@ -13,7 +13,7 @@ import {
     AttrType,
     Ports,
 } from "@repo/cloud-manifest";
-import { Providers } from "@repo/system";
+import { Providers, Events } from "@repo/system";
 
 export const manifest : ResourceManifest =
 {
@@ -108,6 +108,10 @@ export const manifest : ResourceManifest =
             { key: "email-batch",    maxReceiveCount: 3, dlq: true, visibilityTimeoutSec: 300 },
         ],
     },
+
+    // Kafka — every SENT/FAILED outcome is also recorded as a canonical engagement event for analytics
+    // (analytics-1.7); EmailService.emitEngagementEvent is the emitting site.
+    publishes: [ { topic: Events.Stream.ENGAGEMENT } ],
 
     tags: { domain: "core", tier: "service" },
 };

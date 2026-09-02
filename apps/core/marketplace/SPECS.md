@@ -53,7 +53,7 @@ What Marketplace **delegates / does not do**:
 
 | Concern | Owner |
 |---|---|
-| Running a connector (call HubSpot, parse a Shopify webhook, normalize events) | **integration/connector runtime** (workflow spec, open decision #9) |
+| Running a connector (call HubSpot, parse a Shopify webhook, normalize events) | **integration/connector runtime** — folded into this service (`src/connectors/`), not a separate deployable; see `Connector SDK & runtime` below. Shopify is the first built. |
 | Receiving inbound 3rd-party webhooks (validate at edge → SQS) | the platform **incoming-webhook intake** |
 | Exposing an integration's **triggers (input nodes)** + **actions** as workflow nodes | **workflow** |
 | Plan limits + which integrations an account may enable | **account** (`ResolvedEntitlements`) |
@@ -299,6 +299,10 @@ status) ├── `credentialRef` ──► **`Credential`** (Secrets Manager + 
 (`sk=USAGE#<integrationId>#<instanceId>#<period>`; account roll-up = **SUM** the period's `USAGE#` items, no
 aggregate table; rolls up to the **billing owner** — an agency = the TOP account).
 
+* **`Installation.externalRef`** — the provider's OWN id for the connection (e.g. a Shopify shop domain),
+  collected at connect time. An inbound webhook payload carries no `installationId` of its own, so
+  `PostMarketplaceWebhookImpl` resolves the owning installation via `externalRef` + the cross-account
+  `byExternalRef` GSI (mirrors social's `connections.byId`).
 * Installations are **archived / auto-paused, never silently dropped**; credentials are **hard-purged** on
   remove + on account hard-close (consistent with the platform's archive-vs-GDPR rules).
 
@@ -316,8 +320,7 @@ provider-facing webhook ingress, and event-driven workers for the per-integratio
 Application
 ├── Service (Fastify, long-running — ECS)
 │     └── MarketplaceService      (domain base — catalog/installation · OAuth broker · credential vault (Secrets Manager + KMS) · connector SDK/registry · entitlement + cross-border gate · metering · WorkQueue · audit; not deployed alone)
-│           ├── MarketplaceMainService    (the /marketplace/* API: catalog browse · enable/configure/disconnect (accept-to-enable + cross-border gate) · OAuth authorize/callback · connection-health reads · config/health)
-│           └── MarketplaceWebhookService (3rd-party INBOUND webhook intake — per-connector signature-verify, ACK-fast → enqueue; provider-facing, scales apart)
+│           └── MarketplaceMainService    (the /marketplace/* API: catalog browse · enable/configure/disconnect (accept-to-enable + cross-border gate) · OAuth authorize/callback · connection-health reads · config/health · 3rd-party INBOUND webhook intake — DECIDED: on MAIN, not a dedicated MarketplaceWebhookService; see below)
 └── Job (Lambda, event-driven)
       └── MarketplaceJob          (domain base — connector SDK/registry · vault · idempotency · retry/DLQ)
             ├── MarketplaceConnectorJob (SQS ← webhook intake — INBOUND: connector.normalize a 3rd-party event → emit normalized → workflow / contact / analytics)
@@ -331,8 +334,13 @@ Application
 | Class | Extends | Role |
 |---|---|---|
 | **`MarketplaceService`** | `Service` | **Domain base** — catalog/installation · OAuth broker · credential vault · connector SDK/registry · entitlement + cross-border gate · metering · `WorkQueue` · audit; **not deployed alone**. |
-| **`MarketplaceMainService`** | `MarketplaceService` | The **control-plane `/marketplace/*` API** — catalog browse, **enable / configure / disconnect** (**accept-to-enable** + **cross-border gate**, `marketplace-2.7`), **OAuth authorize / callback**, connection-health reads, config/health. |
-| **`MarketplaceWebhookService`** | `MarketplaceService` | **3rd-party inbound webhook intake** — per-connector **signature-verify, ACK-fast → enqueue**; provider-facing (multi-integration, burst-prone) so it **scales apart** from the control-plane API. |
+| **`MarketplaceMainService`** | `MarketplaceService` | The **control-plane `/marketplace/*` API** — catalog browse, **enable / configure / disconnect** (**accept-to-enable** + **cross-border gate**, `marketplace-2.7`), **OAuth authorize / callback**, connection-health reads, config/health, **and 3rd-party inbound webhook intake** (`POST /marketplace/webhooks/:integrationId`) — per-connector **signature-verify, ACK-fast → enqueue**. |
+
+> **`MarketplaceWebhookService` — DECIDED: folded into MAIN, not a dedicated role.** The original intent was a
+> separate, independently-scaling provider-facing role. Built against Shopify (the first connector), it landed
+> on `MarketplaceMainService` instead — the platform's API Gateway integration only backs ONE ECS role's ALB per
+> manifest (`ServiceStack.makeApi`), the SAME constraint that already keeps social's webhook intake on ITS MAIN
+> role. Revisit + split out once multi-ALB gateway routing lands (a platform-level gap, not marketplace-specific).
 
 **Jobs (Lambda, event-driven)** — each extends `MarketplaceJob`:
 
@@ -476,11 +484,12 @@ surfaces connectors as nodes; **[account](../account/specs/SPECS.md)** owns enti
 - **marketplace-4.5** Enabled caps surface as **workflow trigger / action nodes** (scoped to what's connected + authorized) — A
 
 ## marketplace-5.0 Connector SDK & runtime — A
-- **marketplace-5.1** **One connector contract** — typed triggers / actions / sync + credential + config schema — A
+- **marketplace-5.1** **One connector contract** (`src/connectors/Connector.ts`) — `verifyWebhook` / `normalize` (inbound) / optional `execute` (bespoke outbound) — A
 - **marketplace-5.2** **Two run modes** — workflow-node plugin *and* standalone service; OAuth + dev-key apply to both *(gap #2)* — A
-- **marketplace-5.3** New integrations are **additive** (SDK), not bespoke — B
+- **marketplace-5.3** New integrations are **additive** (SDK) — register in `ConnectorFactory`, not bespoke — B
 - **marketplace-5.4** **Connector runtime owns the data plane** — marketplace passes a vault reference; no connector logic here — A
 - **marketplace-5.5** **Connector long tail — build-vs-buy**; if buy, a **self-hostable OSS** connector library (e.g. **Nango**) run **in-infra**, **not** a managed unified-API vendor (data-in-infra tenet) *(gap #3)* — C
+- **marketplace-5.6** **Shopify — the FIRST connector built** (`src/connectors/ShopifyConnector.ts`): `orders/*` · `checkouts/*` (abandoned-cart trigger candidate) · `customers/*` · `refunds/create` webhook topics → capability keys; app-wide (not per-installation) HMAC-SHA256/base64 signing secret (`SHOPIFY_APP_SECRET`); no bespoke `execute` — outbound actions use `MarketplaceActionJob`'s generic OAuth-broker proxy. Intake resolves the owning installation via `Installation.externalRef` (the shop domain) + the `byExternalRef` GSI — a webhook payload carries no installationId of its own — A
 
 ## marketplace-6.0 Multi-instance — B
 - **marketplace-6.1** **Opt-in `multiInstance`** per definition (default single); each install has an **instance id + label** (agency / multi-brand) *(gap #4)* — B
@@ -522,9 +531,8 @@ surfaces connectors as nodes; **[account](../account/specs/SPECS.md)** owns enti
 
 ## marketplace-14.0 Service & Job topology — B
 - **marketplace-14.1** **Domain bases** — `MarketplaceService extends Service` + `MarketplaceJob extends Job` hold the shared code (catalog/installation · OAuth broker · credential vault · connector SDK/registry · cross-border gate · metering · `WorkQueue`); **concrete roles extend the domain base** — B
-- **marketplace-14.2** **`MarketplaceMainService`** — the control-plane `/marketplace/*` API (browse · enable/configure/disconnect · OAuth authorize/callback · health reads) — A
-- **marketplace-14.3** **`MarketplaceWebhookService`** — 3rd-party inbound webhook intake (per-connector signature-verify, ACK-fast → enqueue); **scales apart** from the control plane — A
-- **marketplace-14.4** **Jobs extend `MarketplaceJob`** — `MarketplaceConnectorJob` (inbound normalize) / `MarketplaceActionJob` (outbound action, egress-gated + WorkQueue-paced) / `MarketplaceTokenJob` (OAuth refresh) / `MarketplaceHealthJob` (connection probes) — A
+- **marketplace-14.2** **`MarketplaceMainService`** — the control-plane `/marketplace/*` API (browse · enable/configure/disconnect · OAuth authorize/callback · health reads) **+ 3rd-party inbound webhook intake** (per-connector signature-verify, ACK-fast → enqueue) — DECIDED on MAIN, not a dedicated `MarketplaceWebhookService`, per the one-ALB-per-manifest platform constraint (same as social) — A
+- **marketplace-14.4** **Jobs extend `MarketplaceJob`** — `MarketplaceConnectorJob` (inbound normalize, SQS ← `marketplace-connector`) / `MarketplaceActionJob` (outbound action, egress-gated + WorkQueue-paced) / `MarketplaceTokenJob` (OAuth refresh) / `MarketplaceHealthJob` (connection probes) — A
 - **marketplace-14.5** **Connector SDK = single dialect boundary** per integration: `verifySignature` · `normalize` · `execute` · `healthCheck`, self-registered in a typed registry (the texting `SmsAdapter` pattern) — A
 - **marketplace-14.6** **Tokens stay in the vault** — jobs hold a vault *reference*, never the secret; egress to a 3rd party = **stop-sending + disclose** on erasure (account is controller downstream) — A
 

@@ -239,7 +239,14 @@ export namespace MediaConfig
         autoTag:   { enabled: false, maxTags: 12 },   // vision auto-tagging off until an AI key is configured
         downloads: { ttlDays: 7 },                    // generated download zips are swept after a week
         videoTargets: {                               // named compression targets (media-10.10)
-            "mms":     { label: "MMS (small)",      codec: VideoCodec.H264, maxWidth: 480,  maxSizeKb: 750, maxSeconds: 45, fpsCap: 15, audioKbps: 24 },
+            // MMS has TWO tiers, not one — carrier MMS size caps aren't uniform, but they DO cluster into two
+            // bands (sourced from Telnyx/Bandwidth/AWS MMS guidance, texting-6.x): Tier-1 carriers (AT&T,
+            // Verizon, T-Mobile — `Texting.MMS_TIER_BY_CARRIER`) accept up to ~1MB; everyone else (US Cellular,
+            // unknown/undetermined carrier) needs the ~600KB-safe universal target. Keying by carrier tier
+            // (not one profile per carrier) avoids compressing the same video N times for N carriers that
+            // all share the same effective cap.
+            "mms-relaxed": { label: "MMS (Tier-1 carriers)", codec: VideoCodec.H264, maxWidth: 640, maxSizeKb: 900, maxSeconds: 45, fpsCap: 20, audioKbps: 32 },
+            "mms-safe":    { label: "MMS (universal-safe)",  codec: VideoCodec.H264, maxWidth: 480, maxSizeKb: 500, maxSeconds: 30, fpsCap: 15, audioKbps: 24 },
             "mobile":  { label: "Mobile / chat",    codec: VideoCodec.H264, maxWidth: 720,  audioKbps: 96 },
             "web-sd":  { label: "Web (SD)",         codec: VideoCodec.H264, maxWidth: 480,  audioKbps: 96 },
             "web-hd":  { label: "Web (HD)",         codec: VideoCodec.H264, maxWidth: 1080, audioKbps: 128 },

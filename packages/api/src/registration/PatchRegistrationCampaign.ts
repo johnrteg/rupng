@@ -2,6 +2,7 @@
 import { RestfulEndpoint, Access, apiPath } from "@repo/endpoint";
 import { NetworkUtils } from "@repo/common";
 import { Registration } from "./model/Registration";
+import { Texting } from "../texting/model/Texting";
 
 //
 // Partially update a campaign's user-submittable fields (registration-2.0/3.2 remediation loop). Same
@@ -57,6 +58,14 @@ export class PatchRegistrationCampaign extends RestfulEndpoint< PatchRegistratio
                 termsAndConditionsLink: { type: "string" },
                 provider:           { type: "string", enum: Object.values( Registration.CarrierProvider ) },
                 areaCode:           { type: "string" },
+                numberSelection:    {
+                    type: "object", additionalProperties: false, required: [ "mode" ],
+                    properties: {
+                        mode:     { type: "string", enum: Object.values( Texting.NumberSelectionMode ) },
+                        number:   { type: "string" },
+                        areaCode: { type: "string" },
+                    },
+                },
             },
         };
     }
@@ -72,7 +81,7 @@ export namespace PatchRegistrationCampaign
             "usecase" | "subUsecases" | "description" | "messageFlow" | "sample1" | "sample2" |
             "sample3" | "sample4" | "sample5" | "optin" | "help" | "optout" | "subscriberOptin" | "subscriberOptout" |
             "subscriberHelp" | "embeddedLink" | "embeddedPhone" | "numberPool" | "ageGated" | "directLending" |
-            "affiliateMarketing" | "autoRenewal" | "privacyPolicyLink" | "termsAndConditionsLink" | "provider" | "areaCode">> {}
+            "affiliateMarketing" | "autoRenewal" | "privacyPolicyLink" | "termsAndConditionsLink" | "provider" | "areaCode" | "numberSelection">> {}
 
     export interface Response extends Registration.Campaign {}
 

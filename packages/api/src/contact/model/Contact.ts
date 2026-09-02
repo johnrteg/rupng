@@ -186,6 +186,11 @@ export namespace Contact
         audit:         AuditMeta;
     }
 
+    /** GDPR forget tombstone metadata (contact-10.3) — stamped on the redacted shell. The `uuid` is
+     *  retained (audit trails / campaign history / invoices stay referentially intact); every PII
+     *  field is irreversibly purged. */
+    export interface Forgotten { at: Type.ISODateTime; by: Type.UUID; reason?: string; }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Contact (the resource)
     //   DynamoDB: contacts  PK: accountId  SK: contactId
@@ -227,6 +232,7 @@ export namespace Contact
         segmentIds?:   Array<Type.UUID>;        // contact ↔ segment join
 
         status:      ContactStatus;      // active | archived | forgotten
+        forgotten?:  Forgotten;          // set when status === FORGOTTEN
         audit:       AuditMeta;
     }
 
@@ -295,6 +301,7 @@ export namespace Contact
             externalRefs:      { type: "object" },   // { system: { id, lastSyncAt? } }
             notes:             { type: "string" },
             status:            { type: "string", enum: Object.values( ContactStatus ) },
+            forgotten:         { type: "object" },   // { at, by, reason? } — set when status === FORGOTTEN
             segmentIds:        { type: "array", items: { type: "string" } },
             audit:             { type: "object" },
         },

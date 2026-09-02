@@ -148,6 +148,9 @@ export class AuthService extends Service
         const stamped : Type.Result<void> = await this.users.touchLogin( userId );
         if( !stamped.ok ) this.log.warn( "lastLoginAt stamp failed", { userId, error: stamped.error } );
         await this.emit( Events.Object.AUTH_SESSION, Events.Verb.CREATED, "session", userId, userId, { userId, username, at: new Date().toISOString() }, userId );
+        // action-level audit trail (apps/core/audit/SPECS.md) — same scoping choice as the Kafka emit above
+        // (no acting account at login, so the userId scopes the trail); best-effort, never throws.
+        await this.audit( { action: Events.actionOf( Events.Object.AUTH_SESSION, Events.Verb.CREATED ), accountId: userId, target: { type: "session", id: userId }, actorUserId: userId, context: { username: username ?? "" } } );
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////

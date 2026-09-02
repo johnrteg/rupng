@@ -545,6 +545,7 @@ export enum SvgEditorActionType
     ADD_PAGE           = "add_page",           // append a new page and switch to it
     SET_EDITING_NODE   = "set_editing_node",   // enter / exit inline text-edit mode (hides the SVG node)
     SET_BEZIER_EDIT    = "set_bezier_edit",    // enter / exit bezier anchor-edit mode on a PATH node
+    IMPORT_ITEM        = "import_item",        // insert an imported object + its resolved assets
 }
 
 /** The discriminated union of every editor action the reducer handles. */
@@ -569,7 +570,8 @@ export type SvgEditorAction =
     | { type : SvgEditorActionType.COMMIT_DOC;        snapshot : SvgDocument.Doc; doc : SvgDocument.Doc }
     | { type : SvgEditorActionType.ADD_PAGE;          page : SvgDocument.Page }
     | { type : SvgEditorActionType.SET_EDITING_NODE;  nodeId : string | null }
-    | { type : SvgEditorActionType.SET_BEZIER_EDIT;   nodeId : string | null };
+    | { type : SvgEditorActionType.SET_BEZIER_EDIT;   nodeId : string | null }
+    | { type : SvgEditorActionType.IMPORT_ITEM;       object : SvgDocument.ObjectNode; assets : Array<SvgDocument.Asset> };
 
 /** The maximum number of undo snapshots kept in the history ring. */
 export const HISTORY_MAX_SIZE : 100 = 100;

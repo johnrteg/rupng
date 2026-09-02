@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { PostSegmentCopy, Segment } from "@repo/api";
 import { NetworkUtils, type Type } from "@repo/common";
 import { RestfulEndpoint } from "@repo/endpoint";
+import { Events, Payloads } from "@repo/system";
 import ContactService from "../services/ContactService";
 
 //
@@ -61,6 +62,10 @@ export class PostSegmentCopyImpl extends PostSegmentCopy
 
         // materialize the copy from its filter (fills QUERY membership + flips PENDING → ACTIVE)
         if( hasFilter ) void this.service.enqueueSegmentMaterialize( accountId, newId, Segment.RunTrigger.INITIAL, auth.userId );
+
+        // best-effort CRUD event — never blocks the response
+        const payload : Payloads.Segment = { id: copy.id, accountId: copy.accountId, name: copy.name, status: copy.status };
+        void this.service.emitSegment( Events.Verb.CREATED, copy.id, accountId, payload, auth.userId );
 
         return { status: NetworkUtils.Status.OK, data: copy };
     }

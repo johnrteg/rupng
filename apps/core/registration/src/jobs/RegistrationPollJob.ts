@@ -1,7 +1,7 @@
 //
 import { Context } from "aws-lambda";
 
-import { Registration } from "@repo/api";
+import { Registration, PhoneNumber } from "@repo/api";
 import type { Type } from "@repo/common";
 
 import RegistrationJob from "./RegistrationJob";
@@ -44,9 +44,16 @@ export class RegistrationPollJob extends RegistrationJob<unknown, void>
         if( campaigns.ok ) await this.sweepCampaigns( campaigns.data );
         else this.log.warn( "poll sweep: campaign candidate read failed", { error: campaigns.error } );
 
+        // numbers with an in-flight TFV (registration-4.x extension) — same due/backoff discipline, its own
+        // candidate set alongside brands/campaigns in this ONE sweep rather than a second Lambda/EventBridge rule.
+        const numbers : Type.Result<Array<PhoneNumber.PhoneNumber>> = await this.domain.dueNumbers( startedAt );
+        if( numbers.ok ) await this.sweepNumbers( numbers.data );
+        else this.log.warn( "poll sweep: number candidate read failed", { error: numbers.error } );
+
         this.log.info( "poll sweep complete", {
             brands: brands.ok ? brands.data.length : 0,
             campaigns: campaigns.ok ? campaigns.data.length : 0,
+            numbers: numbers.ok ? numbers.data.length : 0,
             elapsedMs: Date.now() - startedAt.getTime(),
         } );
     }
@@ -81,6 +88,18 @@ export class RegistrationPollJob extends RegistrationJob<unknown, void>
             // surfaced, not auto-healed: silently re-provisioning a line the carrier dropped could re-buy a
             // number the account deliberately released. An operator drives the reprovision.
             if( drifted.data.length > 0 ) this.log.warn( "poll sweep: numbers no longer paired at the carrier", { campaignId: settled.campaignId, drifted: drifted.data } );
+        }
+    }
+
+    /////////////////////////////////////////////////////////////////////
+    // reconcile every due number — today this only backs off `nextPollAt` and logs (no carrier exposes a
+    // verified TFV status-check call yet; see RegistrationDomain.reconcileNumber's own note).
+    private async sweepNumbers( numbers : Array<PhoneNumber.PhoneNumber> ) : Promise<void>
+    {
+        for( const number of numbers )
+        {
+            const reconciled : Type.Result<void> = await this.domain.reconcileNumber( number.accountId, number.id );
+            if( !reconciled.ok ) this.log.warn( "poll sweep: number reconcile failed", { accountId: number.accountId, id: number.id, error: reconciled.error } );
         }
     }
 }

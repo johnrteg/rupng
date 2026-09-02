@@ -8,6 +8,7 @@ import { RegistrationDomain } from "../domain/RegistrationDomain";
 
 import PostRegistrationBrandImpl from "../endpoints/PostRegistrationBrandImpl";
 import GetRegistrationBrandImpl from "../endpoints/GetRegistrationBrandImpl";
+import GetRegistrationMyBrandImpl from "../endpoints/GetRegistrationMyBrandImpl";
 import GetRegistrationBrandsImpl from "../endpoints/GetRegistrationBrandsImpl";
 import PatchRegistrationBrandImpl from "../endpoints/PatchRegistrationBrandImpl";
 import PostRegistrationCampaignImpl from "../endpoints/PostRegistrationCampaignImpl";
@@ -26,6 +27,15 @@ import PutRegistrationConfigImpl from "../endpoints/PutRegistrationConfigImpl";
 import GetInternalRegistrationBrandsImpl from "../endpoints/GetInternalRegistrationBrandsImpl";
 import GetInternalRegistrationCampaignsImpl from "../endpoints/GetInternalRegistrationCampaignsImpl";
 import GetInternalRegistrationCostEstimatesImpl from "../endpoints/GetInternalRegistrationCostEstimatesImpl";
+
+import PostRegistrationNumberSearchImpl from "../endpoints/PostRegistrationNumberSearchImpl";
+import PostRegistrationNumberOrderImpl from "../endpoints/PostRegistrationNumberOrderImpl";
+import GetRegistrationNumbersImpl from "../endpoints/GetRegistrationNumbersImpl";
+import PostRegistrationNumberReleaseImpl from "../endpoints/PostRegistrationNumberReleaseImpl";
+import PostRegistrationTollFreeVerificationImpl from "../endpoints/PostRegistrationTollFreeVerificationImpl";
+import PostRegistrationShortCodeApplicationImpl from "../endpoints/PostRegistrationShortCodeApplicationImpl";
+import GetRegistrationShortCodeApplicationsImpl from "../endpoints/GetRegistrationShortCodeApplicationsImpl";
+import PatchRegistrationShortCodeApplicationImpl from "../endpoints/PatchRegistrationShortCodeApplicationImpl";
 
 //
 // MAIN role — the /registration/* API (registration-12.2): brand + campaign CRUD, the registration-11.x
@@ -56,6 +66,7 @@ export class RegistrationMainService extends RegistrationService
         // brand (registration-1.0)
         this.register( new PostRegistrationBrandImpl( this ) );
         this.register( new GetRegistrationBrandImpl( this ) );
+        this.register( new GetRegistrationMyBrandImpl( this ) );
         this.register( new GetRegistrationBrandsImpl( this ) );
         this.register( new PatchRegistrationBrandImpl( this ) );
 
@@ -82,6 +93,16 @@ export class RegistrationMainService extends RegistrationService
         this.register( new GetInternalRegistrationBrandsImpl( this ) );
         this.register( new GetInternalRegistrationCampaignsImpl( this ) );
         this.register( new GetInternalRegistrationCostEstimatesImpl( this ) );
+
+        // phone number acquisition + short code (registration-4.x extension)
+        this.register( new PostRegistrationNumberSearchImpl( this ) );
+        this.register( new PostRegistrationNumberOrderImpl( this ) );
+        this.register( new GetRegistrationNumbersImpl( this ) );
+        this.register( new PostRegistrationNumberReleaseImpl( this ) );
+        this.register( new PostRegistrationTollFreeVerificationImpl( this ) );
+        this.register( new PostRegistrationShortCodeApplicationImpl( this ) );
+        this.register( new GetRegistrationShortCodeApplicationsImpl( this ) );
+        this.register( new PatchRegistrationShortCodeApplicationImpl( this ) );
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////

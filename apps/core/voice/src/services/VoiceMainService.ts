@@ -20,6 +20,7 @@ import PostVoiceWebhookControlImpl from "../endpoints/PostVoiceWebhookControlImp
 import PostVoiceWebhookStatusImpl from "../endpoints/PostVoiceWebhookStatusImpl";
 import GetVoiceFlowsImpl from "../endpoints/GetVoiceFlowsImpl";
 import PostVoiceFlowImpl from "../endpoints/PostVoiceFlowImpl";
+import PostVoiceInternalFlowImpl from "../endpoints/PostVoiceInternalFlowImpl";
 import GetVoiceFlowImpl from "../endpoints/GetVoiceFlowImpl";
 import PatchVoiceFlowImpl from "../endpoints/PatchVoiceFlowImpl";
 import DeleteVoiceFlowImpl from "../endpoints/DeleteVoiceFlowImpl";
@@ -80,6 +81,7 @@ export class VoiceMainService extends VoiceService
         this.register( new PostVoiceWebhookStatusImpl( this ) );
         this.register( new GetVoiceFlowsImpl( this ) );
         this.register( new PostVoiceFlowImpl( this ) );
+        this.register( new PostVoiceInternalFlowImpl( this ) );
         this.register( new GetVoiceFlowImpl( this ) );
         this.register( new PatchVoiceFlowImpl( this ) );
         this.register( new DeleteVoiceFlowImpl( this ) );

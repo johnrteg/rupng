@@ -744,8 +744,11 @@ configured **by account** and **by campaign**.
   hours apply** (an autoresponder is **not** quiet-hours-exempt — unlike STOP/HELP; `texting-5.2.1`).
 * **Loop / abuse guards** — **don't auto-reply to an auto-reply**; **one autoresponse per inbound trigger**;
   **per-contact rate-limit** (no infinite ping-pong).
-* **Tag / route too** — an autoresponder can also **tag or route** the thread (e.g. `SALES` → tag + route in the
-  inbox) instead of / in addition to replying.
+* **Tag / route too — via `labels`, never state.** An autoresponder action can add a **`labels`** entry (e.g.
+  `SALES`) and/or route the thread, instead of / in addition to replying. This is **triage context only** — an
+  autoresponder rule **must never** use a "tag" action to set suppression, lifecycle, or outcome (e.g. a rule
+  can't fake an opt-out by tagging `dnd`); those go through the dedicated `suppression`/`lifecycle` write-paths
+  (see *Tags & state*).
 * **Multi-step ≠ autoresponder.** A branching keyword conversation is a **[survey](../survey/SPECS.md)** (compiled
   to workflow) — autoresponders are **single trigger → single reply**; don't rebuild the survey state machine.
 
@@ -799,11 +802,28 @@ makes the data ambiguous (is `bad` a wrong-number suppression or an agent's "bad
 concern is a **separate, typed attribute** with **one mission, one type, on the right entity**. Tags are fine —
 **conflated** tags are not.
 
+> **The hard rule: `labels` is the ONLY free-form tag-like attribute, and it carries *context*, never
+> *authoritative state*.** Nothing that gates behavior — a send decision, a compliance outcome, a delivery
+> result — may be represented as a label. Concretely, **never a label** (each has its own typed home instead):
+> * **Errors / delivery / non-delivery reasons** → the message's **`outcome`** enum (+ raw `msgcode`), `texting-6.5`.
+> * **Opt-out / opt-in / DND** (any scope — global, per-number, per-brand, per-campaign) → the contact's
+>   **`suppression`** records, `texting-5.10`/`5.12` — **never** a `dnd`/`optin`/`dnd:<scope>` label.
+> * **Landline / unreachable / deactivated / benched-number** → `suppression.reason` (contact) or the number's
+>   **`health`** (sending number) — never a label on either.
+> * **Conversation / contact stage** (new, replied, opted-in, opted-out) → **`lifecycle`** (an enum), not a label.
+>
+> **The test: can you delete this value without changing what the system does?** Deleting a `vip` or `callback`
+> label changes **nothing** about deliverability, compliance, or accounting — that's what makes it safe to be a
+> label. Deleting a `suppression` record **would** let a suppressed contact receive a send again; deleting an
+> `outcome` would erase why a message failed. **If deleting it would change behavior, it isn't a label — it's
+> state, and it gets a typed field.** Labels are for **human/rule-set triage and routing** only (`vip`,
+> `callback`, `interested`, `SALES`) — informative, never load-bearing.
+
 | Attribute | Mission (what it answers) | Type | Lives on | Examples |
 |---|---|---|---|---|
 | **`suppression`** | *Can we send?* (consent / deliverability block) | **list** of typed records `{ channel, reason, scope{level,id}, source, at, keyword }` | **contact** | reason: `opt_out` · `hard_block` · `unreachable` · `landline` · `deactivated`; scope.level: `global` \| `number` \| `brand` \| `campaign` |
 | **`lifecycle`** | *Where is this contact / conversation?* | **enum** | contact / conversation | `new` · `active` · `replied` · `opted_in` · `opted_out` |
-| **`labels`** | *Human triage / categorization* (agent-set) | **label set** (account-defined) | contact / conversation / message | `good` · `bad` · `rude` · `interested` · `callback` · `vip` |
+| **`labels`** | *Human/rule triage & routing — context only, NEVER authoritative state* | **label set** (account-defined) | contact / conversation / message | `good` · `bad` (a lead-quality note, **not** a suppression) · `rude` · `interested` · `callback` · `vip` |
 | **`outcome`** | *Why did this message do what it did?* (audit) | **enum** (+ raw `msgcode`) | **message / send-log** | `timerange` · `dailycap` · `nocarrier` · `testing` · `resent` · `skipped` · `delivered` · `undelivered` |
 | **`health`** | *Is this SENDING number usable?* | **enum** (+ carrier scope) | **number record** | `ok` · `benched:invalid` · `benched:carrier=verizon` |
 
@@ -868,7 +888,9 @@ agent / user working it) works, with:
   but never wider**; the **server clamps** the requested span to the app max (never client-trusted). Slide it to
   reach older periods. Results are **most-recent-first within the window** (result cap ~10,000). The **bounded
   width** is what keeps it cheap — so **no full all-time search index is needed**.
-* **Tags on messages** — label messages (and threads) for triage / routing; filterable.
+* **Tags on messages** — the **`labels`** attribute (*Tags & state*, `texting-5.11`) applied to messages/threads
+  for triage / routing; filterable. **Context only** — delivery status, opt-out, and error reasons are separate
+  typed fields (`outcome`, `suppression`), never expressed as a message tag.
 
 > **Replies obey quiet hours.** A texter **cannot reply to a contact during that contact's quiet hours** — an
 > in-thread reply runs **`canSend()`** (suppression / consent / **quiet-hours per recipient TZ** / block-list)
@@ -1587,7 +1609,14 @@ live inbox push → [realtime](../realtime/SPECS.md); survey state → [survey](
 - **texting-5.8** **Carrier pause / discard** — per-carrier **pause** (requeue; precedence `carrierId → tcr_cid → cid → *`) + **discard** (drop when a carrier rejects outright) — A
 - **texting-5.9** **Daily / TCR caps** — `brandDailyCap` + quota hooks (10DLC, via [registration](../registration/SPECS.md)) enforced at send — A
 - **texting-5.10** **Contact `suppression` attribute (typed)** — a **per-channel** `suppression { status, reason, source, at, scope }` (reason: `dnd`/`hard_block`/`unreachable`/`landline`/`deactivated`) → **skipped from live sends**; set by errcode classification (`texting-6.5`), `err_count` (`texting-6.4`), or STOP; **not** a string in a shared array — A
-- **texting-5.11** **Typed tags, NOT one bag** — separate typed attributes — `suppression` · `lifecycle` (enum) · `labels` (agent set) · message `outcome` · number `health` — each **one mission, one type, on the right entity**; **reject the production single `flags[]` array** — A
+- **texting-5.11** **Typed tags, NOT one bag** — separate typed attributes — `suppression` · `lifecycle` (enum) · `labels` (agent/rule-set) · message `outcome` · number `health` — each **one mission, one type, on the right entity**; **reject the production single `flags[]` array** — A
+  - **texting-5.11.1** **`labels` is context-only, never authoritative state** — errors/non-delivery reasons →
+    `outcome`; opt-out/opt-in/DND (any scope) → `suppression`; landline/unreachable/deactivated/benched-number →
+    `suppression.reason` or number `health`; contact/conversation stage → `lifecycle`. **None of these may ever
+    be represented as a `labels` entry** — the litmus test: *if deleting the value would change send/compliance
+    behavior, it isn't a label.* Enforced at the API/schema boundary (a `labels` write can't set a reserved
+    suppression/outcome/lifecycle/health value) — A
+- **texting-5.12** **Scoped suppression (replaces "split DND")** — suppression is a **list of typed records** `{ channel, reason, scope{level,id}, source, at, keyword }`; `scope.level` ∈ `global`/`number`/`brand`/`campaign`; a send is blocked if a record is **`global`** or matches the send's `{number, brand, campaign}`; granularity = campaign **`optOutScope`** enum; stats roll up by `reason` (ignore scope); **no `dnd:<channel>` suffix strings** — A
 - **texting-5.13** **Unreachable-contact circuit breaker (layered, tunable)** — independent of the sending-number
   bench (`texting-5.7`, which protects the *number*), a **contact-level** breaker skips a contact from *future*
   sends once its delivery `err_count` crosses a **configurable, layered** threshold — **campaign/action-level
@@ -1595,7 +1624,6 @@ live inbox push → [realtime](../realtime/SPECS.md); survey state → [survey](
   **permanently** past N total errors, skip for **N days** since the last error, or skip for the **next N
   projects/sends**. This is a **deliverability/cost** control (stop paying to re-text a chronically-failing
   number), distinct from and complementary to opt-out/suppression — B
-- **texting-5.12** **Scoped suppression (replaces "split DND")** — suppression is a **list of typed records** `{ channel, reason, scope{level,id}, source, at, keyword }`; `scope.level` ∈ `global`/`number`/`brand`/`campaign`; a send is blocked if a record is **`global`** or matches the send's `{number, brand, campaign}`; granularity = campaign **`optOutScope`** enum; stats roll up by `reason` (ignore scope); **no `dnd:<channel>` suffix strings** — A
 
 ## texting-6.0 DLR & status — A
 - **texting-6.1** Ingest DLRs (async / out-of-order / late) via the inbound webhook pipeline — A
@@ -1628,7 +1656,9 @@ live inbox push → [realtime](../realtime/SPECS.md); survey state → [survey](
   - **texting-7.5.1** **Filter** — by **campaign**, **time range**, and **status**: `unread` · `contact_replied` · `texter_responded` · `texter_modified` · `delivered` · `undelivered` · `daily_capped` · `unreachable` · `carrier_skip` · `expired` · `all` — A
   - **texting-7.5.2** **Search (slidable time window)** — contact name / number / message text over a **texter-positioned time window** (defaults recent; can slide back to find old messages, e.g. 8 months ago); most-recent-first within the window (result cap ~10,000). Bounded width → **no full all-time search index required** — B
     - **texting-7.5.2.1** **Max window width = application-level hard ceiling** — an **account / user may request a *narrower* window but never wider**; the **server clamps** `width = min(requested, appMax)` (never client-trusted) and signals if it clamped — B
-  - **texting-7.5.3** **Message tags** — label messages (and threads) for triage; filterable — B
+  - **texting-7.5.3** **Message tags (`labels`)** — label messages (and threads) for triage; filterable.
+    **Context only** — never a stand-in for `outcome` (delivery/error) or `suppression` (opt-out), which are
+    separate typed fields (`texting-5.11.1`) — B
 - **texting-7.6** **Conversation assignment / hand-off** *(later)* — explicit per-thread ownership (rep / bot / queue); not required by the shared-inbox model — C
 - **texting-7.7** **Keyword autoresponders** — configurable keyword-triggered auto-replies on inbound, **by account + by campaign** (marketing/engagement, beyond mandated STOP/HELP) — A
   - **texting-7.7.1** **Compliance-first** — STOP/HELP/START matched **first + authoritative**; a compliance keyword **never** triggers a marketing autoresponse — A
@@ -1820,7 +1850,7 @@ staff **`SUPPORT`<`APPLICATION`<`ROOT`** · **`⬆`** = step-up · **`Internal`*
 | GET | `/texting/conversations` | **One big inbox** — filter by `campaign` / `status` / time range; **search** (contact name / number / text) | USER | texting-7.5/7.5.1/7.5.2 |
 | GET | `/texting/conversations/{id}` | Thread + message history | USER | texting-7.2 |
 | POST | `/texting/conversations/{id}/reply` | Send a reply in-thread on the **pinned/stuck number** (never failover; **waits/backpressure** if provider down); runs `canSend()`; **blocked in quiet hours** (reason; may schedule) | SENDER | texting-7.3.1/5.2.1 |
-| PATCH | `/texting/conversations/{id}/messages/{messageId}` | **Tag** a message (and set read / thread status) | USER | texting-7.5.3 |
+| PATCH | `/texting/conversations/{id}/messages/{messageId}` | Set **`labels`** on a message (triage context) and/or **`lifecycle`** (read / thread status) — distinct typed fields, one call | USER | texting-7.5.3 |
 | GET, PUT | `/texting/autoresponders` | **Account-level** keyword auto-replies (defaults) | USER | texting-7.7.2 |
 | GET, PUT | `/texting/campaigns/{campaignId}/autoresponders` | **Campaign-level** keyword auto-replies (override/extend) | USER | texting-7.7.2 |
 

@@ -4,6 +4,7 @@ import { JSX } from "react";
 import { Access } from "@repo/system";
 
 import HomeOutlinedIcon         from '@mui/icons-material/HomeOutlined';
+import SearchOutlinedIcon       from '@mui/icons-material/SearchOutlined';
 import CampaignOutlinedIcon     from '@mui/icons-material/CampaignOutlined';
 import CalendarMonthOutlinedIcon from '@mui/icons-material/CalendarMonthOutlined';
 import ForumOutlinedIcon        from '@mui/icons-material/ForumOutlined';
@@ -52,6 +53,7 @@ export namespace navModel
             id: "main", title: "Main", items:
             [
                 { id: "dashboard",     label: "Dashboard",     icon: <HomeOutlinedIcon />,       route: "/dashboard" },
+                { id: "search",        label: "Search",        icon: <SearchOutlinedIcon />,     route: "/search" },
                 { id: "campaigns",     label: "Campaigns",     icon: <CampaignOutlinedIcon />,   route: "/campaigns" },
                 { id: "schedule",      label: "Schedule",      icon: <CalendarMonthOutlinedIcon />, route: "/schedule" },
                 { id: "messages",      label: "Messages",      icon: <ForumOutlinedIcon />,      children:
@@ -78,6 +80,7 @@ export namespace navModel
                         { id: "media.aigen",     label: "AI Gen",    route: "/media/ai-gen" },
                         { id: "media.studio",     label: "Studio",    route: "/media/studio" },
                         { id: "media.email-templates", label: "Email Templates", route: "/studio/email-templates" },
+                        { id: "media.print-templates", label: "Print Templates", route: "/print/templates" },
                         { id: "media.downloads", label: "Downloads", route: "/media/downloads" },
                     ] },
                 { id: "tools",         label: "Tools",         icon: <BuildOutlinedIcon />,      children:
@@ -119,6 +122,7 @@ export namespace navModel
             { id: "account.billing",      label: "Billing",      route: "/account/billing",      minRole: Access.AccountRole.BILLING },
             { id: "account.users",        label: "Users",        route: "/account/users",        minRole: Access.AccountRole.ACCOUNT },
             { id: "account.sub-accounts", label: "Sub-Accounts", route: "/account/sub-accounts", minRole: Access.AccountRole.ACCOUNT },
+            { id: "account.audit",        label: "Audit Log",    route: "/account/audit",        minRole: Access.AccountRole.ACCOUNT },
         ]
     };
 

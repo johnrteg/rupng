@@ -9,6 +9,7 @@ import AppModel         from '@model/AppModel';
 import PubSubService    from '@model/service/PubSubService';
 import PageWaiting      from '@pages/common/PageWaiting';
 import { Dashboard }    from '@pages/dashboard/Dashboard';
+import { SearchPage }   from '@pages/search/SearchPage';
 import { ProfileDetails } from '@pages/profile/ProfileDetails';
 import { ProfileDisplay } from '@pages/profile/ProfileDisplay';
 import { ProfileSecurity } from '@pages/profile/ProfileSecurity';
@@ -18,10 +19,12 @@ import { AccountBranding } from '@pages/account/AccountBranding';
 import { AccountBilling } from '@pages/account/AccountBilling';
 import { AccountUsers } from '@pages/account/AccountUsers';
 import { AccountSubAccounts } from '@pages/account/AccountSubAccounts';
+import { AuditLog } from '@pages/audit/AuditLog';
 import { ContactsList } from '@pages/contacts/ContactsList';
 import { Segments } from '@pages/contacts/Segments';
 import { ReportsPage } from '@pages/reports/ReportsPage';
 import { Campaigns } from '@pages/campaigns/Campaigns';
+import { Workflows } from '@pages/workflows/Workflows';
 import { Schedule } from '@pages/schedule/Schedule';
 import { MediaLibrary } from '@pages/media/MediaLibrary';
 import { MediaBrowse } from '@pages/media/browse/MediaBrowse';
@@ -31,9 +34,11 @@ import { MediaStudio } from '@pages/media/MediaStudio';
 import { Help } from '@pages/help/Help';
 import { SettingsApi } from '@pages/settings/SettingsApi';
 import { SettingsContacts } from '@pages/settings/SettingsContacts';
+import { SettingsRegistration } from '@pages/settings/SettingsRegistration';
 import { SettingsEmail } from '@pages/settings/SettingsEmail';
 import { SettingsActions } from '@pages/settings/SettingsActions';
 import { EmailTemplates } from '@pages/email/EmailTemplates';
+import { PrintTemplates } from '@pages/print/PrintTemplates';
 import { MessagesSend } from '@pages/messages/MessagesSend';
 import { MessagesSent } from '@pages/messages/MessagesSent';
 import { MonitorDashboard } from '@pages/monitor/MonitorDashboard';
@@ -41,6 +46,7 @@ import { Login }        from '@pages/login/Login';
 import { Register }     from '@pages/register/Register';
 import { ForgotPassword }   from '@pages/login/ForgotPassword';
 import { ActionLanding }    from '@pages/landing/ActionLanding';
+import { SurveyFormLanding } from '@pages/survey/SurveyFormLanding';
 import { AuthAction }       from '@repo/api';
 import Subscriber       from '@widgets/core/Subscriber';
 import ErrorPage        from '@pages/common/ErrorPage';
@@ -109,6 +115,7 @@ export function AppRouter( props : AppRouter.Props ) : JSX.Element
 
         // dashboard (loaded immediately - most common)
         new_routes.push( { path: AppRouter.Route.DASHBOARD, component: () => <Dashboard /> } );
+        new_routes.push( { path: "/search", component: () => <SearchPage /> } );
 
         // real nav destinations (built pages) — registered explicitly; skipped by the stub loop below
         new_routes.push( { path: "/profile/details", component: () => <ProfileDetails /> } );
@@ -120,6 +127,7 @@ export function AppRouter( props : AppRouter.Props ) : JSX.Element
         new_routes.push( { path: "/account/billing", component: () => <AccountBilling /> } );
         new_routes.push( { path: "/account/users", component: () => <AccountUsers /> } );
         new_routes.push( { path: "/account/sub-accounts", component: () => <AccountSubAccounts /> } );
+        new_routes.push( { path: "/account/audit", component: () => <AuditLog /> } );
         new_routes.push( { path: "/campaigns", component: () => <Campaigns /> } );
         new_routes.push( { path: "/contacts/list", component: () => <ContactsList /> } );
         new_routes.push( { path: "/contacts/segments", component: () => <Segments /> } );
@@ -136,12 +144,15 @@ export function AppRouter( props : AppRouter.Props ) : JSX.Element
         new_routes.push( { path: "/help", component: () => <Help /> } );
         new_routes.push( { path: "/settings/api", component: () => <SettingsApi /> } );
         new_routes.push( { path: "/settings/contacts", component: () => <SettingsContacts /> } );
+        new_routes.push( { path: "/settings/registration", component: () => <SettingsRegistration /> } );
         new_routes.push( { path: "/settings/email", component: () => <SettingsEmail /> } );
         new_routes.push( { path: "/settings/actions", component: () => <SettingsActions /> } );
         new_routes.push( { path: "/studio/email-templates", component: () => <EmailTemplates /> } );
+        new_routes.push( { path: "/print/templates", component: () => <PrintTemplates /> } );
         new_routes.push( { path: "/messages/send", component: () => <MessagesSend /> } );
         new_routes.push( { path: "/messages/sent", component: () => <MessagesSent /> } );
         new_routes.push( { path: "/tools/monitor", component: () => <MonitorDashboard /> } );
+        new_routes.push( { path: "/tools/workflows", component: () => <Workflows /> } );
 
         // least common (mixed - some critical, some lazy)
         new_routes.push( { path: AppRouter.Route.ROOT     , component: () => <Dashboard /> } );
@@ -156,6 +167,8 @@ export function AppRouter( props : AppRouter.Props ) : JSX.Element
         new_routes.push( { path: `${ AuthAction.PATHS[ AuthAction.Type.MFA_CODE ] }/:token`,            component: ( params : { token : string } ) => <ActionLanding token={ params.token } type={ AuthAction.Type.MFA_CODE } /> } );
         new_routes.push( { path: `${ AuthAction.PATHS[ AuthAction.Type.ACCOUNT_INVITE ] }/:token`,      component: ( params : { token : string } ) => <ActionLanding token={ params.token } type={ AuthAction.Type.ACCOUNT_INVITE } /> } );
         new_routes.push( { path: `${ AuthAction.PATHS[ AuthAction.Type.UNSUBSCRIBE ] }/:token`,         component: ( params : { token : string } ) => <ActionLanding token={ params.token } type={ AuthAction.Type.UNSUBSCRIBE } /> } );
+        // the public survey hosted-form (survey-2.2/9.3) — same no-auth shape, opened from a survey invite link
+        new_routes.push( { path: `/s/:token`, component: ( params : { token : string } ) => <SurveyFormLanding token={ params.token } /> } );
         //new_routes.push( { path: AppRouter.Route.REGISTRY , component: withLazyWrapper(Registry) } );
 
         // nav destinations from the shared nav model — each renders a Dashboard-like page (StubPage until

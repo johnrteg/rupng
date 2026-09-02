@@ -11,6 +11,7 @@ import * as opensearch from "aws-cdk-lib/aws-opensearchservice";
 import * as oss from "aws-cdk-lib/aws-opensearchserverless";
 import * as cloudtrail from "aws-cdk-lib/aws-cloudtrail";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import { Environment, PlatformManifest, KafkaClusterSpec, SearchClusterSpec, CloudTrailSpec, SecretSpec, forEnv, physicalName, ResourceKind } from "@repo/cloud-manifest";
 import { mskInstanceType, searchInstanceType } from "./sizing";
 import { isLocal } from "./local";
@@ -35,6 +36,21 @@ export class PlatformStack extends cdk.Stack
      *  ARN injection. The AI provider keys (OpenAI, Anthropic, …) live here — see PlatformManifest.secrets. */
     public readonly secrets : Map<string, secretsmanager.ISecret> = new Map();
 
+    /** The platform-shared AUDIT ingestion queue (+ its DLQ) — the SOLE path every service's
+     *  `Application.audit()` enqueues to. Fixed platform infra (like the VPC), not manifest-driven: EVERY
+     *  ServiceStack is granted send + gets its URL injected (see `ServiceStack.usePlatformQueue`), and the
+     *  `audit` service's own `AuditSinkJob` binds its SQS trigger to this SAME construct (imported back via
+     *  `ServiceStackProps.platformAuditQueue`) rather than owning a second, colliding queue of its own. */
+    public readonly auditQueue : sqs.IQueue;
+    public readonly auditDlq   : sqs.IQueue;
+
+    /** The shared OpenSearch endpoint + collection/domain ARN, set by `makeSearch` when
+     *  `manifest.searchCluster` is configured. Passed to every ServiceStack (ambient, like `secrets`/
+     *  `auditQueue` above) so a service that declares `uses: [{ kind: SEARCH }]` can inject
+     *  `SEARCH_<KEY>` + be IAM-granted `aoss:APIAccessAll` on it — see `ServiceStack.grantUses`. */
+    public searchEndpoint?      : string;
+    public searchCollectionArn? : string;
+
     /**
      * @param scope CDK construct scope
      * @param id    stack id
@@ -50,6 +66,12 @@ export class PlatformStack extends cdk.Stack
         // granted read + gets the ARN injected. Created empty; the value is set by a root op (root API /
         // `awslocal secretsmanager put-secret-value`), never committed.
         ( m.secrets ?? [] ).forEach( ( spec : SecretSpec ) => this.makeSecret( props.deployEnv, spec ) );
+
+        // The platform-shared audit ingestion queue (+ DLQ) — provisioned ONCE here (not per-service, not
+        // manifest-driven) because it must be writable by EVERY service's compute with zero per-service
+        // manifest edits (see `Application.audit()` / apps/core/audit/SPECS.md). Ordering doesn't matter
+        // (no ACCESS.md-verb dependency), so build it alongside the shared secrets.
+        [ this.auditQueue, this.auditDlq ] = this.makeAuditQueue( props.deployEnv );
 
         // Local: minimal network — a single AZ, no NAT gateways (nothing to reach the real internet).
         this.vpc = new ec2.Vpc( this, "Vpc", {
@@ -76,6 +98,23 @@ export class PlatformStack extends cdk.Stack
             description : spec.description,
         } );
         this.secrets.set( spec.key, secret );
+    }
+
+    /** Create the platform-shared audit ingestion queue (+ DLQ; physical name `<env>-platform-queue-audit-events`).
+     *  Standard (not FIFO) — per-tenant ORDERING is enforced by `AuditSinkJob`'s seq/hash-chain stamp at write
+     *  time, not queue delivery order, so FIFO's added latency/throughput cost buys nothing here. A generous
+     *  visibility timeout gives the sink job margin over its own Lambda timeout before a message is redelivered. */
+    private makeAuditQueue( env : Environment ) : [ sqs.IQueue, sqs.IQueue ]
+    {
+        const dlq : sqs.Queue = new sqs.Queue( this, "AuditQueueDlq", {
+            queueName : physicalName( env, "platform", ResourceKind.QUEUE, "audit-events-dlq" ),
+        } );
+        const queue : sqs.Queue = new sqs.Queue( this, "AuditQueue", {
+            queueName         : physicalName( env, "platform", ResourceKind.QUEUE, "audit-events" ),
+            visibilityTimeout : cdk.Duration.seconds( 90 ),   // margin over AuditSinkJob's 30s timeout
+            deadLetterQueue   : { queue: dlq, maxReceiveCount: 5 },
+        } );
+        return [ queue, dlq ];
     }
 
     /** Create a multi-region CloudTrail trail (with its own encrypted log bucket). */
@@ -131,6 +170,8 @@ export class PlatformStack extends cdk.Stack
             const collection : oss.CfnCollection = new oss.CfnCollection( this, "Search", { name, type: "SEARCH" } );
             collection.addDependency( enc );
             collection.addDependency( net );
+            this.searchEndpoint      = collection.attrCollectionEndpoint;
+            this.searchCollectionArn = collection.attrArn;
 
             // Data-access policy granting the configured principals (default: the account root).
             const principals : Array<string> = ( spec.dataAccessPrincipals && spec.dataAccessPrincipals.length )
@@ -150,7 +191,7 @@ export class PlatformStack extends cdk.Stack
         }
         else
         {
-            new opensearch.Domain( this, "Search", {
+            const domain : opensearch.Domain = new opensearch.Domain( this, "Search", {
                 version  : opensearch.EngineVersion.OPENSEARCH_2_11,
                 vpc      : this.vpc,
                 capacity : {
@@ -159,6 +200,8 @@ export class PlatformStack extends cdk.Stack
                 },
                 ebs      : { volumeSize: forEnv( spec.storageGB, env ) ?? 20 },
             } );
+            this.searchEndpoint      = `https://${domain.domainEndpoint}`;
+            this.searchCollectionArn = domain.domainArn;
         }
     }
 }

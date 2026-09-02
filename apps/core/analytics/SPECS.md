@@ -339,25 +339,34 @@ result; analytics *computes* it.
 # Service & Job topology
 
 **Convention (platform-wide).** Each service layers **framework base → domain base → concrete role**. A **domain
-Service base** (`AnalyticsService extends Service`) and a **domain Job base** (`AnalyticsJob extends Job`) hold
-the **shared domain code** — the **canonical-event** model, the **schema registry / versioning** client (Glue
-Catalog), the **hot-store + Athena query** clients, the **attribution model** library, and **RBAC / tenancy**
-scoping — so **every concrete role inherits it**. Analytics is shaped unusually: it's **a thin query API over a
-fleet of compute jobs** — the read surface is one Service; nearly all the work is event- / schedule-driven Jobs.
+Service base** (`AnalyticsService extends Service`) holds the shared HTTP-role wiring; a **domain Job base**
+(`AnalyticsJob extends Job`) holds the shared one-shot-Lambda wiring — so every concrete role inherits it.
+
+**Built vs. spec'd (updated — see the Gap register for why):** the ORIGINAL spec put ingestion/rollup on
+`AnalyticsJob` as Kafka-triggered Lambdas. The platform has no Lambda↔MSK event-source-mapping anywhere, so
+those two are actually **`AnalyticsConsumer`** (long-running ECS, extends the platform's `Consumer` primitive —
+see `packages/services/src/Consumer.ts`, whose own doc comment names this exact shape as its intended use).
+`AnalyticsBackfillJob` **is** a real `AnalyticsJob` as spec'd (SQS-triggered, one-shot) — it's built, reading the
+raw lake directly and doing a `SET` (recompute), not an `ADD`. `AnalyticsScheduleJob` / `AnalyticsAttributionJob`
+/ `AnalyticsForgetJob` are NOT built yet (Attribution needs a conversion-event source that doesn't exist;
+Schedule/Forget need Parquet-compaction and a contact/account PURGED Kafka event respectively — neither exists
+on the platform yet either).
 
 ```
 Application
 ├── Service (Fastify, long-running — ECS)
-│     └── AnalyticsService            (domain base — canonical-event model · schema registry (Glue) · hot-store + Athena clients · attribution lib · RBAC/tenancy; not deployed alone)
-│           └── AnalyticsQueryService (the RBAC-scoped Query API: hot store live + Athena historical; the surface report/campaign/web read + internal deliverability reads for dispatch; schema/config admin)
+│     └── AnalyticsService            (domain base — Dynamo/S3/Kafka/SQS facades, queryRollups(); not deployed alone)
+│           └── AnalyticsQueryService (BUILT — metrics/funnels/engagement/deliverability + reprocess-trigger; hot-store/Athena historical NOT built)
+├── Consumer (long-running, ECS — NOT Lambda; see note above)
+│     └── AnalyticsConsumer            (domain base — Dynamo/S3/Kafka facades)
+│           ├── AnalyticsIngestConsumer  (BUILT — dedup (provider,providerEventId) → sink to RAW S3 JSON, partitioned account/channel/date; Parquet NOT built)
+│           └── AnalyticsRollupConsumer  (BUILT — near-real-time rollups via atomic ADD; lateness/grace + straggler recompute NOT built — AnalyticsBackfillJob is the manual substitute today)
 └── Job (Lambda, event-driven)
-      └── AnalyticsJob                (domain base — schema-validated canonical event · dedup · S3/Parquet · hot-store + Athena clients · idempotency)
-            ├── AnalyticsIngestJob      (Kafka — dedup (provider,providerEventId) → normalize → sink to RAW S3 Parquet, partitioned account/channel/date)
-            ├── AnalyticsRollupJob      (Kafka, near-real-time — curated rollups → hot store; lateness/grace + straggler recompute)
-            ├── AnalyticsScheduleJob    (EventBridge — period close after grace · Parquet compaction · k-anon benchmark refresh · cost sweeps)
-            ├── AnalyticsAttributionJob (on conversion — credit touches over the lookback window by the configured model; store model+window for reproducibility)
-            ├── AnalyticsBackfillJob    (operator-triggered — re-normalize raw + rebuild rollups when logic/schema changes)
-            └── AnalyticsForgetJob      (SQS — contact/account forget → obfuscate PII in the lake + drop from hot store)
+      └── AnalyticsJob                (domain base — Dynamo/S3 facades)
+            ├── AnalyticsBackfillJob    (BUILT — SQS-triggered: re-reads the raw lake for one account/channel/date-range, rewrites (SET) the affected rollup buckets)
+            ├── AnalyticsScheduleJob    (NOT BUILT — EventBridge; period close · Parquet compaction · k-anon benchmark refresh · cost sweeps)
+            ├── AnalyticsAttributionJob (NOT BUILT — on conversion; needs marketplace/workflow's conversion-event source first)
+            └── AnalyticsForgetJob      (NOT BUILT — needs contact/account to publish a PURGED Kafka event first; neither does today)
 ```
 
 **Services (HTTP, ECS Fargate)**
@@ -399,6 +408,10 @@ Application
 
 **Internal (`@repo/*`)**
 * `@repo/services` (Kafka, S3, Dynamo, Cache, `WorkQueue`), `@repo/common` (`Type`, `UserAgent`), `@repo/endpoint` (`Access`).
+* `@repo/api`'s `Analytics` namespace (`packages/api/src/analytics/model/Analytics.ts`) is the canonical
+  wire contract — `Event` / `BehaviorEvent` / `Rollup` / attribution types — imported by every producer
+  (channel services, the app BFF) and by analytics itself, per the platform's "define the model once in
+  `@repo/api`" rule.
 
 # Requirements (traceable register)
 
